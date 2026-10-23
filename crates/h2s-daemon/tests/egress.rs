@@ -241,7 +241,7 @@ async fn only_proxy_requests_are_accepted() {
 async fn idle_tunnels_are_closed() {
     let port = echo_upstream().await;
     let p = proxy(vec![rule("localhost", true)], |s| {
-        s.idle_timeout = Duration::from_millis(400)
+        s.idle_timeout = Duration::from_millis(400);
     })
     .await;
     let mut s = TcpStream::connect(p.addr).await.unwrap();
