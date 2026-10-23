@@ -62,6 +62,10 @@ Python semantics the ports reproduce (`src/pyfmt.rs`, `src/pyjson.rs`):
   runs, each holding trial directories).
 - Task order: the newest `_sweeps/<ns>-<stamp>.json` record's `domain_order` and per-domain
   task order (`demo.json` for a demo), then the rest by task id.
+- `TaskModeOutcome.chosen_is_base` ("the adopted harness is an unchanged base") comes from
+  the selection's `chosen_tree_is_base`; `Selection.chosen_is_base` and
+  `JudgedRow.chosen_is_base` keep upstream's meaning (the selector picked a reference run,
+  which the finals-only pool never does).
 - `report()` reports the modes that have judged rows at the sweep's `k`; with no rows it
   returns an empty report whose text is upstream's `nothing to report`.
 - Judged rows are rebuilt like upstream `_load_rows`: `graded`/`frac` are recomputed from

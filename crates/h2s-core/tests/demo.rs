@@ -443,3 +443,25 @@ fn symlinks_and_foreign_paths_are_refused() {
         Err(CoreError::Refused(_))
     ));
 }
+
+#[test]
+fn chosen_is_base_reports_an_unchanged_adopted_tree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("demo-k2");
+    copy_tree(&fixtures().join("demo-k2"), &root);
+    let summary = root.join("runs/demo-oc-agg2/ledger-1/summary.json");
+    let text = std::fs::read_to_string(&summary).unwrap();
+    assert_eq!(text.matches("\"chosen_tree_is_base\": false").count(), 2);
+    std::fs::write(
+        &summary,
+        text.replacen(
+            "\"chosen_tree_is_base\": false",
+            "\"chosen_tree_is_base\": true",
+            1,
+        ),
+    )
+    .unwrap();
+    let rows = open_at(&root, "demo-k2").tasks(&sweep()).unwrap();
+    let flags: Vec<bool> = rows[0].modes.iter().map(|m| m.chosen_is_base).collect();
+    assert_eq!(flags, vec![true, false]);
+}

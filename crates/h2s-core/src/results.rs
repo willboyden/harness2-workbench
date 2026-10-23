@@ -853,7 +853,12 @@ impl ExperimentDir {
                             && truthy(field(sel, "ok"))
                             && !chosen.is_empty(),
                         chosen_label: (!chosen.is_empty()).then_some(chosen),
-                        chosen_is_base: truthy(field(sel, "chosen_is_base")),
+                        // "The adopted harness is an unchanged base": harness2 records
+                        // that as `chosen_tree_is_base` (the selector's own
+                        // `chosen_is_base` only says a reference run was picked).
+                        chosen_is_base: sel
+                            .get("chosen_tree_is_base")
+                            .map_or_else(|| truthy(field(sel, "chosen_is_base")), truthy),
                         fell_back,
                         usd: spend + sel_usd,
                         score: judged.and_then(|r| r.frac),
