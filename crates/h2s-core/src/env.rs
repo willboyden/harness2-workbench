@@ -151,12 +151,100 @@ const LAB_JUDGE_PREFIXES: &[&str] = &[
     "claude", "gemini", "gpt", "o1", "o3", "o4", "o5", "mistral", "vertex/",
 ];
 
-#[allow(dead_code)] // Used by tests; proposed as a public helper for the server.
 /// Whether LAB's judge recognises this model id (the server warns when it does not; the
 /// profile stays valid because JobBench and WorkBuddy judge differently).
-#[must_use]
-pub(crate) fn lab_judge_supported(model: &str) -> bool {
+fn lab_judge_supported(model: &str) -> bool {
     LAB_JUDGE_PREFIXES.iter().any(|p| model.starts_with(p))
+}
+
+/// Non-fatal warnings about what a profile cannot do, for the server to show when a
+/// profile is saved and before a run. A profile with warnings is still valid
+/// ([`validate_profile`] does not fail on any of them).
+///
+/// Covered: no executor or judge model (harness2 starts no sweep without both), a judge
+/// LAB's judge does not recognise, JobBench's judge requirements (an endpoint or Vertex
+/// settings; an API key for a non-Gemini judge), WorkBuddy's requirement of Vertex Gemini
+/// models, and a missing Codex (Responses-API) endpoint for the `cx` executor.
+#[must_use]
+pub fn profile_warnings(profile: &ModelProfile) -> Vec<String> {
+    let ctx = EnvContext {
+        runs_dir: String::new(),
+        opencode_config_path: String::new(),
+        gcp_credentials_path: String::new(),
+    };
+    let p = plan(profile, &ctx);
+    let has = |name: &str| p.vars.iter().any(|(k, _)| k == name);
+    let lit = |name: &str| {
+        p.vars.iter().find_map(|(k, v)| match v {
+            Val::Lit(s) if k == name => Some(s.clone()),
+            _ => None,
+        })
+    };
+    let mut w = Vec::new();
+    let solver = lit("HARNESS2_SOLVER_MODEL");
+    match solver.as_deref() {
+        None if !has("HARNESS2_SOLVER_MODEL") => w.push(
+            "No executor model: harness2 refuses to run without HARNESS2_SOLVER_MODEL.".to_owned(),
+        ),
+        Some(s) if !s.contains('/') => w.push(format!(
+            "The executor model {s:?} is not in OpenCode's provider/model form, which harness2 \
+             requires."
+        )),
+        _ => {}
+    }
+    let judge = lit("HARNESS2_JUDGE_MODEL");
+    let project = has("GOOGLE_CLOUD_PROJECT");
+    match judge.as_deref() {
+        None => w.push(
+            "No judge model: harness2 starts no sweep and judges nothing without \
+             HARNESS2_JUDGE_MODEL."
+                .to_owned(),
+        ),
+        Some(j) => {
+            if !lab_judge_supported(j) {
+                w.push(format!(
+                    "LAB's judge does not recognise the judge model {j:?} (it accepts ids \
+                     starting with claude, gemini, gpt, o1, o3, o4, o5, mistral or vertex/), so \
+                     this profile cannot judge LAB."
+                ));
+            }
+            if !has("HARNESS2_JUDGE_BASE_URL") && !project {
+                w.push(
+                    "JobBench judging needs a judge endpoint or Vertex AI settings (harness2 \
+                     reads HARNESS2_JUDGE_BASE_URL or GOOGLE_CLOUD_PROJECT)."
+                        .to_owned(),
+                );
+            }
+            if !j.starts_with("gemini") && !has("HARNESS2_JUDGE_API_KEY") {
+                w.push(
+                    "JobBench needs a judge endpoint with an API key for a non-Gemini judge \
+                     (HARNESS2_JUDGE_BASE_URL and HARNESS2_JUDGE_API_KEY)."
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    let wb_ok = solver
+        .as_deref()
+        .is_some_and(|s| s.starts_with("google-vertex/gemini"))
+        && judge.as_deref().is_some_and(|j| j.starts_with("gemini"))
+        && project;
+    if !wb_ok {
+        w.push(
+            "WorkBuddy-Bench cannot use this profile: its setup requires a google-vertex/gemini \
+             executor, a gemini judge and Vertex AI settings."
+                .to_owned(),
+        );
+    }
+    if !has("HARNESS2_CODEX_BASE_URL") {
+        w.push(
+            "The Codex executor (substrate cx) needs a Responses-API endpoint: set the \
+             profile's Codex endpoint (for Vertex AI, run the bridge job and use its URL and \
+             key)."
+                .to_owned(),
+        );
+    }
+    w
 }
 
 fn vertex_vars(plan: &mut Plan, profile: &ModelProfile, ctx: &EnvContext) {
@@ -882,5 +970,48 @@ mod tests {
         }
         assert!(lab_judge_supported("vertex/claude-x"));
         assert!(!lab_judge_supported("glm-5"));
+    }
+
+    #[test]
+    fn warnings_name_what_a_profile_cannot_do() {
+        let mut p = base(ProfileKind::OpenaiCompatible);
+        p.endpoint = Some(Endpoint {
+            base_url: "http://127.0.0.1:4000/v1".into(),
+            api_key_secret: None,
+        });
+        p.judge_model = Some("glm-5".into());
+        let w = profile_warnings(&p);
+        let has = |needle: &str| w.iter().any(|x| x.contains(needle));
+        assert!(has(
+            "LAB's judge does not recognise the judge model \"glm-5\""
+        ));
+        assert!(has("non-Gemini judge"));
+        assert!(has("WorkBuddy-Bench cannot use this profile"));
+        assert!(has("Codex executor"));
+        assert!(!has("No judge model"));
+        assert!(!has("needs a judge endpoint or Vertex"));
+
+        let mut v = base(ProfileKind::Vertex);
+        v.solver_model = "google-vertex/gemini-3.5-flash".into();
+        v.judge_model = Some("gemini-3.5-pro".into());
+        v.vertex = Some(VertexSettings {
+            project: "proj-1".into(),
+            location: "global".into(),
+            credentials_secret: None,
+        });
+        v.codex_endpoint = Some(Endpoint {
+            base_url: "http://127.0.0.1:4100/v1".into(),
+            api_key_secret: Some("HARNESS2_CODEX_API_KEY".into()),
+        });
+        assert!(
+            profile_warnings(&v).is_empty(),
+            "{:?}",
+            profile_warnings(&v)
+        );
+
+        let c = base(ProfileKind::Custom);
+        let w = profile_warnings(&c);
+        assert!(w.iter().any(|x| x.starts_with("No executor model")));
+        assert!(w.iter().any(|x| x.starts_with("No judge model")));
     }
 }

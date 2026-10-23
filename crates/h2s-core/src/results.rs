@@ -280,13 +280,31 @@ fn role_of(label: &str) -> HarnessRole {
     }
 }
 
+/// Judge points exactly as harness2 wrote them. JobBench's weighted judging writes floats
+/// (`total_score`/`max_score`), which the `u32` wire fields cannot hold; these raw values are
+/// what optional `points_*` fields will carry once the wire types have them.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Points {
+    passed: Option<f64>,
+    max: Option<f64>,
+}
+
+fn points(v: &Value) -> Points {
+    Points {
+        passed: v.get("n_passed").and_then(Value::as_f64),
+        max: v.get("n_criteria").and_then(Value::as_f64),
+    }
+}
+
 /// A judged row as `core.judge._load_rows` rebuilds it: `graded` and `frac` are recomputed
 /// from `n_passed`/`n_criteria` (weighted JobBench scores are floats).
 fn judged_row(v: &Value) -> Option<JudgedRow> {
     let mode_v = v.get("mode").or_else(|| v.get("arm"))?;
     let mode = Mode::from_token(mode_v.as_str()?)?;
-    let passed = v.get("n_passed").and_then(Value::as_f64);
-    let criteria = v.get("n_criteria").and_then(Value::as_f64);
+    let Points {
+        passed,
+        max: criteria,
+    } = points(v);
     let graded = criteria.is_some_and(|c| c > 0.0) && passed.is_some();
     let frac = match (graded, passed, criteria) {
         (true, Some(p), Some(c)) => Some(p / c),
@@ -317,8 +335,10 @@ fn judged_row(v: &Value) -> Option<JudgedRow> {
 /// A `base_judged.json` row (`{task, label, run_id, score}`), with the raw fraction.
 fn base_row(v: &Value) -> (BaseJudgedRow, Option<f64>) {
     let score = field(v, "score");
-    let passed = score.get("n_passed").and_then(Value::as_f64);
-    let criteria = score.get("n_criteria").and_then(Value::as_f64);
+    let Points {
+        passed,
+        max: criteria,
+    } = points(score);
     let frac = match (passed, criteria) {
         (Some(p), Some(c)) if c > 0.0 => Some(p / c),
         _ => None,
