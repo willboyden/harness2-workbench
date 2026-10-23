@@ -79,7 +79,7 @@ pub struct Cli {
     pub allowed_hosts: Vec<String>,
 
     /// Extra browser Origin accepted with --transport http (repeatable), e.g.
-    /// https://inspector.example.com.
+    /// `https://inspector.example.com`.
     #[arg(long = "allowed-origin", value_name = "ORIGIN")]
     pub allowed_origins: Vec<String>,
 
