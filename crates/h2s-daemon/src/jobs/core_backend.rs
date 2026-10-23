@@ -424,8 +424,17 @@ impl JobBackend for CoreBackend {
             }
             JobSpec::Demo(p) => {
                 let out = v.experiment.clone().ok_or("the demo needs an experiment")?;
-                plan.steps
-                    .push(step("demo", cli::demo(p, &out), ParseKind::Demo)?);
+                let inv = cli::demo(p, &out).map_err(|e| e.to_string())?;
+                // The demo prints the same `[domain] i/n status task` lines as a sweep.
+                plan.steps.push(planner.h2_step(
+                    "demo",
+                    &inv,
+                    ParseKind::Demo,
+                    true,
+                    false,
+                    false,
+                    false,
+                )?);
             }
             JobSpec::Setup(p) => {
                 let inv = cli::setup(p).map_err(|e| e.to_string())?;

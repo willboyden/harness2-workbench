@@ -1133,7 +1133,28 @@ async fn finalize(
     started: Instant,
     pump: Option<Pump>,
 ) {
-    let error = finish.error.map(|e| truncate_chars(&e, 1000));
+    // Failure reasons are shown to every viewer: no host paths.
+    let paths = &mgr.settings().paths;
+    let mut pairs = vec![
+        (
+            mgr.job_dir(&live.id).display().to_string(),
+            "<job>".to_owned(),
+        ),
+        (
+            paths.experiments_dir.display().to_string(),
+            "<experiments>".to_owned(),
+        ),
+        (
+            paths.harness2_home.display().to_string(),
+            "<harness2>".to_owned(),
+        ),
+        (paths.data_dir.display().to_string(), "<data>".to_owned()),
+    ];
+    if let Some(home) = std::env::var_os("HOME") {
+        pairs.push((home.to_string_lossy().into_owned(), "~".to_owned()));
+    }
+    let masker = PathMasker::new(pairs);
+    let error = finish.error.map(|e| truncate_chars(&masker.mask(&e), 1000));
     if let Some(p) = &pump {
         let line = match &error {
             Some(e) => format!("job {}: {e}", finish.status.as_str()),

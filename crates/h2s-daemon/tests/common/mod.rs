@@ -139,8 +139,38 @@ exec sleep 300
 "##;
 
 pub const CHECK_STUB: &str = r##"#!/bin/sh
-# Fake harness2-check (cli/check.py output).
+# Fake harness2-check (cli/check.py output); fails for experiments named *failcheck*.
+case "$HARNESS2_RUNS_DIR" in
+  *failcheck*)
+    echo "FAIL: dependencies/harvey-labs is missing; run harness2-setup lab"
+    echo "Setup incomplete: 1 issue(s). See docs/BENCHMARKS.md."
+    exit 1 ;;
+esac
 echo "Ready: lab/oc; 3 tasks. Model access is not exercised; the first real run is the first model call."
+exit 0
+"##;
+
+pub const JUDGE_STUB: &str = r##"#!/bin/sh
+# Fake harness2-judge (cli/judge.py output, captured in tests/fixtures/cli/std).
+for a in "$@"; do
+  if [ "$a" = "--bases" ]; then
+    echo "  contracts/msa-redline                                base1 1/4"
+    echo "  litigation/motion-draft                              base1 -"
+    echo "wrote $HARNESS2_RUNS_DIR/lab/adapt/lab-oc-agg1/base_judged.json: 2 row(s), 1 graded"
+    exit 2
+  fi
+done
+echo "judging 3 selection(s) under lab-oc-agg1 ..."
+echo "judged.json: 3 row(s), 2 graded, 1 ungraded (judge failure or no pick — NOT zeros)"
+echo "wrote $HARNESS2_RUNS_DIR/lab/adapt/lab-oc-agg1/judged.json"
+exit 2
+"##;
+
+pub const REPORT_STUB: &str = r##"#!/bin/sh
+# Fake harness2-report (cli/report.py output).
+echo "lab-oc modes=parallel"
+echo "========================================"
+echo "  parallel k=1: n=  2 | partial 100.00% | pass 100.0% | picked output: final 2 / candidate 0 / base 0"
 exit 0
 "##;
 
@@ -153,8 +183,8 @@ pub fn fake_harness2_home(dir: &Path) {
         ("harness2", HARNESS2_STUB),
         ("harness2-bridge", BRIDGE_STUB),
         ("harness2-check", CHECK_STUB),
-        ("harness2-judge", CHECK_STUB),
-        ("harness2-report", CHECK_STUB),
+        ("harness2-judge", JUDGE_STUB),
+        ("harness2-report", REPORT_STUB),
         ("harness2-setup", CHECK_STUB),
     ] {
         let p = bin.join(name);

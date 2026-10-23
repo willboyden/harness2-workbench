@@ -237,3 +237,51 @@ async fn cancelling_ends_the_stream_with_the_cancelled_status() {
     }
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn idle_streams_get_heartbeats_at_least_every_15_seconds() {
+    let t = TestServer::start().await;
+    let job: Job = t
+        .create_job(&t.operator, demo_spec("sleep-hb"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    t.wait_job(&job.id, 30, |j| j.status == JobStatus::Running)
+        .await;
+    let resp = t
+        .get(&format!("/api/v1/jobs/{}/events", job.id), Some(&t.viewer))
+        .send()
+        .await
+        .unwrap();
+    let mut stream = resp.bytes_stream();
+    let mut text = String::new();
+    let started = std::time::Instant::now();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(25);
+    while !text.contains("\"type\":\"heartbeat\"") {
+        match tokio::time::timeout_at(deadline, stream.next()).await {
+            Ok(Some(Ok(chunk))) => text.push_str(&String::from_utf8_lossy(&chunk)),
+            other => panic!("no heartbeat within 25 s: {other:?}\n{text}"),
+        }
+    }
+    assert!(started.elapsed() <= Duration::from_secs(20));
+    let hb = events(&text)
+        .into_iter()
+        .find_map(|(f, e)| match e {
+            JobEvent::Heartbeat { ts } => Some((f, ts)),
+            _ => None,
+        })
+        .unwrap();
+    assert!(hb.0.event.is_none() && hb.0.id.is_none());
+    assert!(h2s_daemon::util::parse_rfc3339(&hb.1).is_some());
+    drop(stream);
+    t.post(
+        &format!("/api/v1/jobs/{}/cancel", job.id),
+        Some(&t.operator),
+    )
+    .send()
+    .await
+    .unwrap();
+    t.wait_terminal(&job.id, 30).await;
+    t.stop().await;
+}

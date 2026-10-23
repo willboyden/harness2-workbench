@@ -38,9 +38,11 @@ impl Drop for TelemetryGuard {
 pub fn init(cfg: &Config) -> Result<TelemetryGuard, String> {
     let filter = EnvFilter::try_new(&cfg.file.telemetry.log_level).map_err(|e| e.to_string())?;
     let json = cfg.file.telemetry.log_format == LogFormat::Json;
+    let ansi = std::io::IsTerminal::is_terminal(&std::io::stderr());
     let pretty_layer = (!json).then(|| {
         tracing_subscriber::fmt::layer()
             .with_writer(std::io::stderr)
+            .with_ansi(ansi)
             .with_target(false)
     });
     let json_layer = json.then(|| {

@@ -50,6 +50,8 @@ async fn demo_runs_through_the_core_backend() {
         Some(JobResult::Demo(d)) => assert_eq!((d.done, d.failed), (2, 0)),
         other => panic!("{other:?}"),
     }
+    let p = done.progress.expect("the demo reports progress");
+    assert_eq!((p.done, p.failed, p.total), (2, 0, None));
     let log = full_log(&t, &job.id).await;
     assert!(
         log.iter()
@@ -87,6 +89,106 @@ async fn check_jobs_parse_harness2_check_output() {
         }
         other => panic!("{other:?}"),
     }
+    t.stop().await;
+}
+
+fn pipeline_spec(experiment: &str, judge_bases: bool) -> serde_json::Value {
+    json!({"kind": "pipeline", "params": {
+        "experiment": experiment,
+        "cell": {"bench": "lab", "substrate": "oc"},
+        "options": {"k": 1, "modes": ["parallel"]},
+        "profile": "p1",
+        "judge_bases": judge_bases,
+        "acknowledge_risks": true
+    }})
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pipelines_run_every_step_through_the_core_parsers() {
+    let t = core_server().await;
+    t.put_profile(json!({"name": "p1", "kind": "custom", "solver_model": "m/x"}))
+        .await;
+    t.put_experiment("pipe-ok", None).await;
+    let job: Job = t
+        .create_job(&t.operator, pipeline_spec("pipe-ok", true))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 60).await;
+    assert_terminal(&done, JobStatus::Partial);
+    let steps: Vec<(&str, JobStatus)> = done
+        .steps
+        .iter()
+        .map(|s| (s.name.as_str(), s.status))
+        .collect();
+    assert_eq!(
+        steps,
+        vec![
+            ("preview", JobStatus::Succeeded),
+            ("check", JobStatus::Succeeded),
+            ("run", JobStatus::Partial),
+            ("judge", JobStatus::Partial),
+            ("judge-bases", JobStatus::Partial),
+            ("report", JobStatus::Succeeded),
+        ]
+    );
+    let p = done.progress.unwrap();
+    assert_eq!((p.done, p.failed, p.total), (2, 1, Some(3)));
+    let Some(JobResult::Pipeline(r)) = done.result else {
+        panic!("{:?}", done.result)
+    };
+    assert_eq!(r.steps.len(), 6);
+    assert!(
+        matches!(&r.steps[0], JobResult::Preview(pv) if pv.total_tasks == 3 && pv.summary_namespace == "lab-oc-agg1")
+    );
+    assert!(matches!(&r.steps[1], JobResult::Check(c) if c.ready));
+    assert!(matches!(&r.steps[2], JobResult::Run(x) if x.done == 2 && x.failed == 1));
+    assert!(
+        matches!(&r.steps[3], JobResult::Judge(j) if !j.bases && j.rows == 3 && j.graded == 2 && j.ungraded == 1)
+    );
+    assert!(matches!(&r.steps[4], JobResult::Judge(j) if j.bases && j.rows == 2));
+    assert!(
+        matches!(&r.steps[5], JobResult::Report(rep) if rep.text.starts_with("lab-oc modes=parallel"))
+    );
+
+    // The first step that neither succeeds nor is partial stops the pipeline.
+    t.put_experiment("pipe-failcheck", None).await;
+    let job: Job = t
+        .create_job(&t.operator, pipeline_spec("pipe-failcheck", false))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 60).await;
+    assert_terminal(&done, JobStatus::Failed);
+    let steps: Vec<(&str, JobStatus)> = done
+        .steps
+        .iter()
+        .map(|s| (s.name.as_str(), s.status))
+        .collect();
+    assert_eq!(
+        steps,
+        vec![
+            ("preview", JobStatus::Succeeded),
+            ("check", JobStatus::Failed),
+            ("run", JobStatus::Cancelled),
+            ("judge", JobStatus::Cancelled),
+            ("report", JobStatus::Cancelled),
+        ]
+    );
+    assert!(
+        done.error
+            .as_deref()
+            .unwrap()
+            .starts_with("step check failed"),
+        "{:?}",
+        done.error
+    );
+    let Some(JobResult::Pipeline(r)) = done.result else {
+        panic!()
+    };
+    assert!(matches!(&r.steps[1], JobResult::Check(c) if !c.ready && c.failures.len() == 1));
     t.stop().await;
 }
 
