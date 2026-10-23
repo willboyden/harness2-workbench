@@ -1,0 +1,41 @@
+# Dependency updates, held to the same 14-day cooldown as the rest of the supply chain
+# (docs/SUPPLY-CHAIN.md). Security updates are not delayed by the cooldown.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 10
+    groups:
+      leptos:
+        patterns: ["leptos*", "reactive_graph", "tachys", "server_fn*"]
+      opentelemetry:
+        patterns: ["opentelemetry*", "tracing-opentelemetry"]
+      wasm-bindgen:
+        patterns: ["wasm-bindgen*", "js-sys", "web-sys"]
+    commit-message:
+      prefix: "build(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: "ci(deps)"
+
+  - package-ecosystem: docker
+    directories: ["/deploy/docker"]
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 14
+    commit-message:
+      prefix: "build(docker)"

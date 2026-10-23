@@ -1,0 +1,9 @@
+# Review routing. Security-sensitive paths always need a maintainer review.
+*                                   @willboyden
+/crates/h2s-daemon/src/auth*        @willboyden
+/crates/h2s-daemon/src/security*    @willboyden
+/crates/h2s-core/src/isolation.rs   @willboyden
+/crates/h2s-core/src/env.rs         @willboyden
+/deny.toml                          @willboyden
+/supply-chain/                      @willboyden
+/.github/                           @willboyden

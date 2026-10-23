@@ -1,0 +1,17 @@
+# TLS termination in front of Harness² Studio (used by deploy/compose.yaml).
+# Replace studio.example.com with your hostname; Caddy obtains and renews the certificate.
+# In h2studio.toml set:
+#   [server] public_url = "https://studio.example.com"
+#            allowed_hosts = ["studio.example.com"]
+#            trusted_proxies = ["<the ingress container's subnet, e.g. 172.16.0.0/12>"]
+# The Studio sets its own security headers (CSP, nosniff, frame denial); Caddy only adds HSTS.
+
+studio.example.com {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy studio:8722 {
+		header_up X-Forwarded-Proto {scheme}
+		# Server-sent events (live job logs) must not be buffered.
+		flush_interval -1
+	}
+}
