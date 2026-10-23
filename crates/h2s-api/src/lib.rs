@@ -218,6 +218,16 @@ mod tests {
         assert!(!Role::Operator.allows(Role::Admin));
     }
 
+    /// harness2 writes floats with Python's repr. Parsing must be correctly rounded (serde_json
+    /// `float_roundtrip`), or 17-significant-digit values come back 1 ulp off and the report
+    /// port stops matching upstream byte for byte. Rust's literal parser is the oracle.
+    #[test]
+    fn floats_parse_correctly_rounded() {
+        let v: f64 = serde_json::from_str("-0.12499999999999999").unwrap();
+        assert_eq!(v.to_bits(), (-0.124_999_999_999_999_99_f64).to_bits());
+        assert_ne!(v, -0.125);
+    }
+
     #[test]
     fn error_body_shape_is_stable() {
         let body = ErrorBody {
