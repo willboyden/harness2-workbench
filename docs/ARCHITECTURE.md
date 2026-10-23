@@ -445,5 +445,11 @@ profiles, secrets or tokens, nor the audit log — a prompt-injected agent could
 endpoint at a hostile URL and exfiltrate the referenced API key on the next job. Job-starting tools
 take an optional `wait_secs`; the HTTP transport is stateless at `/mcp`.
 
+**v1.1 (2026-10-23) — request details.** `{mode}` path segments and `/compare` references use
+`parallel`/`sequential`; servers also accept the on-disk tokens `agg`/`seq`. `POST
+/jobs/{id}/cancel` takes no body. `Progress.done` counts tasks finished `ok`/`skipped`,
+`Progress.failed` those finished with any other status (disjoint; finished = done + failed);
+`Progress.total` comes from the job's internal preview step.
+
 **v1.1 (2026-10-23) — dependencies.** `tools/h2s-mock-api` may use `tokio-stream` (already in the
 lockfile) to stream SSE.
