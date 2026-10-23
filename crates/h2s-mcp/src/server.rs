@@ -90,7 +90,7 @@ const MCP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const ADVICE_PAGE: &str = "Ask for a smaller page (limit) or filter the list.";
 const ADVICE_DETAIL: &str = "Fetch narrower data (a single label, a path, or a diff).";
-const ADVICE_JOB: &str = "The structured content holds the whole job; get_job_log pages the log.";
+const ADVICE_JOB: &str = "get_job_log pages through the job's log.";
 
 impl H2sMcp {
     /// A handler that calls the server through `api` with `credentials`.
@@ -1293,7 +1293,7 @@ impl H2sMcp {
                 ("format", "json".to_owned()),
             ],
             Role::Viewer,
-            "The structured content holds every file.",
+            "Export a smaller harness, or read single files with get_harness.",
         )
         .await
     }
@@ -1406,7 +1406,7 @@ impl H2sMcp {
             ],
             &[("path", input.path)],
             Role::Viewer,
-            "The file is large: the structured content holds the server's (up to 2 MiB) copy.",
+            "The file is long; only its start fits here.",
         )
         .await
     }

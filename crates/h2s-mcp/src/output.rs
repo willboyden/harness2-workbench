@@ -22,13 +22,18 @@ pub(crate) fn json<T: Serialize>(value: &T, note: Option<String>, advice: &str) 
         Err(e) => return error(format!("internal: cannot encode the result: {e}")),
     };
     let pretty = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
-    let full_len = pretty.len();
-    let mut content = vec![ContentBlock::text(truncate(pretty, advice))];
+    let structured = value.is_object() && pretty.len() <= MAX_STRUCTURED_BYTES;
+    let advice = if structured {
+        format!("This result's structured content holds the complete value. {advice}")
+    } else {
+        advice.to_owned()
+    };
+    let mut content = vec![ContentBlock::text(truncate(pretty, advice.trim_end()))];
     if let Some(note) = note {
         content.push(ContentBlock::text(note));
     }
     let mut result = CallToolResult::success(content);
-    if value.is_object() && full_len <= MAX_STRUCTURED_BYTES {
+    if structured {
         result.structured_content = Some(value);
     }
     result
@@ -97,9 +102,18 @@ mod tests {
         let text = first_text(&result);
         assert!(text.len() < MAX_TEXT_BYTES + 400);
         assert!(text.contains("[output truncated: the full result is"));
-        assert!(text.ends_with("Use paging.]"));
+        assert!(text.ends_with("structured content holds the complete value. Use paging.]"));
         // Programmatic clients still get the whole value.
         assert!(result.structured_content.is_some());
+
+        // Too big to attach: the note must not promise it.
+        let huge = "x".repeat(MAX_STRUCTURED_BYTES);
+        let result = json(&serde_json::json!({ "text": huge }), None, "Use paging.");
+        assert!(result.structured_content.is_none());
+        assert!(first_text(&result).ends_with(
+            "only the first 100000 are shown, so the JSON above \
+                                               is incomplete. Use paging.]"
+        ));
     }
 
     #[test]

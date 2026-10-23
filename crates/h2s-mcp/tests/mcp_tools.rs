@@ -1100,3 +1100,37 @@ async fn cancelling_a_wait_stops_the_server_side_polling() {
         "polling continued after cancellation"
     );
 }
+
+#[tokio::test]
+async fn long_results_are_truncated_with_a_note() {
+    let studio = Studio::start().await;
+    let long = "a line of rollout output\n".repeat(6_000); // 150 KB
+    let content = typed::<h2s_api::FileContent>(json!({
+        "path": "out/log.txt", "bytes": long.len(), "text": long, "truncated": false,
+        "mime": "text/plain"
+    }));
+    get_route(&task_route("/modes/parallel/rollouts/agg1/file"), TOKEN)
+        .respond_with(ResponseTemplate::new(200).set_body_json(content))
+        .mount(&studio.server)
+        .await;
+    let client = connect(&studio.url(), TOKEN).await;
+    let result = call(
+        &client,
+        "read_rollout_file",
+        task_args(json!({"mode": "parallel", "label": "agg1", "path": "out/log.txt"})),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(false));
+    let t = text(&result);
+    assert!(t.len() < 100_500, "{} bytes", t.len());
+    assert!(
+        t.contains("[output truncated: the full result is"),
+        "{}",
+        &t[t.len() - 300..]
+    );
+    assert!(t.contains("structured content holds the complete value"));
+    let full = result
+        .structured_content
+        .expect("structured content under 256 KiB");
+    assert_eq!(full["text"].as_str().unwrap().len(), long.len());
+}
