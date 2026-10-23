@@ -54,11 +54,12 @@ pub async fn info(
     }
     let container_runtime = if state.cfg.isolation() == Isolation::Container {
         let runtime = state.cfg.file.isolation.container.runtime.as_str();
-        let answers = state.doctor.cached().await.is_none_or(|r| {
-            r.checks
-                .iter()
-                .any(|c| c.id == runtime && c.level == h2s_api::CheckLevel::Ok)
-        });
+        let answers = state.jobs.container_runtime_answered().await
+            || state.doctor.cached().await.is_some_and(|r| {
+                r.checks
+                    .iter()
+                    .any(|c| c.id == runtime && c.level == h2s_api::CheckLevel::Ok)
+            });
         answers.then(|| runtime.to_owned())
     } else {
         None

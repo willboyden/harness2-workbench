@@ -908,3 +908,74 @@ fn container_plans_use_fixed_hardening_and_numeric_users() {
         }
     }
 }
+
+#[test]
+fn container_installs_plan_on_the_host_and_run_under_the_mount_point() {
+    use h2s_daemon::jobs::backend::{ContainerSettings, JobBackend, PlanInput};
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("data/harness2");
+    let job_dir = d.path().join("job");
+    std::fs::create_dir_all(&job_dir).unwrap();
+    let snapshot = h2s_daemon::secrets::SecretSnapshot::default();
+    let container = ContainerSettings {
+        runtime: h2s_daemon::config::RuntimeKind::Podman,
+        image: "harness2-studio-runner:0.1.0".into(),
+        network: "h2s-egress".into(),
+        cpus: 2.0,
+        memory_mb: 4096,
+        pids_limit: 512,
+        user: "1000:1000".into(),
+    };
+    let spec = h2s_api::JobSpec::InstallHarness2(h2s_api::InstallParams {
+        rev: None,
+        extras: vec![h2s_api::InstallExtra::Bridge],
+        reinstall: false,
+    });
+    let input = PlanInput {
+        job_id: "0190c5f0-0000-7000-8000-000000000001",
+        spec: &spec,
+        isolation: h2s_api::Isolation::Container,
+        harness2_home: &home,
+        harness2_managed: true,
+        experiment: None,
+        job_dir: &job_dir,
+        split_file: None,
+        profile: None,
+        secrets: &snapshot,
+        container: Some(&container),
+    };
+    let plan = h2s_daemon::jobs::core_backend::CoreBackend
+        .plan(&input)
+        .unwrap();
+    let names: Vec<&str> = plan.steps.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names.first(), Some(&"init"));
+    assert_eq!(names.last(), Some(&"import"));
+    let host = home.display().to_string();
+    for s in &plan.steps {
+        assert_eq!(s.program, "podman");
+        let argv = s.args.join(" ");
+        assert!(argv.contains(&format!("{host}:/h2s/harness2")), "{argv}");
+        assert!(
+            !argv.contains(&format!("{host}:/h2s/harness2:ro")),
+            "install needs a writable checkout: {argv}"
+        );
+        // Everything after the image runs in the container: no host path there.
+        let after_image = argv.split("harness2-studio-runner:0.1.0").nth(1).unwrap();
+        assert!(!after_image.contains(&host), "{after_image}");
+        assert!(argv.contains("--network h2s-egress") && argv.contains("--user 1000:1000"));
+    }
+    let init = plan.steps[0].args.join(" ");
+    assert!(
+        init.contains("-w /h2s ") && init.ends_with("git init -q /h2s/harness2"),
+        "{init}"
+    );
+    let import = plan.steps.last().unwrap().args.join(" ");
+    assert!(
+        import.contains("/h2s/harness2/.venv/bin/python -I -c"),
+        "{import}"
+    );
+    assert!(
+        import.contains("litellm"),
+        "the bridge extra is checked: {import}"
+    );
+}

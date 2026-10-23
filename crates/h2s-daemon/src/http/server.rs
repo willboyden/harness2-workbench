@@ -159,6 +159,7 @@ impl Server {
             Arc::clone(&metrics),
         );
         jobs.start().await?;
+        jobs.probe_container_runtime();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let hosts = host_allowlist(&cfg, bound);
         let per_minute = cfg.file.server.login_attempts_per_minute;

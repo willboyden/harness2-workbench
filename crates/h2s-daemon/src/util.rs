@@ -31,20 +31,17 @@ pub fn now_rfc3339() -> String {
     rfc3339(now_unix())
 }
 
-/// The current time as RFC 3339 UTC with milliseconds (log lines).
+/// RFC 3339 UTC with exactly three fractional digits.
+const MILLIS_FORMAT: &[time::format_description::BorrowedFormatItem<'static>] = time::macros::format_description!(
+    "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
+);
+
+/// The current time as RFC 3339 UTC with milliseconds, fixed width (log lines).
 #[must_use]
 pub fn now_rfc3339_millis() -> String {
-    let now = OffsetDateTime::now_utc();
-    let millis = now.millisecond();
-    let t = now.replace_millisecond(millis).unwrap_or(now);
-    // `replace_millisecond` zeroes the sub-millisecond part, so RFC 3339 prints 3 digits
-    // unless the value is a whole second, in which case we add them for a fixed width.
-    let s = t.format(&Rfc3339).unwrap_or_default();
-    if s.contains('.') {
-        s
-    } else {
-        s.replacen('Z', ".000Z", 1)
-    }
+    OffsetDateTime::now_utc()
+        .format(MILLIS_FORMAT)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00.000Z".to_owned())
 }
 
 /// Parse an RFC 3339 timestamp into Unix seconds.
@@ -211,10 +208,12 @@ mod tests {
 
     #[test]
     fn millis_timestamps_have_fixed_width() {
-        let s = now_rfc3339_millis();
-        assert!(s.ends_with('Z'), "{s}");
-        let frac = s.rsplit('.').next().unwrap_or_default();
-        assert_eq!(frac.len(), 4, "{s}"); // three digits + Z
+        for _ in 0..2000 {
+            let s = now_rfc3339_millis();
+            assert_eq!(s.len(), 24, "{s}");
+            assert!(s.ends_with('Z'), "{s}");
+            assert!(parse_rfc3339(&s).is_some(), "{s}");
+        }
     }
 
     #[test]

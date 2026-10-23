@@ -904,3 +904,91 @@ fn restart_recovers_running_jobs_and_kills_their_processes() {
         t.stop().await;
     });
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graceful_shutdown_stops_running_jobs_and_keeps_queued_ones() {
+    let t = TestServer::start_with(|s| s.file.jobs.max_concurrent = 1).await;
+    let running: Job = t
+        .create_job(&t.operator, demo_spec("sleep-sd"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    t.wait_job(&running.id, 30, |j| j.status == JobStatus::Running)
+        .await;
+    let child: i32 = wait_file(&t.experiment_dir("sleep-sd").join("child.pid"), 30)
+        .await
+        .trim()
+        .parse()
+        .unwrap();
+    let queued: Job = t
+        .create_job(&t.operator, demo_spec("ok-sd"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let (rid, qid) = (running.id.clone(), queued.id.clone());
+    let root = t.stop().await;
+    assert!(
+        wait_gone(child, 15).await,
+        "the job's process outlived the server"
+    );
+    let conn = h2s_daemon::db::open_connection(&root.path().join("data/studio.db")).unwrap();
+    let r = h2s_daemon::db::jobs::get(&conn, &rid).unwrap().unwrap();
+    assert_eq!(r.job.status, JobStatus::Failed);
+    assert_eq!(r.job.error.as_deref(), Some("server stopped"));
+    let q = h2s_daemon::db::jobs::get(&conn, &qid).unwrap().unwrap();
+    assert_eq!(
+        q.job.status,
+        JobStatus::Queued,
+        "queued jobs wait for the next start"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn old_job_logs_are_deleted_by_retention() {
+    let t = TestServer::start().await;
+    let job: Job = t
+        .create_job(&t.operator, demo_spec("ok-ret"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    t.wait_terminal(&job.id, 30).await;
+    let root = t.stop().await;
+    let log = root
+        .path()
+        .join("data/logs/jobs")
+        .join(format!("{}.log", job.id));
+    assert!(log.exists());
+    // Age the job by 2 days, then start with a 1-day retention.
+    let conn = h2s_daemon::db::open_connection(&root.path().join("data/studio.db")).unwrap();
+    conn.execute(
+        "UPDATE jobs SET finished_at = finished_at - 172800 WHERE id = ?1",
+        [&job.id],
+    )
+    .unwrap();
+    drop(conn);
+    let mut setup = Setup::new(root.path());
+    setup.file.jobs.log_retention_days = 1;
+    let t = TestServer::start_in(root, setup).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while log.exists() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the old log was not deleted"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let chunk: LogChunk = t
+        .get(&format!("/api/v1/jobs/{}/log", job.id), Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(chunk.lines.is_empty() && chunk.complete);
+    assert_eq!(t.job(&job.id).await.status, JobStatus::Succeeded);
+    t.stop().await;
+}

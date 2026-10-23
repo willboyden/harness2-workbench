@@ -798,7 +798,9 @@ impl JobManager {
                     tracing::error!(error = %e, "could not read a job log");
                     ApiError::internal("could not read the job log")
                 })?;
-        let complete = job.status.is_terminal() && next >= job.log_lines;
+        // A terminal job's log ends at the end of its file (also when retention deleted it).
+        let short = u64::try_from(lines.len()).unwrap_or(u64::MAX) < limit;
+        let complete = job.status.is_terminal() && (next >= job.log_lines || short);
         Ok(LogChunk {
             lines,
             next,
@@ -1247,6 +1249,30 @@ impl JobManager {
 
     pub(crate) async fn resolved_container(&self) -> Result<ContainerSettings, String> {
         self.container_settings().await
+    }
+
+    /// `true` once the container runtime answered (container settings resolved).
+    pub async fn container_runtime_answered(&self) -> bool {
+        self.container_settings.lock().await.is_some()
+    }
+
+    /// Ask the container runtime once in the background (container isolation only), so the
+    /// first container job does not wait for it and `/system/info` can report it.
+    pub fn probe_container_runtime(self: &Arc<Self>) {
+        if self.settings.isolation != Isolation::Container {
+            return;
+        }
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            match me.container_settings().await {
+                Ok(c) => {
+                    tracing::info!(runtime = c.runtime.as_str(), user = %c.user, "container runtime answered");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "the container runtime did not answer; container jobs will fail until it does");
+                }
+            }
+        });
     }
 
     pub(crate) fn job_dir(&self, id: &str) -> PathBuf {
