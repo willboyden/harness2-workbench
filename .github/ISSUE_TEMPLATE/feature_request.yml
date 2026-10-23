@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a capability or an improvement.
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The workflow or question, not the solution yet.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Web UI, REST API, MCP server, harness2 coverage, Security, Deployment, Docs, Other]
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
