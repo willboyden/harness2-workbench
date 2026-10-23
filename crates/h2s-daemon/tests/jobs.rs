@@ -1016,3 +1016,67 @@ async fn a_secret_in_argv_refuses_the_step() {
     assert!(!log.iter().any(|l| l.text.contains(&t.secret_value)));
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workbuddy_and_the_bridge_refuse_container_isolation() {
+    let t = TestServer::start_with(|s| {
+        s.file.isolation.mode = h2s_api::Isolation::Container;
+        // An explicit user: no runtime is asked anything.
+        s.file.isolation.container.user = "1000:1000".into();
+    })
+    .await;
+    t.put_profile(
+        json!({"name": "p1", "kind": "custom", "solver_model": "m/x", "codex_model": "gpt-test"}),
+    )
+    .await;
+    let wb = json!({"kind": "check", "params": {"cell": {"bench": "wb", "subset": "office"}}});
+    let r = t.create_job(&t.operator, wb).await;
+    assert_eq!(r.status(), 409);
+    assert!(
+        r.json::<ErrorBody>()
+            .await
+            .unwrap()
+            .error
+            .message
+            .contains("host isolation")
+    );
+    let r = t
+        .create_job(
+            &t.admin,
+            json!({"kind": "bridge", "params": {"profile": "p1"}}),
+        )
+        .await;
+    assert_eq!(r.status(), 409);
+    // Runs need no acknowledgement in container mode.
+    t.put_experiment("ok-cont", None).await;
+    let mut spec = run_spec("ok-cont", "p1", None);
+    spec["params"]["acknowledge_risks"] = json!(false);
+    let r = t.create_job(&t.operator, spec).await;
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    let info: h2s_api::SystemInfo = t
+        .get("/api/v1/system/info", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(info.isolation, h2s_api::Isolation::Container);
+    assert!(info.features.contains(&"container".to_owned()));
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preacknowledged_host_risks_need_no_flag() {
+    let t = TestServer::start_with(|s| s.file.isolation.preacknowledge_host_risks = true).await;
+    t.put_profile(json!({"name": "p1", "kind": "custom", "solver_model": "m/x"}))
+        .await;
+    t.put_experiment("ok-pre", None).await;
+    let mut spec = run_spec("ok-pre", "p1", None);
+    spec["params"]["acknowledge_risks"] = json!(false);
+    let r = t.create_job(&t.operator, spec).await;
+    assert_eq!(r.status(), 201);
+    let j: Job = r.json().await.unwrap();
+    t.wait_terminal(&j.id, 30).await;
+    t.stop().await;
+}
