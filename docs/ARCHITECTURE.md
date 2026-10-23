@@ -439,5 +439,11 @@ accept `--config` and print the new token as the only STDOUT line (explanations 
 the first text block); refusals set `is_error` and name the server's error code. Stdio
 configuration: `H2S_SERVER_URL`, `H2S_TOKEN`.
 
+**v1.1 (2026-10-23) — MCP tools.** Added `list_splits` (GET `/splits`, viewer) and
+`update_experiment` (PATCH `/experiments/{exp}`, operator). Rule: MCP never exposes writes to
+profiles, secrets or tokens, nor the audit log — a prompt-injected agent could repoint a profile's
+endpoint at a hostile URL and exfiltrate the referenced API key on the next job. Job-starting tools
+take an optional `wait_secs`; the HTTP transport is stateless at `/mcp`.
+
 **v1.1 (2026-10-23) — dependencies.** `tools/h2s-mock-api` may use `tokio-stream` (already in the
 lockfile) to stream SSE.

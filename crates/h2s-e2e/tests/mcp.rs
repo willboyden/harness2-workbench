@@ -57,6 +57,8 @@ const EXPECTED_TOOLS: &[&str] = &[
     "get_manifest",
     "install_harness2",
     "start_bridge",
+    "list_splits",
+    "update_experiment",
 ];
 
 async fn connect(studio: &Studio, token: &str) -> RunningService<RoleClient, ()> {
