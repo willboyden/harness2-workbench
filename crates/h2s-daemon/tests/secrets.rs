@@ -62,7 +62,7 @@ async fn planted_secrets_never_appear_in_responses_or_logs() {
     t.put_experiment("ok-sec", None).await;
 
     let mut seen = String::new();
-    let mut grab = |label: &str, r: reqwest::Response| {
+    let grab = |label: &str, r: reqwest::Response| {
         let status = r.status();
         let headers = format!("{:?}", r.headers());
         (label.to_owned(), status, headers, r)
