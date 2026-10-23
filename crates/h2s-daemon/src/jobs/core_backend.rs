@@ -194,12 +194,24 @@ impl Planner<'_> {
             container: JOBFILES_MOUNT.to_owned(),
             read_only: true,
         });
+        // The proxy goes in as fixed values, not by name: the runtime CLI itself must not
+        // see a proxy that only exists on the jobs network.
+        let mut env_values = Vec::new();
+        if let Some(p) = &c.proxy {
+            for n in h2s_core::env::CONTAINER_PROXY_VARS {
+                env_values.push(((*n).to_owned(), p.clone()));
+            }
+            for n in ["NO_PROXY", "no_proxy"] {
+                env_values.push((n.to_owned(), h2s_core::env::CONTAINER_NO_PROXY.to_owned()));
+            }
+        }
         let spec = ContainerSpec {
             runtime: c.runtime.core(),
             image: c.image.clone(),
             job_id: input.job_id.to_owned(),
             mounts,
             env_names: self.env.iter().map(|(n, _)| n.clone()).collect(),
+            env_values,
             network: c.network.clone(),
             cpus: Some(c.cpus),
             memory_mb: Some(c.memory_mb),

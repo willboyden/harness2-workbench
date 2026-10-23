@@ -26,6 +26,8 @@ pub struct ContainerSettings {
     pub pids_limit: u32,
     /// `uid:gid` or a user name; never empty once resolved.
     pub user: String,
+    /// `http://host:port` set as the proxy inside the container, when configured.
+    pub proxy: Option<String>,
 }
 
 /// Everything a backend may use to plan one job.

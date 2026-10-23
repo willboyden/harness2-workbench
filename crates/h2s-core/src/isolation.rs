@@ -51,6 +51,9 @@ pub struct ContainerSpec {
     pub mounts: Vec<Mount>,
     /// Variable NAMES passed through with `-e NAME` (values come from the runtime's env).
     pub env_names: Vec<String>,
+    /// Fixed settings passed as `-e NAME=VALUE` (the egress proxy URL). Never a secret: the
+    /// value is on the runtime's command line, which local users can read.
+    pub env_values: Vec<(String, String)>,
     /// `none`, or the name of a pre-created network (e.g. one behind an egress proxy).
     pub network: String,
     pub cpus: Option<f64>,
@@ -218,12 +221,13 @@ fn user_ok(u: &str) -> std::result::Result<(), &'static str> {
 
 /// `<runtime> run --rm --name h2s-job-<id> --label <JOB_LABEL>=<id> --cap-drop ALL
 /// --security-opt no-new-privileges --pids-limit N [--cpus] [--memory] --network NET
-/// [-v ...] [-e NAME ...] -w WORKDIR [--user U] <image> <program> <args...>`.
+/// [-v ...] [-e NAME ...] [-e NAME=VALUE ...] -w WORKDIR [--user U] <image> <program> <args...>`.
 ///
 /// The returned argv starts with the runtime program. Refused: an unpinned or malformed
 /// image (including the `latest` tag), a job id outside `[A-Za-z0-9][A-Za-z0-9_.-]*`, a mount
 /// point other than the three fixed ones or used twice, a writable job-files mount, a host
-/// path that is not absolute or contains `:`, `,`, `..` or control characters, the `host`
+/// path that is not absolute or contains `:`, `,`, `..` or control characters, a fixed
+/// value with control characters (or one that repeats a passed-through name), the `host`
 /// network, a non-numeric user, non-positive limits, and NUL bytes anywhere. A numeric uid 0 is
 /// accepted for rootless runtimes (see [`ContainerSpec::user`]); `--cap-drop ALL` and
 /// `no-new-privileges` apply regardless.
@@ -259,6 +263,19 @@ pub fn run_argv(spec: &ContainerSpec, program: &str, args: &[String]) -> Result<
         err(
             "env_names",
             "variable names must match [A-Za-z_][A-Za-z0-9_]*",
+        );
+    }
+    let values_ok = spec.env_values.iter().all(|(n, v)| {
+        env_var_name_ok(n)
+            && !spec.env_names.contains(n)
+            && v.len() <= 4096
+            && !v.chars().any(char::is_control)
+    });
+    if !values_ok {
+        err(
+            "env_values",
+            "names must match [A-Za-z_][A-Za-z0-9_]* and not repeat env_names; values must \
+             have no control characters",
         );
     }
     let net = spec.network.as_str();
@@ -358,6 +375,10 @@ pub fn run_argv(spec: &ContainerSpec, program: &str, args: &[String]) -> Result<
         argv.push("-e".into());
         argv.push(n.clone());
     }
+    for (n, v) in &spec.env_values {
+        argv.push("-e".into());
+        argv.push(format!("{n}={v}"));
+    }
     argv.push("-w".into());
     argv.push(spec.workdir.clone());
     if let Some(u) = &spec.user {
@@ -434,6 +455,7 @@ mod tests {
                 },
             ],
             env_names: vec!["HARNESS2_RUNS_DIR".into(), "OPENCODE_CONFIG".into()],
+            env_values: vec![("HTTPS_PROXY".into(), "http://egress:3128".into())],
             network: "h2s-egress".into(),
             cpus: Some(4.0),
             memory_mb: Some(8192),
@@ -481,6 +503,8 @@ mod tests {
             "HARNESS2_RUNS_DIR",
             "-e",
             "OPENCODE_CONFIG",
+            "-e",
+            "HTTPS_PROXY=http://egress:3128",
             "-w",
             "/h2s/harness2",
             "--user",
@@ -525,6 +549,18 @@ mod tests {
             ("memory_mb", Box::new(|s| s.memory_mb = Some(1))),
             ("workdir", Box::new(|s| s.workdir = "rel".into())),
             ("env_names", Box::new(|s| s.env_names = vec!["A=B".into()])),
+            (
+                "env_values",
+                Box::new(|s| s.env_values = vec![("A=B".into(), "x".into())]),
+            ),
+            (
+                "env_values",
+                Box::new(|s| s.env_values = vec![("P".into(), "http://a\n-v /:/x".into())]),
+            ),
+            (
+                "env_values",
+                Box::new(|s| s.env_values = vec![("OPENCODE_CONFIG".into(), "/x".into())]),
+            ),
             ("mounts", Box::new(|s| s.mounts[0].host = "/a:/b".into())),
             ("mounts", Box::new(|s| s.mounts[0].host = "/a,b".into())),
             (

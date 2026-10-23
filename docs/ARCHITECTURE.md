@@ -453,3 +453,21 @@ take an optional `wait_secs`; the HTTP transport is stateless at `/mcp`.
 
 **v1.1 (2026-10-23) — dependencies.** `tools/h2s-mock-api` may use `tokio-stream` (already in the
 lockfile) to stream SSE.
+
+**v1.2 (2026-10-23) — job egress.** Host-mode jobs also receive the server's own proxy and CA
+variables when set (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` and their lowercase
+forms; `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`), so the
+compose deployment, where the Studio sits on an internal network, reaches the allowlisted hosts
+through `h2studio egress-proxy`. Profiles cannot set the uppercase proxy names (`RESERVED_ENV`).
+Container jobs get none of the server's variables; `[isolation.container] proxy =
+"http://host:port"` (no credentials, needs a network other than `none`) sets
+`HTTPS_PROXY`/`HTTP_PROXY`/`https_proxy`/`http_proxy` and `NO_PROXY`/`no_proxy` =
+`localhost,127.0.0.1,::1` inside the container as fixed `-e NAME=VALUE` arguments
+(`ContainerSpec::env_values`; never secrets), not by name, so the runtime CLI never sees a proxy
+that exists only on the jobs network.
+
+**v1.2 (2026-10-23) — container HOME.** On a rootless runtime jobs run as container uid 0 with
+every capability dropped, which cannot write `/home/node`. The runner image therefore sets
+`HOME=/h2s/home`, a sticky world-writable directory in the throwaway container layer; the
+all-in-one image sets `HOME=/home/node` back for the server user. Custom runner images must give
+the job user a writable `HOME`.

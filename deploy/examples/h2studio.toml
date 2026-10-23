@@ -60,12 +60,22 @@ preacknowledge_host_risks = false
 [isolation.container]
 runtime = "docker"
 image = "harness2-studio-runner:0.1.0"
-# "none" for no network (the demo works; model calls do not), or a network you created behind
-# `h2studio egress-proxy` (see deploy/compose.yaml).
+# "none" for no network (the demo works; model calls and installs do not), or an internal
+# network you created with an `h2studio egress-proxy` container on it (and on an uplink), e.g.
+#   docker network create --internal h2s-jobs
+#   docker network create h2s-uplink
+#   docker run -d --name h2s-egress --network h2s-jobs -v ./h2studio.toml:/config/h2studio.toml:ro \
+#     harness2-studio:0.1.0 egress-proxy --config /config/h2studio.toml
+#   docker network connect h2s-uplink h2s-egress
 network = "none"
+# The proxy as job containers reach it, e.g. "http://h2s-egress:3128". Set inside each job as
+# HTTPS_PROXY/HTTP_PROXY (and lowercase), with NO_PROXY=localhost,127.0.0.1,::1. Empty = none.
+proxy = ""
 cpus = 4.0
 memory_mb = 8192
 pids_limit = 2048
+# Empty = detected: 0:0 on rootless Docker/Podman (container root is your own unprivileged
+# user there), your uid:gid on a rootful runtime.
 user = ""
 
 [egress]

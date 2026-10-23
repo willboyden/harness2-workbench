@@ -840,6 +840,7 @@ fn container_plans_use_fixed_hardening_and_numeric_users() {
         memory_mb: 4096,
         pids_limit: 512,
         user: "0:0".into(),
+        proxy: None,
     };
     let check = h2s_api::JobSpec::Check(h2s_api::CheckParams {
         cell: serde_json::from_value(json!({"bench": "lab"})).unwrap(),
@@ -889,6 +890,10 @@ fn container_plans_use_fixed_hardening_and_numeric_users() {
             "{argv}"
         );
         assert!(step.container.is_some() && step.runtime_env);
+        assert!(
+            !argv.to_ascii_uppercase().contains("PROXY"),
+            "no proxy configured: {argv}"
+        );
         // Values never reach argv: env vars travel by name.
         for (k, v) in &step.env {
             assert!(!argv.contains(&format!("{k}={v}")));
@@ -925,6 +930,7 @@ fn container_installs_plan_on_the_host_and_run_under_the_mount_point() {
         memory_mb: 4096,
         pids_limit: 512,
         user: "1000:1000".into(),
+        proxy: Some("http://egress:3128".into()),
     };
     let spec = h2s_api::JobSpec::InstallHarness2(h2s_api::InstallParams {
         rev: None,
@@ -963,6 +969,21 @@ fn container_installs_plan_on_the_host_and_run_under_the_mount_point() {
         let after_image = argv.split("harness2-studio-runner:0.1.0").nth(1).unwrap();
         assert!(!after_image.contains(&host), "{after_image}");
         assert!(argv.contains("--network h2s-egress") && argv.contains("--user 1000:1000"));
+        // git, uv and npm reach the network only through the configured proxy.
+        for must in [
+            "-e HTTPS_PROXY=http://egress:3128",
+            "-e https_proxy=http://egress:3128",
+            "-e HTTP_PROXY=http://egress:3128",
+            "-e NO_PROXY=localhost,127.0.0.1,::1",
+        ] {
+            assert!(argv.contains(must), "{must} missing in {argv}");
+        }
+        // ... and the runtime CLI does not get it (it may talk to its daemon over TCP).
+        assert!(
+            s.env
+                .iter()
+                .all(|(n, _)| !n.to_ascii_uppercase().ends_with("_PROXY"))
+        );
     }
     let init = plan.steps[0].args.join(" ");
     assert!(

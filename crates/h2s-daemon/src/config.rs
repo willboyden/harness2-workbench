@@ -228,6 +228,9 @@ pub struct ContainerSection {
     pub pids_limit: u32,
     /// Empty = the server's own host user (detected; see `jobs::container`).
     pub user: String,
+    /// `http://host:port` of an `h2studio egress-proxy` reachable on `network`. Jobs get it as
+    /// `HTTP(S)_PROXY`; empty = no proxy variables inside the container.
+    pub proxy: String,
 }
 
 impl Default for ContainerSection {
@@ -240,6 +243,7 @@ impl Default for ContainerSection {
             memory_mb: 8192,
             pids_limit: 2048,
             user: String::new(),
+            proxy: String::new(),
         }
     }
 }
@@ -849,6 +853,18 @@ pub fn network_ok(n: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
+/// A container proxy URL: `http://host:port` with an explicit port, and no credentials, path
+/// or query (the value is on the runtime's command line).
+#[must_use]
+pub fn proxy_url_ok(u: &str) -> bool {
+    let Some(rest) = u.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.strip_suffix('/').unwrap_or(rest);
+    !authority.contains(['@', '/', '?', '#'])
+        && split_host_port(authority).is_some_and(|(_, port)| port.is_some_and(|p| p != 0))
+}
+
 /// `uid` or `uid:gid` (numeric).
 #[must_use]
 pub fn container_user_ok(u: &str) -> bool {
@@ -1116,6 +1132,19 @@ fn validate(
             "isolation.container.user: {:?} must be a numeric uid or uid:gid",
             c.user
         ));
+    }
+    if !c.proxy.is_empty() {
+        if !proxy_url_ok(&c.proxy) {
+            problems.push(
+                "isolation.container.proxy: must be http://host:port, without credentials or a path"
+                    .to_owned(),
+            );
+        } else if c.network == "none" {
+            problems.push(
+                "isolation.container.proxy: needs a network; with network = \"none\" no proxy is reachable"
+                    .to_owned(),
+            );
+        }
     }
 
     let e = &file.egress;
@@ -1480,6 +1509,32 @@ mode = "proxy"
         }
         for bad in ["1000:", ":1", "Root", "runner", "a b", "1:2:3", ""] {
             assert!(!container_user_ok(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn container_proxy_urls() {
+        for ok in [
+            "http://egress:3128",
+            "http://egress:3128/",
+            "http://10.0.0.2:3128",
+            "http://[fd00::2]:3128",
+        ] {
+            assert!(proxy_url_ok(ok), "{ok}");
+        }
+        for bad in [
+            "egress:3128",
+            "https://egress:3128",
+            "http://egress",
+            "http://egress:0",
+            "http://user:pass@egress:3128",
+            "http://egress:3128/path",
+            "http://egress:3128?x=1",
+            "http://egr ess:3128",
+            "http://",
+            "",
+        ] {
+            assert!(!proxy_url_ok(bad), "{bad}");
         }
     }
 
