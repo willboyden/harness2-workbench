@@ -419,6 +419,15 @@ fn script_ref_regex(surface: Surface) -> Option<&'static Regex> {
     }
 }
 
+/// Every script `src` invokes (upstream `script_ref.findall`), in order.
+pub(crate) fn script_refs(surface: Surface, src: &str) -> Vec<&str> {
+    script_ref_regex(surface).map_or_else(Vec::new, |rx| {
+        rx.captures_iter(src)
+            .filter_map(|c| c.get(1).map(|m| m.as_str()))
+            .collect()
+    })
+}
+
 fn build_script_ref(skill_dir: &str) -> Option<Regex> {
     let sd = regex::escape(skill_dir);
     Regex::new(&format!(
@@ -564,9 +573,6 @@ fn check_hooks(surface: Surface, src: &str, errs: &mut Vec<String>) {
 
 fn check_script_refs(surface: Surface, tree: &Tree, errs: &mut Vec<String>) {
     let s = spec(surface);
-    let Some(rx) = script_ref_regex(surface) else {
-        return;
-    };
     let have: BTreeSet<&str> = tree
         .keys()
         .filter(|r| match_script(r) || match_skill_script(surface, r))
@@ -579,10 +585,7 @@ fn check_script_refs(surface: Surface, tree: &Tree, errs: &mut Vec<String>) {
             continue;
         }
         let src = tree.get(rel).map_or("", String::as_str);
-        for cap in rx.captures_iter(src) {
-            let Some(r) = cap.get(1).map(|m| m.as_str()) else {
-                continue;
-            };
+        for r in script_refs(surface, src) {
             let file = r.rsplit('/').next().unwrap_or(r);
             if RESERVED_SCRIPTS.contains(&file) {
                 continue;

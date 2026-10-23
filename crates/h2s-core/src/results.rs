@@ -1279,31 +1279,9 @@ impl ExperimentDir {
                 text: "nothing to report\n".to_owned(),
             });
         }
-        // Upstream `_spend_and_fallbacks`, over the summaries in sorted order.
-        let mut fell_back: BTreeMap<(Mode, u32), u32> = BTreeMap::new();
-        let mut usd: BTreeMap<(Mode, u32), f64> = BTreeMap::new();
-        for (_, s) in self.summaries(sweep)? {
-            let Some(s) = s else { continue };
-            for &mode in &modes {
-                let key = (mode, sweep.k);
-                let (fb, spend, sel) = mode_spend(&s.raw, mode);
-                *fell_back.entry(key).or_insert(0) += fb;
-                let acc = usd.get(&key).copied().unwrap_or(0.0);
-                usd.insert(key, acc + spend + sel);
-            }
-        }
+        let (fell_back, usd) = self.spend_and_fallbacks(sweep, &modes)?;
         let summaries = report::summarise(&rows, &fell_back, &usd);
-        let (rendered, notes) = report::render(&summaries, &title, &sweep.bench_name);
-        let mut by_mode: Vec<&h2s_api::ModeSummary> = summaries.iter().collect();
-        by_mode.sort_by_key(|s| (s.mode, s.k));
-        let spend = pyfmt::sum(by_mode.iter().map(|s| s.usd));
-        let mut text = format!("{rendered}\n");
-        if spend != 0.0 {
-            text.push_str(&format!(
-                "\n  improver (editors, composer, selection, reflection) spend across reported \
-                 modes: ${spend:.2}\n"
-            ));
-        }
+        let (text, notes) = report_text(&summaries, &title, &sweep.bench_name);
         Ok(ScoreReport {
             title,
             bench_name: sweep.bench_name.clone(),
@@ -1312,6 +1290,25 @@ impl ExperimentDir {
             base_score,
             text,
         })
+    }
+
+    /// Upstream `cli/report._spend_and_fallbacks` for one sweep: fell-back stage counts and
+    /// improver spend keyed by `(mode, k)`, accumulated over the summaries in upstream's
+    /// sorted order (the order matters for the float sums).
+    fn spend_and_fallbacks(&self, sweep: &Namespace, modes: &[Mode]) -> Result<(FellBack, Spend)> {
+        let mut fell_back = FellBack::new();
+        let mut usd = Spend::new();
+        for (_, s) in self.summaries(sweep)? {
+            let Some(s) = s else { continue };
+            for &mode in modes {
+                let key = (mode, sweep.k);
+                let (fb, spend, sel) = mode_spend(&s.raw, mode);
+                *fell_back.entry(key).or_insert(0) += fb;
+                let acc = usd.get(&key).copied().unwrap_or(0.0);
+                usd.insert(key, acc + spend + sel);
+            }
+        }
+        Ok((fell_back, usd))
     }
 
     /// Experience libraries of the sweep, one per (mode, domain).
@@ -1578,6 +1575,30 @@ impl ExperimentDir {
     }
 }
 
+type FellBack = BTreeMap<(Mode, u32), u32>;
+type Spend = BTreeMap<(Mode, u32), f64>;
+
+/// What `harness2-report` prints for these summaries: the rendered block, then (when any
+/// improver spend was recorded) the spend line. Also returns the NOTE/WARNING paragraphs.
+fn report_text(
+    summaries: &[h2s_api::ModeSummary],
+    title: &str,
+    bench: &str,
+) -> (String, Vec<String>) {
+    let (rendered, notes) = report::render(summaries, title, bench);
+    let mut by_mode: Vec<&h2s_api::ModeSummary> = summaries.iter().collect();
+    by_mode.sort_by_key(|s| (s.mode, s.k));
+    let spend = pyfmt::sum(by_mode.iter().map(|s| s.usd));
+    let mut text = format!("{rendered}\n");
+    if spend != 0.0 {
+        text.push_str(&format!(
+            "\n  improver (editors, composer, selection, reflection) spend across reported modes: \
+             ${spend:.2}\n"
+        ));
+    }
+    (text, notes)
+}
+
 /// Parse a library entry's `EXPERIENCE.md` (upstream `Library.add` format).
 fn library_entry(slug: &str, text: &str) -> LibraryEntry {
     let mut adopted_label = String::new();
@@ -1770,6 +1791,40 @@ pub fn compare(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn combined_ks_match_harness2_report() {
+        // `harness2-report --bench lab --k 1,2 --modes parallel,sequential`, captured from
+        // upstream on the std fixture.
+        let fx = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+        let exp = ExperimentDir::open(
+            &fx.join("std"),
+            ExperimentKind::Standard,
+            &["/fixture/std".to_owned()],
+        )
+        .unwrap();
+        let modes = [Mode::Parallel, Mode::Sequential];
+        let mut rows = Vec::new();
+        let mut fell_back = FellBack::new();
+        let mut usd = Spend::new();
+        for name in ["lab-oc-agg1", "lab-oc-agg2"] {
+            let ns = Namespace::parse(name).unwrap();
+            rows.extend(
+                exp.judged_rows(&ns)
+                    .unwrap()
+                    .into_iter()
+                    .filter(|r| modes.contains(&r.mode)),
+            );
+            let (f, u) = exp.spend_and_fallbacks(&ns, &modes).unwrap();
+            fell_back.extend(f);
+            usd.extend(u);
+        }
+        let summaries = report::summarise(&rows, &fell_back, &usd);
+        let (text, notes) = report_text(&summaries, "lab-oc modes=parallel,sequential", "lab");
+        let want = std::fs::read_to_string(fx.join("cli/std/lab-report-k1k2.stdout")).unwrap();
+        assert_eq!(text, want);
+        assert_eq!(notes.len(), 2);
+    }
 
     #[test]
     fn sign_test_matches_exact_binomial() {

@@ -1,0 +1,28 @@
+[
+ {
+  "task": "contracts/msa-redline",
+  "label": "base1",
+  "run_id": "lab-oc-agg1/contracts/msa-redline/base1",
+  "score": {
+   "n_passed": 1,
+   "n_criteria": 4,
+   "all_pass": false
+  }
+ },
+ {
+  "task": "contracts/nda-review",
+  "label": "base1",
+  "run_id": "lab-oc-agg1/contracts/nda-review/base1",
+  "score": {
+   "n_passed": 1,
+   "n_criteria": 4,
+   "all_pass": false
+  }
+ },
+ {
+  "task": "litigation/motion-draft",
+  "label": "base1",
+  "run_id": "lab-oc-agg1/litigation/motion-draft/base1",
+  "score": null
+ }
+]

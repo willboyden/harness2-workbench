@@ -1,0 +1,8 @@
+sweep lab-oc-agg2: 1 domain(s) in parallel, tasks within a domain in stream order
+  [contracts] 1/2 ok           contracts/msa-redline
+  [contracts] 2/2 ok           contracts/nda-review
+  [litigation] 1/1 base-failed  litigation/motion-draft  :: no base rollout produced anything
+
+sweep lab-oc-agg2: 2 tasks ok, 1 failed, 0 domain(s) died
+record: /fixture/std/lab/adapt/_sweeps/lab-oc-agg2-20261023T213306Z.json
+next:   python3 -m harness2.cli.judge --bench lab --substrate oc --k 2 --modes parallel

@@ -1,0 +1,12 @@
+# jb-oc split=all seed=3 k=1 modes=parallel
+#   namespace[parallel]: jb-oc-agg1-s3
+#   summaries under: /fixture/std/jb/adapt/jb-oc-agg1-s3
+#   library root:    /fixture/std/jb/library/jb/k1-oc-s3
+#   domains parallel: 1
+   1  auditor                                  auditor/task1
+   2  accountant                               accountant/task2
+   3  accountant                               accountant/task1
+# domains of this split, with task counts (the legal --only-domains names):
+   1  auditor
+   2  accountant
+# 3 tasks over 2 domains (domains parallel, tasks within a domain sequential, max 5 per domain)

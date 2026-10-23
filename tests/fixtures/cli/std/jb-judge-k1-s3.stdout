@@ -1,0 +1,3 @@
+judging 3 selection(s) under jb-oc-agg1-s3 ...
+judged.json: 3 row(s), 3 graded, 0 ungraded (judge failure or no pick — NOT zeros)
+wrote /fixture/std/jb/adapt/jb-oc-agg1-s3/judged.json

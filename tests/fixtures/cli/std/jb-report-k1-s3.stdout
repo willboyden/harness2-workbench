@@ -1,0 +1,7 @@
+jb-oc seed=3 modes=parallel
+========================================
+  parallel k=1: n=  3 | score  70.00% | picked output: final 3 / candidate 0 / base 0
+
+  WARNING  parallel k=1: graded rows carry MIXED scoring units (unweighted-fallback, weighted). The score averages weighted points with unweighted criteria counts (about 20 pt apart on JobBench); re-judge the fallback rows before comparing this line with any published number.
+
+  improver (editors, composer, selection, reflection) spend across reported modes: $0.13

@@ -1,0 +1,1 @@
+setup failed: HARNESS2_CODEX_BASE_URL is required for Codex setup; set it in .env or the shell (see .env.example)

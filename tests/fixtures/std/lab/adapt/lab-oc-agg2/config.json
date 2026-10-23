@@ -1,0 +1,28 @@
+{
+  "method_version": 2,
+  "executor": "local/solver",
+  "improver": "local/improver",
+  "judge": "local-judge",
+  "project": "",
+  "location": "global",
+  "judge_endpoint": "",
+  "endpoint": "",
+  "split": "all",
+  "tasks": [
+    [
+      "contracts",
+      "contracts/msa-redline"
+    ],
+    [
+      "contracts",
+      "contracts/nda-review"
+    ],
+    [
+      "litigation",
+      "litigation/motion-draft"
+    ]
+  ],
+  "max_tasks": null,
+  "domains": [],
+  "seed": null
+}

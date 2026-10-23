@@ -1,0 +1,10 @@
+FAIL: HARNESS2_SOLVER_MODEL is required for executor rollouts; set it in .env or the shell (see .env.example)
+FAIL: No lab tasks found at /fixture/harness2/dependencies/harvey-labs/tasks. Run harness2-setup lab.
+FAIL: OpenCode checkout missing at /fixture/harness2/dependencies/opencode (no packages/opencode/src/index.ts): run scripts/setup_benchmark.py <benchmark> to fetch the pinned checkout at 23fb5e0516c9 (v1.14.18).
+FAIL: OpenCode checkout missing at /fixture/harness2/dependencies/opencode (no packages/opencode/src/index.ts): run scripts/setup_benchmark.py <benchmark> to fetch the pinned checkout at 23fb5e0516c9 (v1.14.18).
+FAIL: harvey-labs patch failed; run harness2-setup for this benchmark
+FAIL: opencode patch failed; run harness2-setup for this benchmark
+FAIL: OpenCode dependencies missing; run harness2-setup lab
+FAIL: pandoc missing; install pandoc and poppler-utils (README.md)
+FAIL: LAB document and judge dependencies: FileNotFoundError; see README.md
+Setup incomplete: 9 issue(s). See docs/BENCHMARKS.md.

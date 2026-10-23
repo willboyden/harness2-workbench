@@ -1,0 +1,29 @@
+{
+  "task_id": "contracts/nda-review",
+  "mode": "agg",
+  "k": 1,
+  "chosen_id": "A",
+  "chosen_label": "agg1",
+  "chosen_run_id": "lab-oc-agg1/contracts/nda-review/agg1",
+  "chosen_is_base": false,
+  "why": "trivial pool: single final at k=1; delivered without a selector session",
+  "id_map": {
+    "A": "agg1"
+  },
+  "dropped": [],
+  "n_candidates": 1,
+  "ok": true,
+  "fallback": false,
+  "error": "",
+  "usd": 0.006,
+  "experience": {
+    "cue": "When a ledger includes credits and debits",
+    "lesson": "Include both signs when summing in scripts/summarize.py.",
+    "evidence": "The scripts/summarize.py row -- removing the positive-only filter changed the probe total to include the credits omitted by the base trajectory.",
+    "confidence": "high for this observed arithmetic contrast",
+    "edits": "component: scripts/summarize.py\ncandidates: inv1\nchange: dropped the positive-only filter from the amount sum\nobserved: the probe total included the credits the base run omitted\nverdict: helped"
+  },
+  "trivial": true,
+  "evidence": "deliverable",
+  "chosen_run_dir": "/fixture/std/lab/results/oc/lab-oc-agg1/contracts/nda-review/agg1"
+}
