@@ -58,7 +58,9 @@ pub struct ContainerSpec {
     pub pids_limit: u32,
     /// Working directory inside the container.
     pub workdir: String,
-    /// `uid:gid` to run as (default: the image's non-root user).
+    /// `uid:gid` to run as (default: the image's non-root user). The server passes `0:0` only
+    /// for a rootless runtime, where container root IS the unprivileged server user and the
+    /// only id that can write the bind-mounted experiment (measured on rootless Docker).
     pub user: Option<String>,
 }
 
@@ -211,9 +213,6 @@ fn user_ok(u: &str) -> std::result::Result<(), &'static str> {
     if !num(uid) || gid.is_some_and(|g| !num(g)) {
         return Err("user must be a numeric uid or uid:gid");
     }
-    if uid.bytes().all(|c| c == b'0') {
-        return Err("jobs never run as root (uid 0)");
-    }
     Ok(())
 }
 
@@ -225,7 +224,9 @@ fn user_ok(u: &str) -> std::result::Result<(), &'static str> {
 /// image (including the `latest` tag), a job id outside `[A-Za-z0-9][A-Za-z0-9_.-]*`, a mount
 /// point other than the three fixed ones or used twice, a writable job-files mount, a host
 /// path that is not absolute or contains `:`, `,`, `..` or control characters, the `host`
-/// network, uid 0, non-positive limits, and NUL bytes anywhere.
+/// network, a non-numeric user, non-positive limits, and NUL bytes anywhere. A numeric uid 0 is
+/// accepted for rootless runtimes (see [`ContainerSpec::user`]); `--cap-drop ALL` and
+/// `no-new-privileges` apply regardless.
 pub fn run_argv(spec: &ContainerSpec, program: &str, args: &[String]) -> Result<Vec<String>> {
     let mut errs: Vec<(String, String)> = Vec::new();
     let mut err = |field: &str, problem: &str| errs.push((field.to_owned(), problem.to_owned()));
@@ -492,6 +493,21 @@ mod tests {
         assert_eq!(argv, expected);
     }
 
+    /// Rootless runtimes map container root to the unprivileged host user, so `0:0` must be
+    /// accepted (the hardening flags stay).
+    #[test]
+    fn rootless_root_user_is_accepted() {
+        let mut s = spec();
+        s.user = Some("0:0".into());
+        let argv = run_argv(&s, "harness2", &[]).unwrap();
+        let joined = argv.join(" ");
+        assert!(joined.contains("--user 0:0"), "{joined}");
+        assert!(
+            joined.contains("--cap-drop ALL") && joined.contains("no-new-privileges"),
+            "{joined}"
+        );
+    }
+
     #[test]
     fn refusals() {
         type Mutation = Box<dyn Fn(&mut ContainerSpec)>;
@@ -503,7 +519,6 @@ mod tests {
             ("job_id", Box::new(|s| s.job_id = "x;rm".into())),
             ("network", Box::new(|s| s.network = "host".into())),
             ("network", Box::new(|s| s.network = "container:abc".into())),
-            ("user", Box::new(|s| s.user = Some("0".into()))),
             ("user", Box::new(|s| s.user = Some("root".into()))),
             ("pids_limit", Box::new(|s| s.pids_limit = 0)),
             ("cpus", Box::new(|s| s.cpus = Some(f64::NAN))),
