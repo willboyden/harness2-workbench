@@ -38,10 +38,10 @@
       "properties": {
         "cell": {
           "additionalProperties": false,
-          "description": "One (benchmark, subset, executor) combination: the \"cell\" every harness2 command takes.",
+          "description": "Benchmark, WorkBuddy subset and executor this job uses.",
           "properties": {
             "bench": {
-              "description": "A benchmark harness2 can install and run.",
+              "description": "Benchmark.",
               "oneOf": [
                 {
                   "const": "jb",
@@ -75,7 +75,7 @@
             },
             "substrate": {
               "default": "oc",
-              "description": "The agent framework that executes task rollouts (\"substrate\" upstream).",
+              "description": "Executor framework (`oc` OpenCode or `cx` Codex).",
               "oneOf": [
                 {
                   "const": "oc",
@@ -225,12 +225,12 @@
       "properties": {
         "description": {
           "default": "",
-          "description": "What the experiment is for (free text).",
+          "description": "Free-text description.",
           "type": "string"
         },
         "kind": {
           "default": "standard",
-          "description": "Experiments created by the demo have a different on-disk layout.",
+          "description": "`standard` for benchmark runs, `demo` for harness2-demo output.",
           "oneOf": [
             {
               "const": "standard",
@@ -245,11 +245,11 @@
           ]
         },
         "name": {
-          "description": "Experiment name, also its directory name: lowercase letters, digits, '-' and '_', 1-63 characters, starting with a letter or digit.",
+          "description": "Experiment name: `^[a-z0-9][a-z0-9_-]{0,62}$` (also the directory name).",
           "type": "string"
         },
         "profile": {
-          "description": "Model profile to pin (see list_profiles). Runs, judging and pipelines in this experiment must then use this profile.",
+          "description": "Pin a model profile now (else the first run pins it).",
           "type": [
             "string",
             "null"
@@ -257,7 +257,7 @@
         },
         "tags": {
           "default": [],
-          "description": "Labels for filtering experiments.",
+          "description": "Short labels for filtering.",
           "items": {
             "type": "string"
           },
@@ -285,7 +285,7 @@
       "additionalProperties": false,
       "properties": {
         "bench": {
-          "description": "A benchmark harness2 can install and run.",
+          "description": "Benchmark.",
           "oneOf": [
             {
               "const": "jb",
@@ -310,13 +310,13 @@
         },
         "seed": {
           "default": 42,
-          "description": "Shuffle seed of the partition (default 42).",
+          "description": "Seed of the stratified shuffle (default 42).",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "subset": {
-          "description": "WorkBuddy-Bench subset. Only valid with [`Bench::Wb`].",
+          "description": "WorkBuddy-Bench subset (wb only).",
           "enum": [
             "office",
             "web",
@@ -458,14 +458,14 @@
           ]
         },
         "k": {
-          "description": "Recursion budget k (1-32).",
+          "description": "Recursion budget.",
           "format": "uint32",
           "maximum": 32,
           "minimum": 1,
           "type": "integer"
         },
         "modes": {
-          "description": "Recursion modes the sweep would run.",
+          "description": "Recursion modes to run.",
           "items": {
             "description": "Task-level recursion mode.",
             "oneOf": [
@@ -484,7 +484,7 @@
           "type": "array"
         },
         "profile": {
-          "description": "Model profile whose price assumptions to use (see list_profiles).",
+          "description": "Profile whose prices to use.",
           "type": [
             "string",
             "null"
@@ -908,7 +908,7 @@
       "properties": {
         "extras": {
           "default": [],
-          "description": "Optional extras: render (always installed) and bridge (the LiteLLM proxy start_bridge needs).",
+          "description": "Optional extras to install (`render` is always installed).",
           "items": {
             "description": "Optional extras of the harness2 Python package.",
             "oneOf": [
@@ -1295,10 +1295,10 @@
       "properties": {
         "cell": {
           "additionalProperties": false,
-          "description": "One (benchmark, subset, executor) combination: the \"cell\" every harness2 command takes.",
+          "description": "Benchmark, WorkBuddy subset and executor this job uses.",
           "properties": {
             "bench": {
-              "description": "A benchmark harness2 can install and run.",
+              "description": "Benchmark.",
               "oneOf": [
                 {
                   "const": "jb",
@@ -1332,7 +1332,7 @@
             },
             "substrate": {
               "default": "oc",
-              "description": "The agent framework that executes task rollouts (\"substrate\" upstream).",
+              "description": "Executor framework (`oc` OpenCode or `cx` Codex).",
               "oneOf": [
                 {
                   "const": "oc",
@@ -1353,15 +1353,15 @@
           "type": "object"
         },
         "experiment": {
-          "description": "Experiment name (see list_experiments).",
+          "description": "Experiment name (one HARNESS2_RUNS_DIR managed by the server).",
           "type": "string"
         },
         "options": {
           "additionalProperties": false,
-          "description": "The run-identity and run-control options of `harness2` (the refinement sweep).",
+          "description": "Run identity and run control options of the sweep.",
           "properties": {
             "k": {
-              "description": "Task-level recursion budget (`--k`, 1..=K_MAX). Per task and mode: 4k rollouts and\n3k improver sessions.",
+              "description": "Task-level recursion budget (`--k`, 1 to 32). Per task and mode: 4k rollouts and\n3k improver sessions.",
               "format": "uint32",
               "maximum": 32,
               "minimum": 1,
@@ -1414,7 +1414,7 @@
             },
             "split": {
               "default": "all",
-              "description": "Which part of the task stream to run (`--split`). `train`/`test` need a split file.",
+              "description": "Which partition to run (`train`/`test` need `split_file`).",
               "enum": [
                 "all",
                 "train",
@@ -1431,7 +1431,7 @@
             },
             "workers": {
               "default": 1,
-              "description": "Domains run concurrently (`--workers`, 1..=WORKERS_MAX). Tasks within a domain stay\nordered because each reads the library entries of the ones before it.",
+              "description": "Domains run concurrently (`--workers`, 1 to 64). Tasks within a domain stay\nordered because each reads the library entries of the ones before it.",
               "format": "uint32",
               "maximum": 64,
               "minimum": 1,
@@ -1605,7 +1605,7 @@
         },
         "k": {
           "default": 2,
-          "description": "Recursion budget for the demo (1..=8).",
+          "description": "Recursion budget for the demo (1 to 8).",
           "format": "uint32",
           "maximum": 8,
           "minimum": 1,
@@ -1668,7 +1668,7 @@
       "additionalProperties": false,
       "properties": {
         "bench": {
-          "description": "A benchmark harness2 can install and run.",
+          "description": "Benchmark.",
           "oneOf": [
             {
               "const": "jb",
@@ -1714,7 +1714,7 @@
         },
         "substrate": {
           "default": "oc",
-          "description": "The agent framework that executes task rollouts (\"substrate\" upstream).",
+          "description": "Executor framework (`oc` OpenCode or `cx` Codex).",
           "oneOf": [
             {
               "const": "oc",
@@ -1770,7 +1770,7 @@
           ]
         },
         "port": {
-          "description": "TCP port for the bridge (default: harness2-bridge's own).",
+          "description": "TCP port; omit to reuse the saved port or pick a free one.",
           "format": "uint16",
           "maximum": 65535,
           "minimum": 1,
@@ -1780,7 +1780,7 @@
           ]
         },
         "profile": {
-          "description": "Model profile whose Vertex AI settings and Codex model the bridge uses.",
+          "description": "Profile supplying the Vertex project and the Codex model.",
           "type": "string"
         },
         "wait_secs": {
@@ -1819,10 +1819,10 @@
         },
         "cell": {
           "additionalProperties": false,
-          "description": "One (benchmark, subset, executor) combination: the \"cell\" every harness2 command takes.",
+          "description": "Benchmark, WorkBuddy subset and executor this job uses.",
           "properties": {
             "bench": {
-              "description": "A benchmark harness2 can install and run.",
+              "description": "Benchmark.",
               "oneOf": [
                 {
                   "const": "jb",
@@ -1856,7 +1856,7 @@
             },
             "substrate": {
               "default": "oc",
-              "description": "The agent framework that executes task rollouts (\"substrate\" upstream).",
+              "description": "Executor framework (`oc` OpenCode or `cx` Codex).",
               "oneOf": [
                 {
                   "const": "oc",
@@ -1877,7 +1877,7 @@
           "type": "object"
         },
         "experiment": {
-          "description": "Experiment name (see list_experiments).",
+          "description": "Experiment name (one HARNESS2_RUNS_DIR managed by the server).",
           "type": "string"
         },
         "k": {
@@ -1954,11 +1954,11 @@
       "properties": {
         "acknowledge_risks": {
           "default": false,
-          "description": "Must be true when the server runs jobs without container isolation (the executor then has the server user's files and network). Set it only with the user's informed consent.",
+          "description": "Must be true when the server runs jobs without container isolation (server_info shows isolation host): the executor then has the server user's files and network. Set it only with the user's informed consent.",
           "type": "boolean"
         },
         "budget_usd": {
-          "description": "Stop the job once recorded spend reaches this many USD (improver spend; executor rollout spend is not recorded by harness2). Omit for no cap.",
+          "description": "Stop the job once recorded spend reaches this many USD (checked as task summaries land; a task in flight finishes first). harness2 records improver spend only, not executor rollouts. Omit for no cap.",
           "format": "double",
           "type": [
             "number",
@@ -1967,10 +1967,10 @@
         },
         "cell": {
           "additionalProperties": false,
-          "description": "One (benchmark, subset, executor) combination: the \"cell\" every harness2 command takes.",
+          "description": "Benchmark, WorkBuddy subset and executor this job uses.",
           "properties": {
             "bench": {
-              "description": "A benchmark harness2 can install and run.",
+              "description": "Benchmark.",
               "oneOf": [
                 {
                   "const": "jb",
@@ -2004,7 +2004,7 @@
             },
             "substrate": {
               "default": "oc",
-              "description": "The agent framework that executes task rollouts (\"substrate\" upstream).",
+              "description": "Executor framework (`oc` OpenCode or `cx` Codex).",
               "oneOf": [
                 {
                   "const": "oc",
@@ -2025,7 +2025,7 @@
           "type": "object"
         },
         "experiment": {
-          "description": "Experiment name (see list_experiments).",
+          "description": "Experiment name (one HARNESS2_RUNS_DIR managed by the server).",
           "type": "string"
         },
         "judge_bases": {
@@ -2035,10 +2035,10 @@
         },
         "options": {
           "additionalProperties": false,
-          "description": "The run-identity and run-control options of `harness2` (the refinement sweep).",
+          "description": "Run identity and run control options of the sweep.",
           "properties": {
             "k": {
-              "description": "Task-level recursion budget (`--k`, 1..=K_MAX). Per task and mode: 4k rollouts and\n3k improver sessions.",
+              "description": "Task-level recursion budget (`--k`, 1 to 32). Per task and mode: 4k rollouts and\n3k improver sessions.",
               "format": "uint32",
               "maximum": 32,
               "minimum": 1,
@@ -2091,7 +2091,7 @@
             },
             "split": {
               "default": "all",
-              "description": "Which part of the task stream to run (`--split`). `train`/`test` need a split file.",
+              "description": "Which partition to run (`train`/`test` need `split_file`).",
               "enum": [
                 "all",
                 "train",
@@ -2108,7 +2108,7 @@
             },
             "workers": {
               "default": 1,
-              "description": "Domains run concurrently (`--workers`, 1..=WORKERS_MAX). Tasks within a domain stay\nordered because each reads the library entries of the ones before it.",
+              "description": "Domains run concurrently (`--workers`, 1 to 64). Tasks within a domain stay\nordered because each reads the library entries of the ones before it.",
               "format": "uint32",
               "maximum": 64,
               "minimum": 1,
@@ -2159,10 +2159,10 @@
       "properties": {
         "cell": {
           "additionalProperties": false,
-          "description": "One (benchmark, subset, executor) combination: the \"cell\" every harness2 command takes.",
+          "description": "Benchmark, WorkBuddy subset and executor this job uses.",
           "properties": {
             "bench": {
-              "description": "A benchmark harness2 can install and run.",
+              "description": "Benchmark.",
               "oneOf": [
                 {
                   "const": "jb",
@@ -2196,7 +2196,7 @@
             },
             "substrate": {
               "default": "oc",
-              "description": "The agent framework that executes task rollouts (\"substrate\" upstream).",
+              "description": "Executor framework (`oc` OpenCode or `cx` Codex).",
               "oneOf": [
                 {
                   "const": "oc",
@@ -2217,7 +2217,7 @@
           "type": "object"
         },
         "experiment": {
-          "description": "Experiment name (see list_experiments).",
+          "description": "Experiment name (one HARNESS2_RUNS_DIR managed by the server).",
           "type": "string"
         },
         "ks": {
@@ -2292,11 +2292,11 @@
       "properties": {
         "acknowledge_risks": {
           "default": false,
-          "description": "Must be `true` when the server runs jobs without container isolation: the executor\nthen has the server user's filesystem and network (upstream behaviour).",
+          "description": "Must be true when the server runs jobs without container isolation (server_info shows isolation host): the executor then has the server user's files and network. Set it only with the user's informed consent.",
           "type": "boolean"
         },
         "budget_usd": {
-          "description": "Stop the job once recorded spend reaches this many USD (checked as task summaries\nland; a task in flight finishes first). `None` = no cap.",
+          "description": "Stop the job once recorded spend reaches this many USD (checked as task summaries land; a task in flight finishes first). harness2 records improver spend only, not executor rollouts. Omit for no cap.",
           "format": "double",
           "type": [
             "number",
@@ -2305,10 +2305,10 @@
         },
         "cell": {
           "additionalProperties": false,
-          "description": "One (benchmark, subset, executor) combination: the \"cell\" every harness2 command takes.",
+          "description": "Benchmark, WorkBuddy subset and executor this job uses.",
           "properties": {
             "bench": {
-              "description": "A benchmark harness2 can install and run.",
+              "description": "Benchmark.",
               "oneOf": [
                 {
                   "const": "jb",
@@ -2342,7 +2342,7 @@
             },
             "substrate": {
               "default": "oc",
-              "description": "The agent framework that executes task rollouts (\"substrate\" upstream).",
+              "description": "Executor framework (`oc` OpenCode or `cx` Codex).",
               "oneOf": [
                 {
                   "const": "oc",
@@ -2363,15 +2363,15 @@
           "type": "object"
         },
         "experiment": {
-          "description": "Experiment name (see list_experiments).",
+          "description": "Experiment name (one HARNESS2_RUNS_DIR managed by the server).",
           "type": "string"
         },
         "options": {
           "additionalProperties": false,
-          "description": "The run-identity and run-control options of `harness2` (the refinement sweep).",
+          "description": "Run identity and run control options of the sweep.",
           "properties": {
             "k": {
-              "description": "Task-level recursion budget (`--k`, 1..=K_MAX). Per task and mode: 4k rollouts and\n3k improver sessions.",
+              "description": "Task-level recursion budget (`--k`, 1 to 32). Per task and mode: 4k rollouts and\n3k improver sessions.",
               "format": "uint32",
               "maximum": 32,
               "minimum": 1,
@@ -2424,7 +2424,7 @@
             },
             "split": {
               "default": "all",
-              "description": "Which part of the task stream to run (`--split`). `train`/`test` need a split file.",
+              "description": "Which partition to run (`train`/`test` need `split_file`).",
               "enum": [
                 "all",
                 "train",
@@ -2441,7 +2441,7 @@
             },
             "workers": {
               "default": 1,
-              "description": "Domains run concurrently (`--workers`, 1..=WORKERS_MAX). Tasks within a domain stay\nordered because each reads the library entries of the ones before it.",
+              "description": "Domains run concurrently (`--workers`, 1 to 64). Tasks within a domain stay\nordered because each reads the library entries of the ones before it.",
               "format": "uint32",
               "maximum": 64,
               "minimum": 1,
@@ -2491,14 +2491,14 @@
       "additionalProperties": false,
       "properties": {
         "archived": {
-          "description": "true archives the experiment (hidden from list_experiments, nothing deleted); false restores it. Omit to keep it as is.",
+          "description": "Archive or unarchive; absent = unchanged.",
           "type": [
             "boolean",
             "null"
           ]
         },
         "description": {
-          "description": "New description (replaces the old one). Omit to keep it.",
+          "description": "New description; absent = unchanged.",
           "type": [
             "string",
             "null"
@@ -2509,7 +2509,7 @@
           "type": "string"
         },
         "tags": {
-          "description": "New tag list (replaces all tags; [] removes them). Omit to keep them.",
+          "description": "New tag list (replaces the old one); absent = unchanged.",
           "items": {
             "type": "string"
           },
@@ -2551,11 +2551,11 @@
             "description": "A text file addressed by a relative, `/`-separated path.",
             "properties": {
               "content": {
-                "description": "The file's full text.",
+                "description": "The file's text (UTF-8).",
                 "type": "string"
               },
               "path": {
-                "description": "Path relative to the harness root, '/'-separated (e.g. systemprompt.md, skills/review/SKILL.md).",
+                "description": "Relative, `/`-separated path (no `..`, no leading `/`).",
                 "type": "string"
               }
             },
@@ -2568,7 +2568,7 @@
           "type": "array"
         },
         "surface": {
-          "description": "Agent framework surface a harness tree targets.",
+          "description": "Agent framework the harness targets.",
           "oneOf": [
             {
               "const": "opencode",
