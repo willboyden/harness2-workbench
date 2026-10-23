@@ -36,6 +36,10 @@ pub mod report;
 pub mod results;
 pub mod tree;
 
+mod pyfmt;
+mod pyjson;
+mod safefs;
+
 pub use error::{CoreError, Result};
 
 /// The google-research/harness2 commit this release is tested against (2026-10-14,
