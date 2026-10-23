@@ -12,7 +12,8 @@ use crate::components::ui::{
 };
 use crate::logic::format;
 use crate::logic::jobs::{
-    ALL_KINDS, ALL_STATUSES, kind_label, progress_fraction, progress_text, spec_title,
+    ALL_KINDS, ALL_STATUSES, kind_from_str, kind_label, progress_fraction, progress_text,
+    spec_title, status_from_str,
 };
 use crate::logic::urls::{api as paths, route};
 use crate::nav::{query_param, query_setter};
@@ -65,13 +66,15 @@ pub(crate) fn Jobs() -> impl IntoView {
     }
     let page = LocalResource::new(move || {
         tick.track();
-        let (s, k, e, c) = (
-            status.get(),
-            kind.get(),
-            experiment.get(),
-            cursor.current.get(),
-        );
-        async move { api::get::<Page<Job>>(&paths::jobs(&s, &k, &e, 25, c.as_deref())).await }
+        // Only known values reach the API; anything else in the URL means "any".
+        let s = status_from_str(&status.get())
+            .map(|x| x.as_str())
+            .unwrap_or_default();
+        let k = kind_from_str(&kind.get())
+            .map(|x| x.as_str())
+            .unwrap_or_default();
+        let (e, c) = (experiment.get(), cursor.current.get());
+        async move { api::get::<Page<Job>>(&paths::jobs(s, k, &e, 25, c.as_deref())).await }
     });
     let experiments = LocalResource::new(|| async {
         api::get::<Vec<Experiment>>(&paths::experiments(true)).await

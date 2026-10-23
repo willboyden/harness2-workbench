@@ -238,20 +238,6 @@ pub(crate) fn base_url(s: &str) -> Check {
     Ok(())
 }
 
-/// A domain as harness2 reports it (passed to `--only-domains`).
-pub(crate) fn domain(s: &str) -> Check {
-    let n = s.chars().count();
-    if n == 0 || n > 200 {
-        return Err("A domain has 1 to 200 characters.".to_owned());
-    }
-    if s.contains(',') || s.chars().any(char::is_control) || s.starts_with('-') {
-        return Err(
-            "A domain cannot contain commas or control characters, or start with “-”.".to_owned(),
-        );
-    }
-    Ok(())
-}
-
 /// Split a free-text tag list (`a, b c`) into tags, reporting the first invalid one.
 pub(crate) fn parse_tags(s: &str) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
@@ -386,14 +372,5 @@ mod tests {
         ] {
             assert!(base_url(bad).is_err(), "{bad}");
         }
-    }
-
-    #[test]
-    fn domains() {
-        assert!(domain("Accountants and Auditors").is_ok());
-        assert!(domain("").is_err());
-        assert!(domain("a,b").is_err());
-        assert!(domain("-x").is_err());
-        assert!(domain("a\nb").is_err());
     }
 }

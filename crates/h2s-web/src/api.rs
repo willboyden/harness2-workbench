@@ -50,10 +50,6 @@ impl ApiError {
         self.status == 401
     }
 
-    pub(crate) fn is_forbidden(&self) -> bool {
-        self.status == 403
-    }
-
     pub(crate) fn is_not_found(&self) -> bool {
         self.status == 404
     }

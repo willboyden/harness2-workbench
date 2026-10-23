@@ -137,17 +137,6 @@ pub(crate) fn budget(c: &Census) -> Budget {
     }
 }
 
-/// The role a label plays, from its prefix (`base`, `inv*`/`dom*`, `agg*`/`c*`).
-pub(crate) fn label_role(label: &str) -> HarnessRole {
-    if label.starts_with("base") {
-        HarnessRole::Base
-    } else if label.starts_with("inv") || label.starts_with("dom") {
-        HarnessRole::Candidate
-    } else {
-        HarnessRole::Final
-    }
-}
-
 pub(crate) fn role_label(r: HarnessRole) -> &'static str {
     match r {
         HarnessRole::Base => "base",
@@ -298,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn label_ordering_and_roles() {
+    fn label_ordering() {
         let mut v: Vec<String> = ["c2", "agg1", "base", "dom1", "inv2", "inv1", "c10", "c1"]
             .iter()
             .map(|s| (*s).to_owned())
@@ -308,9 +297,6 @@ mod tests {
             v,
             vec!["base", "inv1", "inv2", "dom1", "agg1", "c1", "c2", "c10"]
         );
-        assert_eq!(label_role("base1"), HarnessRole::Base);
-        assert_eq!(label_role("dom3"), HarnessRole::Candidate);
-        assert_eq!(label_role("c2"), HarnessRole::Final);
     }
 
     #[test]

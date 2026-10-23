@@ -412,16 +412,27 @@ fn ReportTab(
                             <Card title="Report text">
                                 <p class="muted small">"The block in harness2-report's format, for papers and tickets."</p>
                                 <CodeBlock text=text copy=true label="Report text" />
-                                <button
-                                    type="button"
-                                    class="btn btn-secondary btn-sm"
-                                    on:click=move |_| {
-                                        browser::download_text(&file, "text/plain", &text_dl);
-                                    }
-                                >
-                                    {icon(Icon::Download)}
-                                    " Download .txt"
-                                </button>
+                                <div class="pill-row">
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary btn-sm"
+                                        on:click=move |_| {
+                                            browser::download_text(&file, "text/plain", &text_dl);
+                                        }
+                                    >
+                                        {icon(Icon::Download)}
+                                        " Download .txt"
+                                    </button>
+                                    <a
+                                        class="btn btn-secondary btn-sm"
+                                        href=paths::scores(&exp.get_untracked(), &sweep.get_untracked())
+                                        download=format!("{}-judged.json", sweep.get_untracked())
+                                        rel="external"
+                                    >
+                                        {icon(Icon::Download)}
+                                        " Judged rows (JSON)"
+                                    </a>
+                                </div>
                             </Card>
                         }
                         .into_any()

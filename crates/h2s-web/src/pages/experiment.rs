@@ -268,6 +268,9 @@ pub(crate) fn ExperimentPage() -> impl IntoView {
                                                                 <td class="num">{format::usd(sw.usd)}</td>
                                                                 <td>
                                                                     <HeadlineScores scores=sw.headline.clone() />
+                                                                    {sw.headline.is_some().then(|| view! {
+                                                                        <a class="cell-sub" href=route::sweep_tab(&name, &sw.id, "report")>"Open the report"</a>
+                                                                    })}
                                                                 </td>
                                                                 <td class="nowrap">
                                                                     {sw.updated_at.clone().map(|u| view! { <Ago ts=u /> })}

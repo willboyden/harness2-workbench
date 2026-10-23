@@ -54,10 +54,12 @@ impl LogBuffer {
         self.next
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.lines.len()
     }
 
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.lines.is_empty()
     }
@@ -115,10 +117,12 @@ impl LogBuffer {
         usize::try_from(self.next - before).unwrap_or(usize::MAX)
     }
 
+    #[cfg(test)]
     pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = &LogLine> + ExactSizeIterator {
         self.lines.iter()
     }
 
+    #[cfg(test)]
     /// The last `n` lines, oldest first.
     pub(crate) fn tail(&self, n: usize) -> Vec<LogLine> {
         let skip = self.lines.len().saturating_sub(n);
@@ -234,6 +238,7 @@ mod tests {
     #[test]
     fn appends_in_order_and_drops_duplicates() {
         let mut b = LogBuffer::default();
+        assert!(b.is_empty());
         assert_eq!(b.push(l(0)), Push::Appended);
         assert_eq!(b.push(l(1)), Push::Appended);
         assert_eq!(b.push(l(1)), Push::Duplicate);

@@ -3130,6 +3130,59 @@ details.disclosure[open] summary {
   box-shadow: none;
 }
 
+/* ---------- Wizard, profiles, onboarding ---------- */
+
+.stepper li {
+  padding: var(--s1) var(--s3);
+}
+
+.step-btn {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.step-btn:hover {
+  text-decoration: underline;
+}
+
+.wizard-card:focus {
+  outline: none;
+}
+
+.domain-picker .chips {
+  margin-bottom: var(--s2);
+}
+
+.preview-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin-top: var(--s4);
+}
+
+.env-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) auto minmax(0, 1.6fr) auto;
+  gap: var(--s2);
+  align-items: center;
+  margin-bottom: var(--s2);
+}
+
+.onboard-step h2 {
+  font-size: 1.1rem;
+  margin-top: 4px;
+}
+
+.onboard-step > div {
+  min-width: 0;
+}
+
+.onboard-step > div > .btn,
+.onboard-step .pill-row {
+  margin-top: var(--s2);
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 1100px) {
@@ -3270,6 +3323,10 @@ details.disclosure[open] summary {
 
   .toolbar .field {
     flex: 1 1 100%;
+  }
+
+  .env-row {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 }
 

@@ -2,7 +2,7 @@
 
 use h2s_api::{
     Bench, Cell, DemoMode, Job, JobEvent, JobKind, JobResult, JobSpec, JobStatus, Mode, Progress,
-    Role, Substrate,
+    Role,
 };
 
 /// Visual tone of a badge or notice (maps to CSS classes `tone-*`).
@@ -98,10 +98,6 @@ pub(crate) fn kind_from_str(s: &str) -> Option<JobKind> {
 
 pub(crate) fn status_from_str(s: &str) -> Option<JobStatus> {
     ALL_STATUSES.into_iter().find(|k| k.as_str() == s)
-}
-
-pub(crate) fn substrate_label(s: Substrate) -> &'static str {
-    s.display_name()
 }
 
 /// `LAB · OpenCode`, `WorkBuddy-Bench office · Codex`.
@@ -339,6 +335,7 @@ mod tests {
     use super::*;
     use h2s_api::{
         DemoParams, Isolation, JobStep, LogLine, LogStream, RunOptions, RunParams, RunResult,
+        Substrate,
     };
 
     fn job() -> Job {

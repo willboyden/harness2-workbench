@@ -4,7 +4,6 @@
 //! thin views over it; `api` and `browser` wrap the network and browser APIs.
 
 #![forbid(unsafe_code)]
-#![allow(dead_code)]
 
 mod actions;
 mod api;

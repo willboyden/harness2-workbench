@@ -2,6 +2,13 @@
 //! binding, so a blocked `localStorage`, a missing clipboard or a refused download degrades
 //! gracefully instead of aborting the app.
 
+use std::cell::RefCell;
+use std::future::Future;
+use std::pin::Pin;
+use std::rc::Rc;
+use std::task::{Context, Poll, Waker};
+use std::time::Duration;
+
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
@@ -136,7 +143,7 @@ pub(crate) fn download_text(filename: &str, mime: &str, text: &str) -> bool {
         move || {
             let _ = Url::revoke_object_url(&url);
         },
-        std::time::Duration::from_secs(30),
+        Duration::from_secs(30),
     );
     started
 }
@@ -153,4 +160,45 @@ pub(crate) fn is_at_bottom(id: &str) -> bool {
     document()
         .get_element_by_id(id)
         .is_none_or(|el| el.scroll_height() - el.scroll_top() - el.client_height() <= 8)
+}
+
+#[derive(Default)]
+struct SleepState {
+    done: bool,
+    waker: Option<Waker>,
+}
+
+/// A future that completes after `ms` milliseconds (driven by `setTimeout`).
+pub(crate) struct Sleep {
+    state: Rc<RefCell<SleepState>>,
+}
+
+impl Future for Sleep {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let mut st = self.state.borrow_mut();
+        if st.done {
+            Poll::Ready(())
+        } else {
+            st.waker = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+}
+
+pub(crate) fn sleep(ms: u64) -> Sleep {
+    let state = Rc::new(RefCell::new(SleepState::default()));
+    let fired = Rc::clone(&state);
+    set_timeout(
+        move || {
+            let mut st = fired.borrow_mut();
+            st.done = true;
+            if let Some(w) = st.waker.take() {
+                w.wake();
+            }
+        },
+        Duration::from_millis(ms),
+    );
+    Sleep { state }
 }

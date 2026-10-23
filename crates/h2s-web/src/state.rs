@@ -92,15 +92,6 @@ impl Toasts {
         self.push(Tone::Success, title, "", None);
     }
 
-    pub(crate) fn success_link(&self, title: &str, label: &str, href: &str) {
-        self.push(
-            Tone::Success,
-            title,
-            "",
-            Some((label.to_owned(), href.to_owned())),
-        );
-    }
-
     pub(crate) fn info(&self, title: &str) {
         self.push(Tone::Info, title, "", None);
     }

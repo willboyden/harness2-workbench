@@ -24,7 +24,6 @@ pub(crate) enum Icon {
     Check,
     Alert,
     Sparkle,
-    ChevronRight,
     File,
     Folder,
     Refresh,
@@ -141,7 +140,6 @@ pub(crate) fn icon(i: Icon) -> impl IntoView {
             <path d="M12 8.5 13.2 10.8 15.5 12 13.2 13.2 12 15.5 10.8 13.2 8.5 12 10.8 10.8z"></path>
         }
         .into_any(),
-        Icon::ChevronRight => view! { <path d="m9 5 7 7-7 7"></path> }.into_any(),
         Icon::File => view! {
             <path d="M6 3h8l4 4v14H6z"></path>
             <path d="M14 3v4h4"></path>

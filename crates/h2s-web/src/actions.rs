@@ -61,3 +61,18 @@ pub(crate) fn sign_out(
         navigate("/login", NavigateOptions::default());
     });
 }
+
+/// Start a job and wait until it finishes (polling `GET /jobs/{id}`), for short jobs the
+/// UI shows inline (previews, checks). Gives up after `max_secs`.
+pub(crate) async fn run_and_wait(spec: &JobSpec, max_secs: u64) -> Result<Job, api::ApiError> {
+    let job = api::post::<_, Job>(&paths::create_job(), spec).await?;
+    let mut waited_ms = 0_u64;
+    loop {
+        let current = api::get::<Job>(&paths::job(&job.id)).await?;
+        if current.status.is_terminal() || waited_ms >= max_secs * 1000 {
+            return Ok(current);
+        }
+        crate::browser::sleep(800).await;
+        waited_ms += 800;
+    }
+}

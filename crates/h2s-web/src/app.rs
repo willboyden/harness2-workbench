@@ -132,6 +132,7 @@ fn Root() -> impl IntoView {
                 <Routes fallback=|| view! { <pages::not_found::NotFound /> }>
                     <Route path=path!("/login") view=pages::login::Login />
                     <Route path=path!("/") view=pages::dashboard::Dashboard />
+                    <Route path=path!("/welcome") view=pages::welcome::Welcome />
                     <Route path=path!("/experiments") view=pages::experiments::Experiments />
                     <Route path=path!("/experiments/:exp") view=pages::experiment::ExperimentPage />
                     <Route path=path!("/experiments/:exp/sweeps/:sweep") view=pages::sweep::SweepPage />
@@ -139,9 +140,13 @@ fn Root() -> impl IntoView {
                         path=path!("/experiments/:exp/sweeps/:sweep/tasks/:task")
                         view=pages::task::TaskPage
                     />
+                    <Route path=path!("/new") view=pages::new_run::NewRun />
                     <Route path=path!("/jobs") view=pages::jobs::Jobs />
                     <Route path=path!("/jobs/:id") view=pages::job::JobPage />
+                    <Route path=path!("/compare") view=pages::compare::Compare />
+                    <Route path=path!("/benchmarks") view=pages::benchmarks::Benchmarks />
                     <Route path=path!("/settings") view=|| view! { <Redirect path="/settings/profiles" /> } />
+                    <Route path=path!("/settings/:section") view=pages::settings::Settings />
                     <Route path=path!("/help") view=pages::help::Help />
                 </Routes>
             </Show>
