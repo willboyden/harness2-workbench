@@ -1386,6 +1386,7 @@ fieldset legend {
   left: 0;
   bottom: calc(100% + 6px);
   z-index: 60;
+  display: none;
   width: max-content;
   max-width: min(300px, 80vw);
   padding: var(--s2) var(--s3);
@@ -1397,16 +1398,13 @@ fieldset legend {
   line-height: 1.4;
   text-transform: none;
   letter-spacing: normal;
-  visibility: hidden;
-  opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s;
 }
 
+/* Hidden tooltips take no layout space, so they never widen the page. */
 .term:hover .term-tip,
 .term:focus-within .term-tip {
-  visibility: visible;
-  opacity: 1;
+  display: block;
 }
 
 /* ---------- Dialogs, toasts, palette ---------- */
