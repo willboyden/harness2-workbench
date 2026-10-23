@@ -16,7 +16,9 @@ const BINARY: &str = env!("CARGO_BIN_EXE_h2studio-mcp");
 /// Run the binary to completion with only `env` set and stdin closed.
 fn run_once(env: &[(&str, &str)], args: &[&str]) -> (bool, String, String) {
     let mut cmd = StdCommand::new(BINARY);
+    // Never the default port 8722: nothing must touch a real server from these tests.
     cmd.env_clear()
+        .env("H2S_SERVER_URL", "http://127.0.0.1:9")
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

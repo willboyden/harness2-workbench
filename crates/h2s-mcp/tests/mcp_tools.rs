@@ -10,7 +10,13 @@ use std::collections::BTreeSet;
 
 use common::*;
 use h2s_api::JobSpec;
-use rmcp::model::{GetPromptRequestParams, ReadResourceRequestParams, ResourceContents};
+use rmcp::{
+    model::{
+        CallToolRequestParams, ClientRequest, GetPromptRequestParams, ReadResourceRequestParams,
+        Request, ResourceContents,
+    },
+    service::PeerRequestOptions,
+};
 use serde_json::{Value, json};
 use wiremock::{
     Mock, ResponseTemplate,
@@ -242,6 +248,29 @@ fn check_payload(tool: &str, args: &Value, p: &Value) {
     assert!(ok, "{tool} {args}: unexpected payload {p:#}");
 }
 
+/// Paths of properties without a description, through nested objects, options and arrays.
+fn undescribed_properties(schema: &Value, at: &str, out: &mut Vec<String>) {
+    if let Some(Value::Object(props)) = schema.get("properties") {
+        for (name, sub) in props {
+            let path = format!("{at}.{name}");
+            if sub.get("description").is_none() {
+                out.push(path.clone());
+            }
+            undescribed_properties(sub, &path, out);
+        }
+    }
+    for key in ["anyOf", "oneOf", "allOf"] {
+        if let Some(Value::Array(alternatives)) = schema.get(key) {
+            for alternative in alternatives {
+                undescribed_properties(alternative, at, out);
+            }
+        }
+    }
+    if let Some(items) = schema.get("items") {
+        undescribed_properties(items, &format!("{at}[]"), out);
+    }
+}
+
 #[tokio::test]
 async fn initialize_reports_identity_capabilities_and_instructions() {
     let studio = Studio::start().await;
@@ -350,15 +379,10 @@ async fn tools_list_is_complete_described_and_annotated() {
         assert_eq!(schema["additionalProperties"], false, "{name}");
         let text = serde_json::to_string(&**schema).unwrap();
         assert!(!text.contains("$ref"), "{name}: schema has a $ref");
-        // Every property says what it is.
-        if let Some(Value::Object(props)) = schema.get("properties") {
-            for (prop, sub) in props {
-                assert!(
-                    sub.get("description").is_some(),
-                    "{name}.{prop} has no description"
-                );
-            }
-        }
+        // Every property, at any depth, says what it is.
+        let mut undescribed = Vec::new();
+        undescribed_properties(&Value::Object((**schema).clone()), name, &mut undescribed);
+        assert!(undescribed.is_empty(), "no description: {undescribed:?}");
     }
     // Job tools that cost money say so.
     for name in ["start_run", "start_pipeline", "start_judge"] {
@@ -1026,4 +1050,53 @@ async fn prompts_list_and_get() {
         .await;
     assert!(missing.is_err(), "sweep is required");
     assert!(studio.received().await.is_empty());
+}
+
+#[tokio::test]
+async fn cancelling_a_wait_stops_the_server_side_polling() {
+    let studio = Studio::start().await;
+    get_route(&api(&format!("/jobs/{JOB_ID}")), TOKEN)
+        .respond_with(ResponseTemplate::new(200).set_body_json(job(
+            JOB_ID,
+            &demo_spec(),
+            "running",
+            None,
+        )))
+        .mount(&studio.server)
+        .await;
+    let client = connect(&studio.url(), TOKEN).await;
+    let args = json!({"job_id": JOB_ID, "timeout_secs": 120, "poll_interval_secs": 1});
+    let Value::Object(args) = args else {
+        unreachable!()
+    };
+    let request = ClientRequest::CallToolRequest(Request::new(
+        CallToolRequestParams::new("wait_for_job").with_arguments(args),
+    ));
+    let handle = client
+        .peer()
+        .send_cancellable_request(request, PeerRequestOptions::no_options())
+        .await
+        .unwrap();
+    let polls = || async {
+        requests_to(
+            &studio.received().await,
+            "GET",
+            &api(&format!("/jobs/{JOB_ID}")),
+        )
+        .len()
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    handle
+        .cancel(Some("user stopped waiting".into()))
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let at_cancel = polls().await;
+    assert!(at_cancel >= 2, "the wait was polling: {at_cancel}");
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    assert_eq!(
+        polls().await,
+        at_cancel,
+        "polling continued after cancellation"
+    );
 }

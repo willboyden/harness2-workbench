@@ -243,8 +243,8 @@ HTTP, prompting once for the token (stored by VS Code's secret storage):
   `path`, `session`, `part`, `job_id`); job tools take the job's parameters flat plus
   `wait_secs`. Unknown or misspelled arguments are errors, never ignored.
 - Results are the server's JSON, pretty-printed in the first text block (cut with a note above
-  100 KB) and attached as structured content when it is an object; a second text block may add
-  a short note (what a job's status means, what to call next).
+  100 KB) and attached as structured content when it is an object of at most 256 KiB; a second
+  text block may add a short note (what a job's status means, what to call next).
 - Failures are tool errors (`isError: true`) whose text starts with the server's error code
   (`forbidden: ...`, `validation: ...; field: problem`, `unavailable: ...`), plus a hint where
   the fix is known (the role a tool needs; `install_harness2` when harness2 is missing).

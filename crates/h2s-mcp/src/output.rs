@@ -7,9 +7,10 @@ use serde::Serialize;
 /// Largest text block a tool returns; beyond it the text is cut with an explicit note.
 pub(crate) const MAX_TEXT_BYTES: usize = 100_000;
 
-/// Largest value also attached as structured content (for programmatic clients). Text for the
-/// model is capped separately at [`MAX_TEXT_BYTES`].
-const MAX_STRUCTURED_BYTES: usize = 1024 * 1024;
+/// Largest value also attached as structured content, so programmatic clients get parseable
+/// JSON even when the text is cut. Kept moderate because some clients show structured content
+/// to the model instead of the text.
+const MAX_STRUCTURED_BYTES: usize = 256 * 1024;
 
 /// A successful result: the value as pretty JSON in the first text block, an optional note in
 /// a second block, and the value as structured content when it is a JSON object of sane size.
