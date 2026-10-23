@@ -1,0 +1,20 @@
+git init -q /fixture/harness2/dependencies/opencode
+git -C /fixture/harness2/dependencies/opencode remote add origin https://github.com/anomalyco/opencode.git
+git -C /fixture/harness2/dependencies/opencode fetch --depth 1 origin 23fb5e0516c99ac04a1aa46c193efda2e1b9bb24
+git -C /fixture/harness2/dependencies/opencode checkout --detach FETCH_HEAD
+git -C /fixture/harness2/dependencies/opencode apply --check /fixture/harness2/third_party/patches/opencode-compat.diff
+git -C /fixture/harness2/dependencies/opencode apply /fixture/harness2/third_party/patches/opencode-compat.diff
+npm install --prefix /fixture/harness2/dependencies/tools bun@1.3.11
+[/fixture/harness2/dependencies/opencode] /fixture/harness2/dependencies/tools/node_modules/.bin/bun install --frozen-lockfile --ignore-scripts
+git init -q /fixture/harness2/dependencies/harvey-labs
+git -C /fixture/harness2/dependencies/harvey-labs remote add origin https://github.com/harveyai/harvey-labs.git
+git -C /fixture/harness2/dependencies/harvey-labs fetch --depth 1 origin b58a28ae9fde5ee4b810e53b4fd0a1915325a35d
+git -C /fixture/harness2/dependencies/harvey-labs checkout --detach FETCH_HEAD
+git -C /fixture/harness2/dependencies/harvey-labs apply --check /fixture/harness2/third_party/patches/harvey-labs-judge-vertex-anthropic.diff
+git -C /fixture/harness2/dependencies/harvey-labs apply /fixture/harness2/third_party/patches/harvey-labs-judge-vertex-anthropic.diff
+Copy runner assets: /fixture/harness2/third_party/lab_runner/opencode -> /fixture/harness2/dependencies/harvey-labs/opencode
+Copy runner assets: /fixture/harness2/third_party/lab_runner/tts_lab -> /fixture/harness2/dependencies/harvey-labs/external/tts_lab
+Copy runner assets: /fixture/harness2/third_party/lab_runner/adapt_runs_cx -> /fixture/harness2/dependencies/harvey-labs/external/adapt_runs_cx
+[/fixture/harness2/dependencies/harvey-labs] uv sync --locked --python 3.12
+uv pip install --python /fixture/harness2/dependencies/harvey-labs/.venv/bin/python 'google-auth[requests]'
+Setup plan complete.

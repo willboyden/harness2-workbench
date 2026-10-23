@@ -1,0 +1,60 @@
+{
+  "benchmark": "jb",
+  "substrate": "oc",
+  "k": 1,
+  "modes": [
+    "agg"
+  ],
+  "seed": 3,
+  "tag": "",
+  "domain_order": [
+    "auditor",
+    "accountant"
+  ],
+  "max_tasks": null,
+  "only_tasks": [],
+  "started_at": "2026-10-23T21:33:06.834082+00:00",
+  "finished_at": "2026-10-23T21:33:07.136198+00:00",
+  "n_domains": 2,
+  "domains": [
+    {
+      "domain": "auditor",
+      "n_tasks": 1,
+      "seed": 3,
+      "done": 1,
+      "failed": 0,
+      "tasks": [
+        {
+          "task": "auditor/task1",
+          "status": "ok",
+          "library_entries_before": {
+            "agg": 0
+          }
+        }
+      ]
+    },
+    {
+      "domain": "accountant",
+      "n_tasks": 2,
+      "seed": 3,
+      "done": 2,
+      "failed": 0,
+      "tasks": [
+        {
+          "task": "accountant/task2",
+          "status": "ok",
+          "library_entries_before": {
+            "agg": 0
+          }
+        },
+        {
+          "task": "accountant/task1",
+          "status": "ok",
+          "library_entries_before": {
+            "agg": 1
+          }
+        }
+      ]
+    }
+  ]
+}
