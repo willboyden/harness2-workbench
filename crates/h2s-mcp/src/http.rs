@@ -243,6 +243,38 @@ impl Guard {
 }
 
 async fn guard_requests(State(guard): State<Arc<Guard>>, request: Request, next: Next) -> Response {
+    let mut response = match check(&guard, &request) {
+        Some(refusal) => refusal,
+        None => next.run(request).await,
+    };
+    harden(response.headers_mut());
+    response
+}
+
+/// Security headers on every response, refusals included (the Studio server's policy, §9).
+/// MCP answers are JSON or event streams: nothing here is meant to render or be cached.
+fn harden(headers: &mut HeaderMap) {
+    let set = [
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::REFERRER_POLICY, "no-referrer"),
+        (header::X_FRAME_OPTIONS, "DENY"),
+        (
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'; frame-ancestors 'none'",
+        ),
+        (header::CACHE_CONTROL, "no-store"),
+    ];
+    for (name, value) in set {
+        headers.insert(name, HeaderValue::from_static(value));
+    }
+    headers.insert(
+        header::HeaderName::from_static("cross-origin-resource-policy"),
+        HeaderValue::from_static("same-origin"),
+    );
+}
+
+/// The refusal for a request the guard does not let through, if any.
+fn check(guard: &Guard, request: &Request) -> Option<Response> {
     let headers = request.headers();
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     if !host.is_some_and(|h| guard.host_allowed(h)) {
@@ -250,12 +282,12 @@ async fn guard_requests(State(guard): State<Arc<Guard>>, request: Request, next:
             host = ?host.map(|h| h.chars().take(100).collect::<String>()),
             "refused a request for an unknown Host (possible DNS rebinding)"
         );
-        return refuse(
+        return Some(refuse(
             StatusCode::MISDIRECTED_REQUEST,
             ErrorCode::MisdirectedRequest,
             "this MCP server does not answer to that Host; add it with --allowed-host if it is \
              legitimate",
-        );
+        ));
     }
     if let Some(origin) = headers.get(header::ORIGIN) {
         let origin = origin.to_str().unwrap_or("");
@@ -264,12 +296,12 @@ async fn guard_requests(State(guard): State<Arc<Guard>>, request: Request, next:
                 origin = ?origin.chars().take(100).collect::<String>(),
                 "refused a cross-origin request"
             );
-            return refuse(
+            return Some(refuse(
                 StatusCode::FORBIDDEN,
                 ErrorCode::Forbidden,
                 "cross-origin requests are not allowed; add the origin with --allowed-origin if \
                  it is legitimate",
-            );
+            ));
         }
     }
     if bearer_token(headers).is_none() {
@@ -283,9 +315,9 @@ async fn guard_requests(State(guard): State<Arc<Guard>>, request: Request, next:
             header::WWW_AUTHENTICATE,
             HeaderValue::from_static("Bearer realm=\"h2studio-mcp\""),
         );
-        return response;
+        return Some(response);
     }
-    next.run(request).await
+    None
 }
 
 fn refuse(status: StatusCode, code: ErrorCode, message: &str) -> Response {
@@ -305,7 +337,6 @@ fn refuse(status: StatusCode, code: ErrorCode, message: &str) -> Response {
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 

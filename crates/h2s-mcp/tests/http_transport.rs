@@ -324,3 +324,37 @@ async fn progress_notifications_stream_over_http() {
     assert_eq!(values, vec![0.0, 1.0]);
     studio.assert_well_formed(TOKEN).await;
 }
+
+#[tokio::test]
+async fn every_response_carries_security_headers() {
+    let studio = Studio::start().await;
+    let mcp = McpHttp::start(&studio.url(), HttpOptions::default()).await;
+    let refused = post_initialize(&mcp, &[]).await;
+    let served = post_initialize(&mcp, &[bearer(TOKEN)]).await;
+    assert_eq!(
+        (refused.status().as_u16(), served.status().as_u16()),
+        (401, 200)
+    );
+    for response in [&refused, &served] {
+        let header = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        assert_eq!(header("x-content-type-options"), "nosniff");
+        assert_eq!(header("referrer-policy"), "no-referrer");
+        assert_eq!(header("x-frame-options"), "DENY");
+        assert_eq!(header("cache-control"), "no-store");
+        assert!(header("content-security-policy").contains("frame-ancestors 'none'"));
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "no CORS, ever"
+        );
+    }
+}
