@@ -701,6 +701,9 @@ pub struct BridgeInfo {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PipelineResult {
     /// Results of the steps that finished, in order.
+    // Recursive (JobResult -> PipelineResult -> Vec<JobResult>): stop utoipa's schema
+    // collection from recursing forever. Wire format unchanged.
+    #[cfg_attr(feature = "openapi", schema(no_recursion))]
     pub steps: Vec<JobResult>,
 }
 
@@ -888,5 +891,24 @@ mod tests {
         let p: DemoParams = serde_json::from_str(r#"{"experiment":"demo"}"#).unwrap();
         assert_eq!(p.k, 2);
         assert_eq!(p.mode, DemoMode::Both);
+    }
+}
+
+#[cfg(all(test, feature = "openapi"))]
+mod openapi_tests {
+    use super::*;
+    use utoipa::ToSchema;
+
+    /// JobResult -> PipelineResult -> Vec<JobResult> is recursive; collecting the schemas of
+    /// anything that contains a Job must terminate (utoipa overflowed the stack without
+    /// `no_recursion` on `PipelineResult::steps`).
+    #[test]
+    fn recursive_job_schemas_terminate() {
+        let mut schemas = Vec::new();
+        <Job as ToSchema>::schemas(&mut schemas);
+        <JobEvent as ToSchema>::schemas(&mut schemas);
+        <crate::Page<Job> as ToSchema>::schemas(&mut schemas);
+        assert!(schemas.iter().any(|(name, _)| name == "JobResult"));
+        assert!(schemas.iter().any(|(name, _)| name == "PipelineResult"));
     }
 }
