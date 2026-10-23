@@ -432,5 +432,12 @@ STDOUT line `h2studio listening on http://<ip>:<port>` once bound. `init` and `t
 accept `--config` and print the new token as the only STDOUT line (explanations on stderr);
 `init` refuses to overwrite an existing configuration unless `--force`.
 
+**v1.1 (2026-10-23) — MCP argument names.** Tool arguments mirror the REST names:
+`experiment`, `sweep` (summary namespace id), `task` (slug), `mode`, `label`, `from`/`to`, `path`,
+`session` + `part`, `job_id`; `run_demo` takes the `DemoParams` fields flat; `wait_for_job` takes
+`job_id` and `timeout_secs` (≤ 600) and returns the `Job`. Results are JSON (structured content or
+the first text block); refusals set `is_error` and name the server's error code. Stdio
+configuration: `H2S_SERVER_URL`, `H2S_TOKEN`.
+
 **v1.1 (2026-10-23) — dependencies.** `tools/h2s-mock-api` may use `tokio-stream` (already in the
 lockfile) to stream SSE.
