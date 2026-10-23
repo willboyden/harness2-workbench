@@ -211,13 +211,34 @@ impl ApiClient {
         segments: &[&str],
         body: Option<&B>,
     ) -> Result<T, ApiError> {
+        self.send_json(token, Method::POST, segments, body).await
+    }
+
+    /// `PATCH` a JSON body to an API route and decode the JSON answer.
+    pub(crate) async fn patch<B: Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        token: &Token,
+        segments: &[&str],
+        body: &B,
+    ) -> Result<T, ApiError> {
+        self.send_json(token, Method::PATCH, segments, Some(body))
+            .await
+    }
+
+    async fn send_json<B: Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        token: &Token,
+        method: Method,
+        segments: &[&str],
+        body: Option<&B>,
+    ) -> Result<T, ApiError> {
         let url = self.api_url(segments, &[])?;
         let body = body
             .map(serde_json::to_vec)
             .transpose()
             .map_err(|e| ApiError::Invalid(format!("cannot encode the request: {e}")))?;
         let resp = self
-            .send(token, Method::POST, url, body, "application/json")
+            .send(token, method, url, body, "application/json")
             .await?;
         decode(resp).await
     }

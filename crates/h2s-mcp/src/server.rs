@@ -1,6 +1,6 @@
-//! The MCP server: 39 tools, 3 resource templates and 3 prompts over the Studio REST API.
+//! The MCP server: 41 tools, 3 resource templates and 3 prompts over the Studio REST API.
 //!
-//! Each tool is one REST capability (`docs/ARCHITECTURE.md` §8 and §13) called with the
+//! Each tool is one REST capability (`docs/ARCHITECTURE.md` §8, §13 and §16) called with the
 //! caller's token. The server enforces roles and audits; this handler only translates.
 
 use std::{
@@ -12,7 +12,7 @@ use h2s_api::{
     AuditSession, BenchmarkStatus, Comparison, CostEstimate, DoctorReport, Experiment,
     ExportBundle, FileContent, FileEntry, HarnessDiff, HarnessTree, Job, JobResult, JobSpec,
     JobStatus, LibraryDomain, LogChunk, Manifest, ModelProfile, Page, Principal, Role, ScoreReport,
-    Scores, SystemInfo, TaskDetail, TaskRow, ValidationReport,
+    Scores, SplitInfo, SystemInfo, TaskDetail, TaskRow, ValidationReport,
 };
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
@@ -36,7 +36,7 @@ use crate::{
         InstallInput, JobInput, JobLogInput, JudgeInput, ListExperimentsInput, ListJobsInput,
         ListTasksInput, MAX_WAIT_SECS, NoArgs, PipelineInput, PreviewInput, ReportInput,
         RolloutFileInput, RolloutFilesInput, RunInput, SetupInput, SplitInput, SweepInput,
-        TaskInput, ValidateInput, WaitInput,
+        TaskInput, UpdateExperimentInput, ValidateInput, WaitInput,
     },
     prompts, resources,
     schema::{Args, input_schema},
@@ -595,6 +595,60 @@ impl H2sMcp {
             "",
         )
         .await
+    }
+
+    #[tool(
+        name = "update_experiment",
+        title = "Update or archive an experiment",
+        description = d::UPDATE_EXPERIMENT,
+        input_schema = input_schema::<UpdateExperimentInput>(),
+        annotations(
+            title = "Update or archive an experiment",
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn update_experiment(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Args(input): Args<UpdateExperimentInput>,
+    ) -> rmcp::model::CallToolResult {
+        let token = match self.token(&ctx) {
+            Ok(token) => token,
+            Err(e) => return output::error(e),
+        };
+        match self
+            .api
+            .patch::<_, Experiment>(&token, &["experiments", &input.experiment], &input.request)
+            .await
+        {
+            Ok(experiment) => output::json(&experiment, None, ""),
+            Err(e) => output::error(errors::render(&e, Role::Operator)),
+        }
+    }
+
+    #[tool(
+        name = "list_splits",
+        title = "List train/test splits",
+        description = d::LIST_SPLITS,
+        input_schema = input_schema::<NoArgs>(),
+        annotations(
+            title = "List train/test splits",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn list_splits(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Args(_): Args<NoArgs>,
+    ) -> rmcp::model::CallToolResult {
+        self.get_json::<Vec<SplitInfo>>(&ctx, &["splits"], &[], Role::Viewer, "")
+            .await
     }
 
     #[tool(

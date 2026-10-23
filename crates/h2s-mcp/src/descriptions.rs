@@ -68,6 +68,18 @@ list_experiments; headline scores are PERCENT 0..100). Use a sweep's id (summary
 the `sweep` argument of list_tasks, get_task, get_report, get_scores, get_library, \
 list_audit_sessions and compare_sweeps.";
 
+pub(crate) const UPDATE_EXPERIMENT: &str = "Change an experiment's description, tags or \
+archived flag (operator role); arguments you leave out stay as they are. tags replaces the \
+whole tag list. archived=true hides the experiment from list_experiments (include_archived \
+shows it again) without deleting anything on disk; archived=false restores it. The pinned \
+profile and the results cannot be changed here. Returns the updated experiment.";
+
+pub(crate) const LIST_SPLITS: &str = "List the train/test split files created with \
+create_split: name (the value for options.split_file), benchmark and subset, seed, train \
+fraction, train and test task counts, and creation time. Pass a split's name as \
+options.split_file together with options.split=train or test to preview_run, start_run or \
+start_pipeline, to adapt on one part of the tasks and measure on the other.";
+
 pub(crate) const ESTIMATE_COST: &str = "Estimate a sweep's size and cost without starting \
 anything: executor rollouts (per task: k base runs shared by the modes plus 3k per mode) and \
 improver sessions (3k per task and mode, plus selection and reflection sessions), and a USD \
@@ -293,9 +305,10 @@ Studio server: every call runs with your API token's role (viewer < operator < a
 audited by that server.
 
 Tool families: status (server_info, doctor, list_benchmarks, list_profiles); experiments \
-(list_experiments, create_experiment, get_experiment, get_manifest); planning (preview_run, \
-estimate_cost); jobs (run_demo, check_benchmark, start_pipeline, start_run, start_judge, \
-start_report, create_split, setup_benchmark, install_harness2, start_bridge, list_jobs, \
+(list_experiments, create_experiment, get_experiment, update_experiment, get_manifest); \
+planning (preview_run, estimate_cost, list_splits); jobs (run_demo, check_benchmark, \
+start_pipeline, start_run, start_judge, start_report, create_split, setup_benchmark, \
+install_harness2, start_bridge, list_jobs, \
 get_job, wait_for_job, get_job_log, cancel_job); results (list_tasks, get_task, get_harness, \
 diff_harnesses, list_rollout_files, read_rollout_file, get_scores, get_report, get_library, \
 list_audit_sessions, read_audit_session, compare_sweeps); adoption (export_harness, \

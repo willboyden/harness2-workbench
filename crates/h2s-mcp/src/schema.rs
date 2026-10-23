@@ -128,6 +128,14 @@ pub(crate) fn describe(schema: &mut Value, path: &[&str], text: &str) {
     }
 }
 
+/// Replace the description of the property at `path` (for wire docs that only make sense to a
+/// Rust reader).
+pub(crate) fn redescribe(schema: &mut Value, path: &[&str], text: &str) {
+    if let Some(Value::Object(object)) = node(schema, path) {
+        object.insert("description".into(), Value::String(text.to_owned()));
+    }
+}
+
 /// An argument that is not in the schema.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Unknown {

@@ -316,6 +316,11 @@ impl ProgressState {
             return None;
         }
         let base = self.offset + f64::from(tasks);
+        // A finished job needs no "status changed" notification: the tool result follows at
+        // once, and the value would have to creep past the task total.
+        if job.status.is_terminal() && self.last_value.is_some_and(|last| base <= last) {
+            return None;
+        }
         let value = match self.last_value {
             Some(last) if base <= last => ((last + 0.001) * 1000.0).round() / 1000.0,
             _ => base,
@@ -447,6 +452,11 @@ mod tests {
             &mut r,
             &job(JobStatus::Running, progress(2, 0, Some(4), "judge")),
         );
+        push(
+            &mut r,
+            &job(JobStatus::Succeeded, progress(4, 0, Some(4), "judge")),
+        );
+        // Finishing without new tasks sends nothing more.
         push(
             &mut r,
             &job(JobStatus::Succeeded, progress(4, 0, Some(4), "judge")),

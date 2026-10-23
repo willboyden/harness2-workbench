@@ -9,13 +9,13 @@ use h2s_api::{
     BridgeParams, CheckParams, CreateExperimentRequest, DEMO_K_MAX, DemoParams, EstimateRequest,
     ExportTarget, InstallParams, JobKind, JobStatus, JudgeParams, K_MAX, MAX_TASKS_MAX, Mode,
     PipelineParams, PreviewParams, ReportParams, RunParams, SetupParams, SplitParams,
-    ValidateHarnessRequest, WORKERS_MAX,
+    UpdateExperimentRequest, ValidateHarnessRequest, WORKERS_MAX,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::schema::{ToolInput, bounds, describe};
+use crate::schema::{ToolInput, bounds, describe, redescribe};
 
 /// Longest wait any tool performs (also the cap of `wait_for_job`).
 pub(crate) const MAX_WAIT_SECS: u32 = 600;
@@ -127,6 +127,35 @@ impl ToolInput for CreateExperimentInput {
             &["profile"],
             "Model profile to pin (see list_profiles). Runs, judging and pipelines in this \
              experiment must then use this profile.",
+        );
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct UpdateExperimentInput {
+    /// Experiment name (see list_experiments).
+    pub(crate) experiment: String,
+    #[serde(flatten)]
+    pub(crate) request: UpdateExperimentRequest,
+}
+
+impl ToolInput for UpdateExperimentInput {
+    fn patch(schema: &mut Value) {
+        describe(
+            schema,
+            &["description"],
+            "New description (replaces the old one). Omit to keep it.",
+        );
+        describe(
+            schema,
+            &["tags"],
+            "New tag list (replaces all tags; [] removes them). Omit to keep them.",
+        );
+        describe(
+            schema,
+            &["archived"],
+            "true archives the experiment (hidden from list_experiments, nothing deleted); false \
+             restores it. Omit to keep it as is.",
         );
     }
 }
@@ -375,7 +404,17 @@ pub(crate) struct ValidateInput {
     pub(crate) request: ValidateHarnessRequest,
 }
 
-impl ToolInput for ValidateInput {}
+impl ToolInput for ValidateInput {
+    fn patch(schema: &mut Value) {
+        describe(
+            schema,
+            &["files", "[]", "path"],
+            "Path relative to the harness root, '/'-separated (e.g. systemprompt.md, \
+             skills/review/SKILL.md).",
+        );
+        describe(schema, &["files", "[]", "content"], "The file's full text.");
+    }
+}
 
 // ---------------------------------------------------------------------------------------------
 // Jobs
@@ -565,6 +604,11 @@ job_input!(
      queued job at once).",
     |schema| {
         bounds(schema, &["k"], 1, u64::from(DEMO_K_MAX));
+        redescribe(
+            schema,
+            &["mode"],
+            "Recursion mode(s) the demo runs: parallel, sequential or both (default).",
+        );
     }
 );
 
@@ -646,6 +690,11 @@ job_input!(
             schema,
             &["profile"],
             "Model profile whose Vertex AI settings and Codex model the bridge uses.",
+        );
+        describe(
+            schema,
+            &["port"],
+            "TCP port for the bridge (default: harness2-bridge's own).",
         );
         bounds(schema, &["port"], 1, 65535);
     }
