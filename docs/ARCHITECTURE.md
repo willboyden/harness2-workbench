@@ -417,5 +417,20 @@ MAY set `id:` to the job-log line number of `log` events; clients may ignore it.
 percentage points). Percent (0..100) is used only by `ModeScore`, `ModeSummary` and
 `ScoreReport.base_score`, matching upstream's report.
 
+**v1.1 (2026-10-23) — UI test hooks.** The end-to-end suite selects elements only by
+`data-testid`: `login-token`, `login-submit`, `login-error`; `nav-dashboard`, `nav-experiments`,
+`nav-jobs`, `nav-new-run`, `nav-compare`, `nav-benchmarks`, `nav-settings`, `nav-help`,
+`current-user`, `theme-toggle`; `dashboard`, `harness2-status`; `experiment-row` (+`data-name`),
+`experiment-create`; `sweep-row` (+`data-sweep`); `tab-tasks`, `tab-report`, `tab-library`,
+`tab-audit`, `task-row` (+`data-task`), `report-view`, `library-view`; `mode-section`
+(+`data-mode`), `harness-label` (+`data-label`), `diff-from`, `diff-to`, `diff-view`,
+`export-button`; `job-row` (+`data-job-id`), `job-status` (text = the `JobStatus` string),
+`job-log`, `job-cancel`; `toast`.
+
+**v1.1 (2026-10-23) — server CLI for automation.** `h2studio serve` accepts port 0 and prints one
+STDOUT line `h2studio listening on http://<ip>:<port>` once bound. `init` and `token create`
+accept `--config` and print the new token as the only STDOUT line (explanations on stderr);
+`init` refuses to overwrite an existing configuration unless `--force`.
+
 **v1.1 (2026-10-23) — dependencies.** `tools/h2s-mock-api` may use `tokio-stream` (already in the
 lockfile) to stream SSE.
