@@ -11,8 +11,8 @@ real subprocesses (stub harness2 executables that print upstream's captured outp
 real sockets, the real harness2 fixtures and a local OTLP/HTTP collector; the real
 `harness2-demo` ran through `h2studio serve` against an unmodified harness2 checkout, by hand
 and in the `h2s-e2e` server and MCP suites. Not exercised: container isolation end to end (the
-`docker`/`podman run` argv is tested, no container was started), the request timeout (503), and
-TLS (served by a reverse proxy, not by this server).
+`docker`/`podman run` argv is tested, no container was started) and TLS (served by a reverse
+proxy, not by this server).
 
 ## Command line
 

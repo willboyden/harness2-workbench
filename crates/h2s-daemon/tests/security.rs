@@ -425,3 +425,31 @@ async fn metrics_accept_the_configured_metrics_token() {
     assert_eq!(r.status(), 401);
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stalled_requests_time_out_with_503() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let t = TestServer::start_with(|s| s.file.server.request_timeout_secs = 1).await;
+    let port = t.port();
+    let mut s = tokio::net::TcpStream::connect(t.srv().addr).await.unwrap();
+    // Promise 100 bytes, send 10, then wait: the handler is still reading the body.
+    s.write_all(
+        format!(
+            "POST /api/v1/auth/login HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nx-h2s-request: 1\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{{\"token\": "
+        )
+        .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let started = std::time::Instant::now();
+    let mut buf = vec![0u8; 4096];
+    let n = tokio::time::timeout(std::time::Duration::from_secs(10), s.read(&mut buf))
+        .await
+        .expect("no response to a stalled request")
+        .unwrap();
+    let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+    assert!(head.starts_with("HTTP/1.1 503"), "{head}");
+    assert!(head.contains("\"unavailable\""), "{head}");
+    assert!(started.elapsed() >= std::time::Duration::from_millis(900));
+    t.stop().await;
+}
