@@ -170,6 +170,13 @@ environment variable `auth.proxy.secret_env` when the server starts.
 - **Install inside the container**: with container isolation the install job runs in the runner
   image, so the venv points at the image's interpreter. `install::plan` inspects the checkout on
   the host; the server maps the host paths in its steps to `/h2s/harness2`.
+- **Network** (contract addendum v1.2): the container sees none of the server's environment.
+  With `isolation.container.proxy` set, each `docker run` gets fixed `-e HTTPS_PROXY=<proxy>`,
+  `HTTP_PROXY`, `https_proxy`, `http_proxy` and `NO_PROXY`/`no_proxy` = `localhost,127.0.0.1,::1`
+  values; the runtime CLI's own environment does not get them. The install job (git, uv) needs
+  this: with `network = "none"` only the offline demo works.
+- **HOME**: the runner image sets `HOME=/h2s/home` (mode 1777), because container uid 0 without
+  capabilities cannot write `/home/node` on a rootless runtime.
 - **Stopping**: the job label of `h2s-job-<id>` is read first and the container is stopped only
   when it equals the job id.
 - `SystemInfo.container_runtime` is set once the runtime answered (user detection or a passing

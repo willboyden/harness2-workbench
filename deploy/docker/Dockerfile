@@ -17,7 +17,10 @@ RUN cargo xtask web \
 
 FROM harness2-studio-runner:0.1.0
 COPY --from=build /src/target/release/h2studio /src/target/release/h2studio-mcp /usr/local/bin/
-ENV H2S_DATA_DIR=/data
+# The server and its host-mode jobs run as node, so they get node's private home back (the
+# runner's shared HOME is for container jobs of any uid).
+ENV H2S_DATA_DIR=/data \
+    HOME=/home/node
 USER node
 WORKDIR /data
 EXPOSE 8722

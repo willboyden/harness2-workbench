@@ -33,9 +33,16 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \
 RUN uv python install 3.12 \
     && chmod -R a+rX /opt/uv
 
-# The node image's non-root user (uid 1000). Jobs never run as root.
+# Who jobs run as is the server's choice (`--user`): its own uid:gid on a rootful runtime, or
+# 0:0 on a rootless one, where container root IS the server's unprivileged host user (the only
+# id that can write the bind-mounted experiment) and holds no capabilities (`--cap-drop ALL`).
+# Without CAP_DAC_OVERRIDE that user cannot write /home/node, so HOME (uv, npm and Bun caches,
+# OpenCode's state) is a sticky world-writable directory in the throwaway container layer.
+RUN install -d -m 1777 /h2s/home
+ENV HOME=/h2s/home
+
+# Manual runs default to the node image's non-root user (uid 1000).
 USER node
-ENV HOME=/home/node
 WORKDIR /h2s
 
 ENTRYPOINT ["/usr/bin/tini", "--"]

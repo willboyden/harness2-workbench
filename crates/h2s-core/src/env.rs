@@ -18,10 +18,41 @@ use h2s_api::{Endpoint, ModelProfile, ProfileKind};
 
 use crate::{CoreError, Result, names};
 
-/// Variables copied from the server's own environment when present.
+/// Variables copied from the server's own environment when present: the basics, the forward
+/// proxy the server is given (jobs on an internal network, as in `deploy/compose.yaml`, reach
+/// the internet only through `h2studio egress-proxy`) and extra CA certificates (for a
+/// TLS-inspecting corporate proxy). Container jobs get none of these inside the container;
+/// they use `[isolation.container] proxy` and the image's own environment.
 pub const BASE_ENV_PASSTHROUGH: &[&str] = &[
-    "PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR", "USER", "LOGNAME",
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "TMPDIR",
+    "USER",
+    "LOGNAME",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "all_proxy",
+    "no_proxy",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
 ];
+
+/// The proxy variables set inside a container job when `[isolation.container] proxy` is
+/// configured (Python, Node/Bun, git, curl and uv each read a different subset).
+pub const CONTAINER_PROXY_VARS: &[&str] =
+    &["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"];
+
+/// `NO_PROXY`/`no_proxy` inside a container job that uses a proxy.
+pub const CONTAINER_NO_PROXY: &str = "localhost,127.0.0.1,::1";
 
 /// Names a profile's `extra_env` may never set (they control the loader, the interpreter,
 /// the server or credentials the server manages itself).
@@ -40,6 +71,12 @@ pub const RESERVED_ENV: &[&str] = &[
     "GOOGLE_APPLICATION_CREDENTIALS",
     "DOCKER_HOST",
     "SSH_AUTH_SOCK",
+    // The forward proxy is the server's (or the container configuration's), so a profile
+    // cannot route jobs around it.
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
 ];
 
 /// Prefixes a profile's `extra_env` may never set.

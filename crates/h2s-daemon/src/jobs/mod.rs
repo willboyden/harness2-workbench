@@ -431,6 +431,7 @@ impl JobManager {
             memory_mb: c.memory_mb,
             pids_limit: c.pids_limit,
             user,
+            proxy: Some(c.proxy.clone()).filter(|p| !p.is_empty()),
         };
         *cached = Some(s.clone());
         Ok(s)
