@@ -185,7 +185,10 @@ def main() -> None:
         rel = str(p.relative_to(OUT))
         if any(f in rel for f in forbidden):
             bad.append(rel)
-        if p.is_file() and not (p.parent == HERE and p.suffix == ".py"):
+        # Hand-written files (this README and the generator scripts) name the forbidden
+        # prefixes on purpose; every GENERATED file is still scanned.
+        handwritten = rel == "README.md" or (rel.startswith("golden/") and rel.endswith(".py"))
+        if p.is_file() and not handwritten:
             text = p.read_text(encoding="utf-8", errors="replace")
             if any(f in text for f in forbidden):
                 bad.append(rel)
