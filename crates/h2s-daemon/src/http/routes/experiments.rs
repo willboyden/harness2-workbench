@@ -236,9 +236,8 @@ pub async fn create(
         })
         .await;
     if let Err(e) = res {
-        if created {
-            let _ = std::fs::remove_dir(&path);
-        }
+        // The directory stays: a concurrent request may have adopted it, and an empty
+        // directory is adopted by the next create anyway.
         return Err(match e {
             crate::db::DbError::Sqlite(_) => {
                 ApiError::conflict(format!("an experiment named {} already exists", req.name))

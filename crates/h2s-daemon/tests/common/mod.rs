@@ -277,19 +277,18 @@ impl JobBackend for FakeBackend {
         }
         match input.spec {
             JobSpec::Demo(p) => {
-                let mut s = self.step(
-                    "demo",
-                    "harness2-demo",
-                    vec![
-                        "--output".into(),
-                        runs,
-                        "--k".into(),
-                        p.k.to_string(),
-                        "--mode".into(),
-                        p.mode.as_cli().into(),
-                    ],
-                    env,
-                );
+                let mut args = vec![
+                    "--output".into(),
+                    runs,
+                    "--k".into(),
+                    p.k.to_string(),
+                    "--mode".into(),
+                    p.mode.as_cli().into(),
+                ];
+                if scenario(input.spec) == "argvleak" {
+                    args.push(format!("--token={}", self.secret_value));
+                }
+                let mut s = self.step("demo", "harness2-demo", args, env);
                 s.parse = ParseKind::Demo;
                 s.progress = true;
                 plan.steps.push(s);

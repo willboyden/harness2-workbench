@@ -992,3 +992,27 @@ async fn old_job_logs_are_deleted_by_retention() {
     assert_eq!(t.job(&job.id).await.status, JobStatus::Succeeded);
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_secret_in_argv_refuses_the_step() {
+    let t = TestServer::start().await;
+    let job: Job = t
+        .create_job(&t.operator, demo_spec("argvleak-a"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 30).await;
+    assert_terminal(&done, JobStatus::Failed);
+    assert_eq!(
+        done.error.as_deref(),
+        Some("refused: a secret value would appear on the command line")
+    );
+    assert!(
+        !t.experiment_dir("argvleak-a").join("demo.json").exists(),
+        "the step ran"
+    );
+    let log = full_log(&t, &job.id).await;
+    assert!(!log.iter().any(|l| l.text.contains(&t.secret_value)));
+    t.stop().await;
+}

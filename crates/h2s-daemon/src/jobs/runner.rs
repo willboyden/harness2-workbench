@@ -90,6 +90,7 @@ struct Ctx<'a> {
     profile: Option<h2s_api::ModelProfile>,
     job_dir: PathBuf,
     masker: PathMasker,
+    argv_guard: Redactor,
 }
 
 async fn execute(mgr: &Arc<JobManager>, live: &Arc<LiveJob>, pump: &Pump) -> Finish {
@@ -461,6 +462,15 @@ async fn prepare<'a>(
             .iter()
             .map(|(n, v)| (n.clone(), v.as_str().to_owned())),
     );
+    // Command lines are visible to every local user (/proc); refuse any that would carry a
+    // secret. Very short values are skipped here (they match ordinary arguments).
+    let argv_guard = Redactor::new(
+        secrets
+            .iter()
+            .filter(|(_, v)| v.len() >= h2s_core::redact::MIN_SECRET_LEN)
+            .cloned()
+            .collect(),
+    );
     pump.set_redactor(Redactor::new(secrets)).await;
 
     let mut pairs = vec![
@@ -496,6 +506,7 @@ async fn prepare<'a>(
             profile,
             job_dir,
             masker,
+            argv_guard,
         },
         plan,
     ))
@@ -580,7 +591,10 @@ async fn run_step(ctx: &Ctx<'_>, step: &StepPlan, summary_ns: Option<&str>) -> S
     };
 
     // A secret value must never appear in argv (visible in /proc to every local user).
-    if pump.contains_secret(&step.program, &step.args).await {
+    let leaks = std::iter::once(&step.program)
+        .chain(&step.args)
+        .any(|a| ctx.argv_guard.redact(a) != a.as_str());
+    if leaks {
         let msg = "refused: a secret value would appear on the command line".to_owned();
         pump.system(msg.clone()).await;
         return spawn_fail(msg);
@@ -841,7 +855,6 @@ enum PumpMsg {
     End(oneshot::Sender<Capture>),
     SetRedactor(Redactor),
     SetMasker(PathMasker),
-    CheckArgv(Vec<String>, oneshot::Sender<bool>),
     Close(oneshot::Sender<()>),
 }
 
@@ -920,16 +933,6 @@ impl Pump {
         let _ = self.tx.send(PumpMsg::SetMasker(m)).await;
     }
 
-    async fn contains_secret(&self, program: &str, args: &[String]) -> bool {
-        let mut argv = vec![program.to_owned()];
-        argv.extend(args.iter().cloned());
-        let (tx, rx) = oneshot::channel();
-        if self.tx.send(PumpMsg::CheckArgv(argv, tx)).await.is_err() {
-            return true;
-        }
-        rx.await.unwrap_or(true)
-    }
-
     async fn close(self) {
         let (tx, rx) = oneshot::channel();
         if self.tx.send(PumpMsg::Close(tx)).await.is_ok() {
@@ -960,10 +963,6 @@ impl PumpState {
                 }
                 PumpMsg::SetRedactor(r) => self.redactor = r,
                 PumpMsg::SetMasker(m) => self.masker = m,
-                PumpMsg::CheckArgv(argv, reply) => {
-                    let leaked = argv.iter().any(|a| self.redactor.redact(a) != a.as_str());
-                    let _ = reply.send(leaked);
-                }
                 PumpMsg::Close(reply) => {
                     self.flush().await;
                     let _ = reply.send(());
