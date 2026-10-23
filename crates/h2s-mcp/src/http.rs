@@ -6,8 +6,12 @@
 //! 1. `Host` is an allowed authority (loopback forms of the listen address plus
 //!    `--allowed-host`), else **421** — the DNS-rebinding defence;
 //! 2. `Origin`, when present, is an allowed origin, else **403**;
-//! 3. `Authorization: Bearer h2s_...` is present and well formed, else **401**.
+//! 3. `Authorization: Bearer h2s_...` is present and well formed, else **401**;
+//! 4. fewer than `--max-concurrent-requests` requests are being handled, else **503** with
+//!    `Retry-After: 1`.
 //!
+//! Each API token may also run only `--max-waits-per-token` waits at once (a tool error
+//! `rate_limited: ...` beyond it, see [`crate::limits`]).
 //! The caller's token is then forwarded to the Studio server for every API call made on behalf
 //! of that request, so the server's roles and audit apply per client. Tokens are never logged.
 
@@ -25,11 +29,15 @@ use h2s_api::{ApiError as WireError, ErrorBody, ErrorCode};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
-use tokio::net::TcpListener;
+use tokio::{
+    net::TcpListener,
+    sync::{OwnedSemaphorePermit, Semaphore},
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     client::ApiClient,
+    limits::{DEFAULT_WAITS_PER_TOKEN, WaitLimiter},
     server::{Credentials, H2sMcp},
     token::Token,
 };
@@ -47,7 +55,14 @@ pub struct HttpOptions {
     pub allowed_origins: Vec<String>,
     /// Largest request body accepted (413 beyond it).
     pub max_body_bytes: usize,
+    /// Most MCP requests handled at once; beyond it the answer is 503 with `Retry-After: 1`.
+    pub max_concurrent_requests: usize,
+    /// Most concurrent waits (`wait_for_job`, or job tools with `wait_secs`) per API token.
+    pub max_waits_per_token: usize,
 }
+
+/// Default for [`HttpOptions::max_concurrent_requests`].
+pub const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 32;
 
 impl Default for HttpOptions {
     fn default() -> Self {
@@ -55,6 +70,8 @@ impl Default for HttpOptions {
             allowed_hosts: Vec::new(),
             allowed_origins: Vec::new(),
             max_body_bytes: 1024 * 1024,
+            max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
+            max_waits_per_token: DEFAULT_WAITS_PER_TOKEN,
         }
     }
 }
@@ -100,8 +117,12 @@ pub fn router(
         .with_allowed_hosts(guard.host_strings())
         .with_max_request_body_bytes(options.max_body_bytes)
         .with_cancellation_token(shutdown);
+    // One limiter for every per-request handler, so the cap holds across requests.
+    let waits = WaitLimiter::new(options.max_waits_per_token);
     let service = StreamableHttpService::new(
-        move || Ok(H2sMcp::new(api.clone(), Credentials::PerRequest)),
+        move || {
+            Ok(H2sMcp::new(api.clone(), Credentials::PerRequest).with_wait_limiter(waits.clone()))
+        },
         Arc::new(NeverSessionManager::default()),
         config,
     );
@@ -177,6 +198,18 @@ impl OriginValue {
 struct Guard {
     hosts: Vec<HostRule>,
     origins: Vec<OriginValue>,
+    /// Concurrent-request slots.
+    capacity: Arc<Semaphore>,
+    max_concurrent: usize,
+}
+
+/// One of the server's concurrent-request slots. It rides in the request's extensions, which
+/// rmcp hands on to the MCP request it serves (`http::request::Parts`), so the slot stays taken
+/// until that request has been handled — event-stream responses included — and is freed when
+/// rmcp drops it (also when it refuses the request early).
+#[derive(Clone)]
+struct InFlight {
+    _slot: Arc<OwnedSemaphorePermit>,
 }
 
 impl Guard {
@@ -216,7 +249,13 @@ impl Guard {
                 None => tracing::warn!(value = %extra, "ignoring an unparsable --allowed-origin"),
             }
         }
-        Self { hosts, origins }
+        let max_concurrent = options.max_concurrent_requests.max(1);
+        Self {
+            hosts,
+            origins,
+            capacity: Arc::new(Semaphore::new(max_concurrent)),
+            max_concurrent,
+        }
     }
 
     /// The same allowlist in rmcp's format (its own check runs behind this guard).
@@ -242,12 +281,39 @@ impl Guard {
     }
 }
 
-async fn guard_requests(State(guard): State<Arc<Guard>>, request: Request, next: Next) -> Response {
-    let mut response = match check(&guard, &request) {
-        Some(refusal) => refusal,
-        None => next.run(request).await,
+async fn guard_requests(
+    State(guard): State<Arc<Guard>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let mut response = if let Some(refusal) = check(&guard, &request) {
+        refusal
+    } else if let Ok(slot) = Arc::clone(&guard.capacity).try_acquire_owned() {
+        request.extensions_mut().insert(InFlight {
+            _slot: Arc::new(slot),
+        });
+        next.run(request).await
+    } else {
+        busy(guard.max_concurrent)
     };
     harden(response.headers_mut());
+    response
+}
+
+/// 503 for a request over the concurrency cap.
+fn busy(max: usize) -> Response {
+    tracing::warn!(max, "refused a request: too many concurrent requests");
+    let mut response = refuse(
+        StatusCode::SERVICE_UNAVAILABLE,
+        ErrorCode::Unavailable,
+        &format!(
+            "this MCP server is already handling {max} requests, its maximum \
+             (--max-concurrent-requests); retry in a moment"
+        ),
+    );
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
     response
 }
 

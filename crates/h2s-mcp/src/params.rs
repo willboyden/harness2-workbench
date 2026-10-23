@@ -28,6 +28,13 @@ const RUN_K: &str = "The sweep's recursion budget k (part of its run identity; u
 const RUN_SEED: &str = "The sweep's stream-order seed, if the run used one (part of its run \
                         identity; omit when the run had no seed).";
 const RUN_MODES: &str = "Recursion modes, the same ones the run used.";
+const BUDGET: &str = "Stop the job once recorded spend reaches this many USD (checked as task \
+                      summaries land; a task in flight finishes first). harness2 records \
+                      improver spend only, not executor rollouts. Omit for no cap.";
+const ACKNOWLEDGE_RISKS: &str = "Must be true when the server runs jobs without container \
+                                 isolation (server_info shows isolation host): the executor then \
+                                 has the server user's files and network. Set it only with the \
+                                 user's informed consent.";
 
 fn quick_wait() -> u32 {
     45
@@ -168,7 +175,7 @@ pub(crate) struct EstimateInput {
 
 impl ToolInput for EstimateInput {
     fn patch(schema: &mut Value) {
-        describe(
+        redescribe(
             schema,
             &["tasks"],
             "Number of tasks in the sweep (total_tasks from preview_run).",
@@ -549,7 +556,7 @@ job_input!(
     |schema| {
         run_options_bounds(schema);
         describe(schema, &["experiment"], EXPERIMENT);
-        describe(
+        redescribe(
             schema,
             &["profile"],
             "Model profile for model settings and price assumptions (default: the experiment's \
@@ -567,6 +574,8 @@ job_input!(
     |schema| {
         run_options_bounds(schema);
         describe(schema, &["experiment"], EXPERIMENT);
+        redescribe(schema, &["budget_usd"], BUDGET);
+        redescribe(schema, &["acknowledge_risks"], ACKNOWLEDGE_RISKS);
     }
 );
 
@@ -579,20 +588,9 @@ job_input!(
     |schema| {
         run_options_bounds(schema);
         describe(schema, &["experiment"], EXPERIMENT);
-        describe(schema, &["profile"], PROFILE_PINNED);
-        describe(
-            schema,
-            &["budget_usd"],
-            "Stop the job once recorded spend reaches this many USD (improver spend; executor \
-             rollout spend is not recorded by harness2). Omit for no cap.",
-        );
-        describe(
-            schema,
-            &["acknowledge_risks"],
-            "Must be true when the server runs jobs without container isolation (the executor \
-             then has the server user's files and network). Set it only with the user's \
-             informed consent.",
-        );
+        redescribe(schema, &["profile"], PROFILE_PINNED);
+        redescribe(schema, &["budget_usd"], BUDGET);
+        redescribe(schema, &["acknowledge_risks"], ACKNOWLEDGE_RISKS);
     }
 );
 
@@ -620,11 +618,11 @@ job_input!(
      Follow judging with wait_for_job.",
     |schema| {
         describe(schema, &["experiment"], EXPERIMENT);
-        describe(schema, &["k"], RUN_K);
+        redescribe(schema, &["k"], RUN_K);
         bounds(schema, &["k"], 1, u64::from(K_MAX));
-        describe(schema, &["seed"], RUN_SEED);
-        describe(schema, &["modes"], RUN_MODES);
-        describe(schema, &["profile"], PROFILE_PINNED);
+        redescribe(schema, &["seed"], RUN_SEED);
+        redescribe(schema, &["modes"], RUN_MODES);
+        redescribe(schema, &["profile"], PROFILE_PINNED);
     }
 );
 
@@ -637,8 +635,8 @@ job_input!(
     |schema| {
         describe(schema, &["experiment"], EXPERIMENT);
         bounds(schema, &["ks", "[]"], 1, u64::from(K_MAX));
-        describe(schema, &["seed"], RUN_SEED);
-        describe(schema, &["modes"], RUN_MODES);
+        redescribe(schema, &["seed"], RUN_SEED);
+        redescribe(schema, &["modes"], RUN_MODES);
     }
 );
 

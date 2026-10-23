@@ -29,7 +29,9 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     client::{ApiClient, ApiError},
-    descriptions as d, errors, output,
+    descriptions as d, errors,
+    limits::WaitLimiter,
+    output,
     params::{
         AuditSessionInput, BridgeInput, CheckInput, CompareInput, CreateExperimentInput, DemoInput,
         DiffInput, DoctorInput, EstimateInput, ExperimentInput, ExportInput, HarnessInput,
@@ -58,6 +60,7 @@ pub enum Credentials {
 pub struct H2sMcp {
     api: ApiClient,
     credentials: Credentials,
+    waits: WaitLimiter,
     tools: Arc<ToolRouter<H2sMcp>>,
 }
 
@@ -66,6 +69,7 @@ impl std::fmt::Debug for H2sMcp {
         f.debug_struct("H2sMcp")
             .field("api", &self.api)
             .field("credentials", &self.credentials)
+            .field("waits", &self.waits)
             .finish_non_exhaustive()
     }
 }
@@ -101,8 +105,17 @@ impl H2sMcp {
         Self {
             api,
             credentials,
+            waits: WaitLimiter::default(),
             tools,
         }
+    }
+
+    /// Use `waits` to cap concurrent waits per token (share one limiter between the handlers
+    /// of a server, as the HTTP transport does; the default allows 4 per token).
+    #[must_use]
+    pub fn with_wait_limiter(mut self, waits: WaitLimiter) -> Self {
+        self.waits = waits;
+        self
     }
 
     /// The token for this call (stdio: the configured one; HTTP: the caller's).
@@ -183,6 +196,15 @@ impl H2sMcp {
             let note = started_note(&job);
             return output::json(&job, Some(note), ADVICE_JOB);
         }
+        // The job exists now: at the wait cap, report it rather than fail the call.
+        let Some(_slot) = self.waits.try_acquire(&token) else {
+            let note = format!(
+                "Not waiting: this token already runs {} waits, the most allowed at once. {}",
+                self.waits.max_per_token(),
+                started_note(&job)
+            );
+            return output::json(&job, Some(note), ADVICE_JOB);
+        };
         let job_id = job.id.clone();
         let fallback = job.clone();
         let mut reporter = reporter(ctx);
@@ -997,6 +1019,14 @@ impl H2sMcp {
         let token = match self.token(&ctx) {
             Ok(token) => token,
             Err(e) => return output::error(e),
+        };
+        let Some(_slot) = self.waits.try_acquire(&token) else {
+            return output::error(format!(
+                "rate_limited: too many concurrent waits for this token ({} already running, \
+                 the most allowed at once). Let one finish, or check the job with get_job \
+                 instead of waiting.",
+                self.waits.max_per_token()
+            ));
         };
         let limit = secs(input.timeout_secs.clamp(1, MAX_WAIT_SECS));
         let poll = secs(input.poll_interval_secs.clamp(1, 30));

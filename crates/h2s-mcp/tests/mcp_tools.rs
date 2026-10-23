@@ -1134,3 +1134,59 @@ async fn long_results_are_truncated_with_a_note() {
         .expect("structured content under 256 KiB");
     assert_eq!(full["text"].as_str().unwrap().len(), long.len());
 }
+
+#[tokio::test]
+async fn job_tools_return_the_job_instead_of_waiting_past_the_cap() {
+    let studio = Studio::start().await;
+    unsafe_route("POST", &api("/jobs"), TOKEN)
+        .respond_with(JobFactory { status: "queued" })
+        .mount(&studio.server)
+        .await;
+    get_route(&api(&format!("/jobs/{JOB_ID}")), TOKEN)
+        .respond_with(ResponseTemplate::new(200).set_body_json(job(
+            JOB_ID,
+            &demo_spec(),
+            "running",
+            None,
+        )))
+        .mount(&studio.server)
+        .await;
+    let client =
+        std::sync::Arc::new(connect_with(&studio.url(), TOKEN, h2s_mcp::WaitLimiter::new(1)).await);
+    let long_wait = {
+        let client = std::sync::Arc::clone(&client);
+        tokio::spawn(async move {
+            call(
+                &client,
+                "wait_for_job",
+                json!({"job_id": JOB_ID, "timeout_secs": 3, "poll_interval_secs": 1}),
+            )
+            .await
+        })
+    };
+    until_requests(&studio, "GET", &api(&format!("/jobs/{JOB_ID}")), 1).await;
+
+    // The job is created; the call returns it without waiting, and says why.
+    let demo = call(
+        &client,
+        "run_demo",
+        json!({"experiment": EXP, "wait_secs": 30}),
+    )
+    .await;
+    assert_eq!(demo.is_error, Some(false), "{}", text(&demo));
+    assert_eq!(payload(&demo)["status"], "queued");
+    let note = demo.content[1].as_text().unwrap().text.clone();
+    assert!(
+        note.starts_with("Not waiting: this token already runs 1 waits"),
+        "{note}"
+    );
+    assert!(note.contains("wait_for_job(job_id="), "{note}");
+
+    let refused = call(&client, "wait_for_job", json!({"job_id": JOB_ID})).await;
+    assert!(
+        text(&refused).starts_with("rate_limited: "),
+        "{}",
+        text(&refused)
+    );
+    assert_eq!(long_wait.await.unwrap().is_error, Some(false));
+}

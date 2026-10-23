@@ -1,0 +1,24 @@
+{
+  "method_version": 2,
+  "executor": "local/solver",
+  "improver": "local/improver",
+  "judge": "local-judge",
+  "project": "",
+  "location": "global",
+  "judge_endpoint": "",
+  "endpoint": "",
+  "split": "all",
+  "tasks": [
+    [
+      "presentations",
+      "deck-outline"
+    ],
+    [
+      "spreadsheets",
+      "sheet-merge"
+    ]
+  ],
+  "max_tasks": null,
+  "domains": [],
+  "seed": null
+}

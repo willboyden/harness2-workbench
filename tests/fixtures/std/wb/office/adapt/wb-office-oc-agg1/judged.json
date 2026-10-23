@@ -1,0 +1,42 @@
+[
+  {
+    "task_id": "deck-outline",
+    "mode": "seq",
+    "k": 1,
+    "label": "c1",
+    "run_id": "wb-office-oc-seq1/deck-outline/c1",
+    "chosen_is_base": false,
+    "n_passed": 100,
+    "n_criteria": 100,
+    "all_pass": true,
+    "raw": {
+      "n_passed": 100,
+      "n_criteria": 100,
+      "all_pass": true,
+      "raw_score": 1.0
+    },
+    "error": "",
+    "frac": 1.0,
+    "graded": true
+  },
+  {
+    "task_id": "sheet-merge",
+    "mode": "seq",
+    "k": 1,
+    "label": "c1",
+    "run_id": "wb-office-oc-seq1/sheet-merge/c1",
+    "chosen_is_base": false,
+    "n_passed": 100,
+    "n_criteria": 100,
+    "all_pass": true,
+    "raw": {
+      "n_passed": 100,
+      "n_criteria": 100,
+      "all_pass": true,
+      "raw_score": 1.0
+    },
+    "error": "",
+    "frac": 1.0,
+    "graded": true
+  }
+]

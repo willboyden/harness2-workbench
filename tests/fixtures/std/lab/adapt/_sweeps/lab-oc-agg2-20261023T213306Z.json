@@ -1,0 +1,61 @@
+{
+  "benchmark": "lab",
+  "substrate": "oc",
+  "k": 2,
+  "modes": [
+    "agg"
+  ],
+  "seed": null,
+  "tag": "",
+  "domain_order": [
+    "contracts",
+    "litigation"
+  ],
+  "max_tasks": null,
+  "only_tasks": [],
+  "started_at": "2026-10-23T21:33:06.423757+00:00",
+  "finished_at": "2026-10-23T21:33:06.831502+00:00",
+  "n_domains": 2,
+  "domains": [
+    {
+      "domain": "contracts",
+      "n_tasks": 2,
+      "seed": null,
+      "done": 2,
+      "failed": 0,
+      "tasks": [
+        {
+          "task": "contracts/msa-redline",
+          "status": "ok",
+          "library_entries_before": {
+            "agg": 0
+          }
+        },
+        {
+          "task": "contracts/nda-review",
+          "status": "ok",
+          "library_entries_before": {
+            "agg": 1
+          }
+        }
+      ]
+    },
+    {
+      "domain": "litigation",
+      "n_tasks": 1,
+      "seed": null,
+      "done": 0,
+      "failed": 1,
+      "tasks": [
+        {
+          "task": "litigation/motion-draft",
+          "status": "base-failed",
+          "error": "no base rollout produced anything",
+          "library_entries_before": {
+            "agg": 0
+          }
+        }
+      ]
+    }
+  ]
+}

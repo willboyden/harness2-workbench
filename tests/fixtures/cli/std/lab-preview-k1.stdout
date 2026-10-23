@@ -1,0 +1,13 @@
+# lab-oc split=all seed=None k=1 modes=parallel,sequential
+#   namespace[parallel]: lab-oc-agg1
+#   namespace[sequential]: lab-oc-seq1
+#   summaries under: /fixture/std/lab/adapt/lab-oc-agg1
+#   library root:    /fixture/std/lab/library/lab/k1-oc
+#   domains parallel: 1
+   1  contracts                                contracts/msa-redline
+   2  contracts                                contracts/nda-review
+   3  litigation                               litigation/motion-draft
+# domains of this split, with task counts (the legal --only-domains names):
+   2  contracts
+   1  litigation
+# 3 tasks over 2 domains (domains parallel, tasks within a domain sequential)
