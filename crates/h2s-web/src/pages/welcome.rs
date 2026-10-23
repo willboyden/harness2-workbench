@@ -59,10 +59,13 @@ pub(crate) fn Welcome() -> impl IntoView {
         api::get::<Vec<BenchmarkStatus>>(&paths::benchmarks()).await
     });
     let estimate = LocalResource::new(move || {
-        let profile = profiles
-            .get()
-            .and_then(Result::ok)
-            .and_then(|l| l.first().map(|p| p.name.clone()));
+        // Prefer a profile with prices, so the estimate can show dollars.
+        let profile = profiles.get().and_then(Result::ok).and_then(|l| {
+            l.iter()
+                .find(|p| p.prices.is_some())
+                .or_else(|| l.first())
+                .map(|p| p.name.clone())
+        });
         async move {
             api::post::<_, CostEstimate>(
                 &paths::estimate(),
@@ -247,7 +250,7 @@ pub(crate) fn Welcome() -> impl IntoView {
                                     "A smoke test is about {} executor rollouts and {} improver sessions{}.",
                                     e.rollouts,
                                     e.improver_sessions,
-                                    format::usd_range(e.usd_low, e.usd_high).map(|u| format!(", roughly {u} with your first profile's prices")).unwrap_or_default()
+                                    format::usd_range(e.usd_low, e.usd_high).map(|u| format!(", roughly {u} at your profile's prices")).unwrap_or_default()
                                 )}
                             </p>
                         }

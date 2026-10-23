@@ -59,8 +59,11 @@ pub(crate) fn Modal(
             } else if !is_open && counted.get_value() {
                 counted.set_value(false);
                 u.modals.update(|n| *n = n.saturating_sub(1));
+                // Restore focus on the next frame: the shell is still `inert` right now.
                 if let Some(el) = restore.get_value() {
-                    let _ = el.focus();
+                    request_animation_frame(move || {
+                        let _ = el.focus();
+                    });
                 }
             }
         });

@@ -141,7 +141,23 @@ fn TopBar() -> impl IntoView {
                 aria-label="Open navigation"
                 aria-controls="sidebar"
                 aria-expanded=move || if u.nav_open.get() { "true" } else { "false" }
-                on:click=move |_| u.nav_open.update(|o| *o = !*o)
+                on:click=move |_| {
+                    let opening = !u.nav_open.get_untracked();
+                    u.nav_open.set(opening);
+                    if opening {
+                        // Move focus into the drawer once it is visible.
+                        request_animation_frame(|| {
+                            if let Some(el) = document()
+                                .query_selector("#sidebar .nav-link")
+                                .ok()
+                                .flatten()
+                                .and_then(|e| wasm_bindgen::JsCast::dyn_into::<web_sys::HtmlElement>(e).ok())
+                            {
+                                let _ = el.focus();
+                            }
+                        });
+                    }
+                }
             >
                 {icon(Icon::Menu)}
             </button>

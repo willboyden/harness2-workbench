@@ -303,6 +303,10 @@ pub(crate) fn GlobalKeys() -> impl IntoView {
             u.palette.update(|o| *o = !*o);
             return;
         }
+        if key == "Escape" && u.nav_open.get_untracked() {
+            u.nav_open.set(false);
+            return;
+        }
         if ctrl_or_meta || ev.alt_key() || u.modal_open() || browser::typing_in_field(&ev) {
             return;
         }

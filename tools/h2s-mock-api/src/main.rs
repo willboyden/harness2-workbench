@@ -49,6 +49,9 @@ struct Args {
     /// Pretend jobs run in containers (no risk acknowledgement needed).
     #[arg(long)]
     container: bool,
+    /// Answer the job event stream with 503, to exercise the UI's polling fallback.
+    #[arg(long)]
+    sse_off: bool,
 }
 
 #[tokio::main]
@@ -67,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
         dist: args.dist.clone(),
         csp_report: args.csp_report,
         task_ms: args.task_ms,
-        port: args.port,
+        sse_off: args.sse_off,
     };
     if !args.fresh {
         api::start_live_jobs(&st, args.live_task_ms);

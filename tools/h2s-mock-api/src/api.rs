@@ -43,7 +43,8 @@ pub(crate) struct AppState {
     pub(crate) dist: PathBuf,
     pub(crate) csp_report: bool,
     pub(crate) task_ms: u64,
-    pub(crate) port: u16,
+    /// Refuse the event stream (503) to exercise the UI's polling fallback.
+    pub(crate) sse_off: bool,
 }
 
 pub(crate) struct Fail(StatusCode, ErrorBody);
@@ -1560,6 +1561,13 @@ async fn job_events(
     Path(id): Path<String>,
 ) -> R<Response> {
     require(&st, &headers, Role::Viewer)?;
+    if st.sse_off {
+        return Err(fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::Unavailable,
+            "event stream disabled (mock --sse-off)",
+        ));
+    }
     let (rx, snapshot) = {
         let g = lock(&st.s);
         let i = g.job_index(&id).ok_or_else(|| not_found("job"))?;
@@ -1758,7 +1766,6 @@ async fn security(State(st): State<AppState>, req: Request, next: Next) -> Respo
     if is_api {
         h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
-    let _ = st.port;
     resp
 }
 

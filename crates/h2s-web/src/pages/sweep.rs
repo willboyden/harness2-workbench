@@ -285,7 +285,7 @@ fn ReportTab(
     };
     let judge2 = judge.clone();
     view! {
-        <div data-testid="report-view">
+        <div class="stack" data-testid="report-view">
             {move || {
                 let judge = judge.clone();
                 let judge2 = judge2.clone();
@@ -458,7 +458,7 @@ fn LibraryTab(exp: Memo<String>, sweep: Memo<String>) -> impl IntoView {
         ]
     });
     view! {
-        <div data-testid="library-view">
+        <div class="stack" data-testid="library-view">
             <p class="muted">
                 "The "<Term id="library">"experience library"</Term>
                 " of each mode and domain: which harness every task adopted, why, and the "

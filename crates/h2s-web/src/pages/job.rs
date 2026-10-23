@@ -215,6 +215,7 @@ impl Ctl {
                 .unwrap_or(EventSource::CLOSED);
             let failures = self.failures.get_untracked() + 1;
             self.failures.set(failures);
+            self.refresh_once();
             if failures >= SSE_FAILURES_BEFORE_POLLING {
                 self.start_polling();
             } else if state == EventSource::CLOSED {
@@ -247,26 +248,27 @@ impl Ctl {
         }
     }
 
+    /// One `GET /jobs/{id}` plus a log backfill: keeps the page current while the stream
+    /// is down (between reconnect attempts, and on every polling tick).
+    fn refresh_once(self) {
+        let id = self.id.get_value();
+        spawn_local(async move {
+            if let Ok(j) = api::get::<Job>(&paths::job(&id)).await {
+                let terminal = j.status.is_terminal();
+                self.job.try_set(Some(j));
+                self.backfill();
+                if terminal {
+                    self.close();
+                    self.mode.try_set(LiveMode::Ended);
+                }
+            }
+        });
+    }
+
     fn start_polling(self) {
         self.close();
         self.mode.set(LiveMode::Polling);
-        let tick = move || {
-            let id = self.id.get_value();
-            spawn_local(async move {
-                if let Ok(j) = api::get::<Job>(&paths::job(&id)).await {
-                    let terminal = j.status.is_terminal();
-                    self.job.try_set(Some(j));
-                    self.backfill();
-                    if terminal {
-                        self.live.try_update_value(|l| {
-                            if let Some(p) = l.poll.take() {
-                                p.clear();
-                            }
-                        });
-                    }
-                }
-            });
-        };
+        let tick = move || self.refresh_once();
         tick();
         if let Ok(h) = set_interval_with_handle(tick, Duration::from_millis(2500)) {
             self.live.update_value(|l| l.poll = Some(h));
