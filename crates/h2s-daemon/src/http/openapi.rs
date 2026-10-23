@@ -1,69 +1,10 @@
 //! The OpenAPI 3.1 document of the REST API, served at `/api/v1/openapi.json` and printed
 //! by `h2studio openapi`. No Swagger UI is bundled (it would load a CDN script).
 
-use utoipa::openapi::schema::{ArrayBuilder, Components, ObjectBuilder, Ref, Type};
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
-use utoipa::{Modify, OpenApi, ToSchema};
+use utoipa::{Modify, OpenApi};
 
 use super::routes::{admin, auth, experiments, jobs, results, root, system, tools};
-
-/// Job schemas registered by hand: `JobResult -> PipelineResult -> Vec<JobResult>` is
-/// recursive, and utoipa's automatic collection (`ToSchema::schemas`) recurses forever on
-/// it unless the type carries `no_recursion`. The recursive types are added shallowly
-/// (their own schema, which refers to the others by `$ref`); everything they refer to is
-/// collected normally.
-struct JobSchemas;
-
-fn deep<T: ToSchema>(c: &mut Components) {
-    let mut nested = Vec::new();
-    T::schemas(&mut nested);
-    c.schemas.extend(nested);
-    c.schemas.insert(T::name().into_owned(), T::schema());
-}
-
-fn shallow<T: ToSchema>(c: &mut Components) {
-    c.schemas.insert(T::name().into_owned(), T::schema());
-}
-
-impl Modify for JobSchemas {
-    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
-        use h2s_api as a;
-        let c = openapi.components.get_or_insert_with(Default::default);
-        shallow::<a::Job>(c);
-        shallow::<a::JobResult>(c);
-        shallow::<a::PipelineResult>(c);
-        shallow::<a::JobEvent>(c);
-        deep::<a::JobSpec>(c);
-        deep::<a::JobKind>(c);
-        deep::<a::JobStatus>(c);
-        deep::<a::Isolation>(c);
-        deep::<a::JobStep>(c);
-        deep::<a::Progress>(c);
-        deep::<a::LogLine>(c);
-        deep::<a::InstallResult>(c);
-        deep::<a::DemoResult>(c);
-        deep::<a::SetupResult>(c);
-        deep::<a::CheckResult>(c);
-        deep::<a::PreviewResult>(c);
-        deep::<a::RunResult>(c);
-        deep::<a::JudgeResult>(c);
-        deep::<a::ReportResult>(c);
-        deep::<a::SplitResult>(c);
-        deep::<a::BridgeInfo>(c);
-        let page = ObjectBuilder::new()
-            .property(
-                "items",
-                ArrayBuilder::new().items(Ref::from_schema_name("Job")),
-            )
-            .required("items")
-            .property(
-                "next_cursor",
-                ObjectBuilder::new().schema_type(Type::String),
-            )
-            .description(Some("A page of jobs (`Page<Job>`), newest first."));
-        c.schemas.insert("JobPage".to_owned(), page.build().into());
-    }
-}
 
 struct Security;
 
@@ -102,7 +43,7 @@ impl Modify for Security {
         description = "REST API of Harness² Studio, an unofficial GUI, API and MCP server for google-research/harness2. Every state-changing request needs the header `x-h2s-request: 1`.",
         license(name = "Apache-2.0", identifier = "Apache-2.0"),
     ),
-    modifiers(&Security, &JobSchemas),
+    modifiers(&Security),
     paths(
         root::healthz, root::readyz, root::metrics,
         auth::login, auth::logout, auth::me,
@@ -121,7 +62,8 @@ impl Modify for Security {
     ),
     components(schemas(
         h2s_api::ErrorBody, h2s_api::ApiError, h2s_api::ErrorCode, h2s_api::FieldProblem,
-        h2s_api::ExportTarget, results::ExportFormat,
+        h2s_api::ExportTarget, results::ExportFormat, h2s_api::JobEvent, h2s_api::JobResult,
+        h2s_api::PipelineResult,
     )),
     tags(
         (name = "system"), (name = "auth"), (name = "profiles"), (name = "secrets"),
@@ -175,7 +117,6 @@ mod tests {
             "JobResult",
             "PipelineResult",
             "JobEvent",
-            "JobPage",
             "JobSpec",
             "PreviewResult",
         ] {

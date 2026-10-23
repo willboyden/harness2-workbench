@@ -54,7 +54,7 @@ pub struct ListQuery {
 
 /// Jobs, newest first.
 #[utoipa::path(get, path = "/api/v1/jobs", tag = "jobs", params(ListQuery),
-    responses((status = 200, body = ref("#/components/schemas/JobPage")), (status = "default", description = "Error", body = ErrorBody)))]
+    responses((status = 200, body = Page<Job>), (status = "default", description = "Error", body = ErrorBody)))]
 pub async fn list(
     _auth: Auth<ViewerRole>,
     State(state): State<AppState>,
@@ -101,7 +101,7 @@ pub async fn list(
 
 /// Start a job. Needs at least operator, and the role the job kind requires.
 #[utoipa::path(post, path = "/api/v1/jobs", tag = "jobs", request_body = JobSpec,
-    responses((status = 201, body = ref("#/components/schemas/Job")), (status = "default", description = "Error", body = ErrorBody)))]
+    responses((status = 201, body = Job), (status = "default", description = "Error", body = ErrorBody)))]
 pub async fn create(
     auth: Auth<OperatorRole>,
     State(state): State<AppState>,
@@ -114,7 +114,7 @@ pub async fn create(
 /// One job.
 #[utoipa::path(get, path = "/api/v1/jobs/{id}", tag = "jobs",
     params(("id" = String, Path, description = "Job id")),
-    responses((status = 200, body = ref("#/components/schemas/Job")), (status = "default", description = "Error", body = ErrorBody)))]
+    responses((status = 200, body = Job), (status = "default", description = "Error", body = ErrorBody)))]
 pub async fn get_one(
     _auth: Auth<ViewerRole>,
     State(state): State<AppState>,
@@ -126,7 +126,7 @@ pub async fn get_one(
 /// Cancel a queued or running job (409 when it already finished). No request body.
 #[utoipa::path(post, path = "/api/v1/jobs/{id}/cancel", tag = "jobs",
     params(("id" = String, Path, description = "Job id")),
-    responses((status = 200, body = ref("#/components/schemas/Job")), (status = "default", description = "Error", body = ErrorBody)))]
+    responses((status = 200, body = Job), (status = "default", description = "Error", body = ErrorBody)))]
 pub async fn cancel(
     auth: Auth<OperatorRole>,
     State(state): State<AppState>,
