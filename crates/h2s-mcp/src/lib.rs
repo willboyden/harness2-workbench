@@ -10,6 +10,7 @@
 pub mod cli;
 pub mod client;
 pub mod http;
+pub mod limits;
 pub mod server;
 pub mod token;
 
@@ -25,5 +26,6 @@ mod wait;
 
 pub use cli::{Cli, TransportKind, run};
 pub use client::{ApiClient, ClientOptions};
+pub use limits::WaitLimiter;
 pub use server::{Credentials, H2sMcp};
 pub use token::Token;
