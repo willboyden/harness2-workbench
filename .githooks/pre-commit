@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# pre-commit: fast checks on what is about to be committed.
+#   1. rustfmt on the whole workspace (cheap, and a failure is always a one-command fix);
+#   2. a leak scan of the ADDED lines in the staged diff: personal home paths, private keys
+#      and common token formats must never enter history (this repository is public).
+# Bypass only for a reviewed false positive: git commit --no-verify (say why in the message).
+set -u
+
+fail=0
+
+# Find cargo even when the committing shell lacks ~/.cargo/bin on PATH. A check that cannot
+# run must say so, never report a misleading verdict.
+cargo_bin=$(command -v cargo || true)
+if [ -z "$cargo_bin" ] && [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/cargo" ]; then
+    cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin/cargo"
+fi
+if [ -z "$cargo_bin" ]; then
+    echo "pre-commit: cargo not found (install rustup, or add ~/.cargo/bin to PATH)" >&2
+    fail=1
+elif ! "$cargo_bin" fmt --all -- --check >/dev/null 2>&1; then
+    echo "pre-commit: code is not formatted; run: cargo fmt --all" >&2
+    fail=1
+fi
+
+# Added lines only (the leading '+'), excluding the diff headers ('+++').
+added=$(git diff --cached -U0 --no-color | grep -E '^\+' | grep -vE '^\+\+\+ ')
+pattern='(/home/[a-z_][a-z0-9_-]*/|/Users/[A-Za-z]|BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gho_[A-Za-z0-9]{20,}|hf_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|h2s_[A-Za-z0-9]{8}_[A-Za-z0-9_-]{30,})'
+if printf '%s\n' "$added" | grep -qE "$pattern"; then
+    echo "pre-commit: the staged diff adds what looks like a personal path or a secret:" >&2
+    printf '%s\n' "$added" | grep -nE "$pattern" | cut -c1-160 >&2
+    fail=1
+fi
+
+exit "$fail"
