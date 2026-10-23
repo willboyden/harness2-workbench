@@ -43,7 +43,8 @@ async fn the_binary_serves_mcp_over_stdio() {
     cmd.env_clear()
         .env("H2S_SERVER_URL", studio.url())
         .env("H2S_TOKEN", TOKEN)
-        .env("RUST_LOG", "debug");
+        // Only warnings: the child's stderr goes to the test output.
+        .env("RUST_LOG", "warn");
     let transport = TokioChildProcess::new(cmd).unwrap();
     let client = TestClient::default().serve(transport).await.unwrap();
 
