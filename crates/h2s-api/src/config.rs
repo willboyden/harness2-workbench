@@ -293,7 +293,6 @@ pub struct AuditVerification {
 pub struct SplitInfo {
     /// Split file name (the value for `RunOptions.split_file`).
     pub name: String,
-    /// Benchmark.
     pub bench: Bench,
     /// WorkBuddy-Bench subset (wb only).
     #[serde(default, skip_serializing_if = "Option::is_none")]

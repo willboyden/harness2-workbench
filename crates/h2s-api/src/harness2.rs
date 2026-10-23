@@ -219,7 +219,6 @@ impl DemoMode {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Cell {
-    /// Benchmark.
     pub bench: Bench,
     /// Required for `wb`, forbidden otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]

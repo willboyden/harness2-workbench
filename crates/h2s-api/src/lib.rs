@@ -137,7 +137,7 @@ pub struct KeyValue {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FileText {
-    /// Relative, `/`-separated path (no `..`, no leading `/`).
+    /// Path relative to the harness or project root, `/`-separated (e.g. `systemprompt.md`, `skills/review/SKILL.md`); no `..`, no leading `/`.
     pub path: String,
     /// The file's text (UTF-8).
     pub content: String,

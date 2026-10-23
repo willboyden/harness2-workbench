@@ -132,7 +132,6 @@ pub struct DoctorReport {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BenchmarkStatus {
-    /// Benchmark.
     pub bench: Bench,
     /// WorkBuddy-Bench subset (wb only).
     #[serde(default, skip_serializing_if = "Option::is_none")]

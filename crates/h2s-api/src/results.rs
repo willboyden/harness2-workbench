@@ -59,15 +59,15 @@ pub struct Experiment {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CreateExperimentRequest {
-    /// Experiment name: `^[a-z0-9][a-z0-9_-]{0,62}$` (also the directory name).
+    /// Experiment name, also its directory name: lowercase letters, digits, `-` and `_`, 1-63 characters, starting with a letter or digit.
     pub name: String,
-    /// Free-text description.
+    /// What the experiment is for (free text).
     #[serde(default)]
     pub description: String,
     /// Short labels for filtering.
     #[serde(default)]
     pub tags: Vec<String>,
-    /// Pin a model profile now (else the first run pins it).
+    /// Model profile to pin now (else the first run pins it); runs, judging and pipelines in this experiment must then use it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     /// `standard` for benchmark runs, `demo` for harness2-demo output.
@@ -84,13 +84,13 @@ fn default_kind() -> ExperimentKind {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UpdateExperimentRequest {
-    /// New description; absent = unchanged.
+    /// New description (replaces the old one); absent = unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// New tag list (replaces the old one); absent = unchanged.
+    /// New tag list (replaces all tags; `[]` removes them); absent = unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
-    /// Archive or unarchive; absent = unchanged.
+    /// `true` archives the experiment (hidden from default listings, nothing deleted); `false` restores it; absent = unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,
 }

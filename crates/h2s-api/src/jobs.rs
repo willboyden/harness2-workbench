@@ -162,7 +162,7 @@ pub struct InstallParams {
     /// release was tested against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
-    /// Optional extras to install (`render` is always installed).
+    /// Optional extras: `render` (always installed) and `bridge` (the LiteLLM proxy `harness2-bridge` needs).
     #[serde(default)]
     pub extras: Vec<InstallExtra>,
     /// Re-create the virtual environment even if harness2 is already installed.
@@ -195,7 +195,6 @@ pub const DEMO_K_MAX: u32 = 8;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SetupParams {
-    /// Benchmark.
     pub bench: Bench,
     /// wb only. `None` for wb installs all three subsets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -219,7 +218,7 @@ fn default_substrate() -> Substrate {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CheckParams {
-    /// Benchmark, WorkBuddy subset and executor this job uses.
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
     /// Profile whose model settings are checked. `None` = the default profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -232,11 +231,11 @@ pub struct CheckParams {
 pub struct PreviewParams {
     /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
-    /// Benchmark, WorkBuddy subset and executor this job uses.
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
     /// Run identity and run control options of the sweep.
     pub options: RunOptions,
-    /// Model profile name.
+    /// Model profile for model settings and price assumptions; absent = the experiment's profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
 }
@@ -247,7 +246,7 @@ pub struct PreviewParams {
 pub struct RunParams {
     /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
-    /// Benchmark, WorkBuddy subset and executor this job uses.
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
     /// Run identity and run control options of the sweep.
     pub options: RunOptions,
@@ -269,19 +268,19 @@ pub struct RunParams {
 pub struct JudgeParams {
     /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
-    /// Benchmark, WorkBuddy subset and executor this job uses.
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
-    /// Task-level recursion budget.
+    /// The sweep's recursion budget k (part of its run identity: use the k the run used).
     pub k: u32,
-    /// Stream-order seed; omit for upstream's sorted order.
+    /// The sweep's stream-order seed, if the run used one (part of its run identity; absent when the run had no seed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
-    /// Recursion modes, non-empty and without duplicates.
+    /// Recursion modes to judge: the same ones the run used.
     pub modes: Vec<Mode>,
     /// Score the reference (base) executions into `base_judged.json` instead.
     #[serde(default)]
     pub bases: bool,
-    /// Model profile name.
+    /// Model profile name; must be the profile the experiment is pinned to.
     pub profile: String,
 }
 
@@ -291,14 +290,14 @@ pub struct JudgeParams {
 pub struct ReportParams {
     /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
-    /// Benchmark, WorkBuddy subset and executor this job uses.
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
     /// Recursion budgets to report together (`--k 1,2,3`).
     pub ks: Vec<u32>,
-    /// Stream-order seed; omit for upstream's sorted order.
+    /// The sweep's stream-order seed, if the run used one (part of its run identity; absent when the run had no seed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
-    /// Recursion modes, non-empty and without duplicates.
+    /// Recursion modes to report: the same ones the run used.
     pub modes: Vec<Mode>,
 }
 
@@ -306,7 +305,6 @@ pub struct ReportParams {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SplitParams {
-    /// Benchmark.
     pub bench: Bench,
     /// WorkBuddy-Bench subset (wb only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -340,7 +338,7 @@ pub struct BridgeParams {
     /// `--host 0.0.0.0`). Off = loopback only.
     #[serde(default)]
     pub expose_to_containers: bool,
-    /// TCP port; omit to reuse the saved port or pick a free one.
+    /// TCP port for the bridge; absent = reuse the saved port or pick a free one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
     /// Profile supplying the Vertex project and the Codex model.
@@ -353,19 +351,19 @@ pub struct BridgeParams {
 pub struct PipelineParams {
     /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
-    /// Benchmark, WorkBuddy subset and executor this job uses.
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
     /// Run identity and run control options of the sweep.
     pub options: RunOptions,
-    /// Model profile name.
+    /// Model profile name; must be the profile the experiment is pinned to.
     pub profile: String,
     /// Also score the reference executions, so the report can compare against the base.
     #[serde(default)]
     pub judge_bases: bool,
-    /// Cancel the job once recorded spend reaches this many USD.
+    /// Stop the job once recorded spend reaches this many USD (improver spend; harness2 does not record executor rollout spend). Absent = no cap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_usd: Option<f64>,
-    /// Required under host isolation: the executor gets the server user's files and network.
+    /// Must be `true` when the server runs jobs without container isolation (the executor then has the server user's files and network). Set it only with the user's informed consent.
     #[serde(default)]
     pub acknowledge_risks: bool,
 }
@@ -739,13 +737,13 @@ pub struct CostEstimate {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct EstimateRequest {
-    /// Number of tasks to estimate for.
+    /// Number of tasks in the sweep (for example `total_tasks` of a preview).
     pub tasks: u32,
-    /// Recursion budget.
+    /// Recursion budget k (1 to 32).
     pub k: u32,
     /// Recursion modes to run.
     pub modes: Vec<Mode>,
-    /// Profile whose prices to use.
+    /// Model profile whose price assumptions to use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     /// Use measured spend from this experiment's earlier runs when available.
