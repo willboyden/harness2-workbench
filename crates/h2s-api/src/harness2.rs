@@ -219,10 +219,12 @@ impl DemoMode {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Cell {
+    /// Benchmark.
     pub bench: Bench,
     /// Required for `wb`, forbidden otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subset: Option<WbSubset>,
+    /// Executor framework (`oc` OpenCode or `cx` Codex).
     #[serde(default = "default_substrate")]
     pub substrate: Substrate,
 }
@@ -262,7 +264,7 @@ impl Cell {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RunOptions {
-    /// Task-level recursion budget (`--k`, 1..=K_MAX). Per task and mode: 4k rollouts and
+    /// Task-level recursion budget (`--k`, 1 to 32). Per task and mode: 4k rollouts and
     /// 3k improver sessions.
     pub k: u32,
     /// Stream-order seed (`--seed`). Shuffles task order reproducibly; does not control
@@ -271,13 +273,14 @@ pub struct RunOptions {
     pub seed: Option<u64>,
     /// Recursion modes to run (`--modes`), non-empty, no duplicates.
     pub modes: Vec<Mode>,
+    /// Which partition to run (`train`/`test` need `split_file`).
     #[serde(default)]
     pub split: Split,
     /// Name of a split file managed by the server (see `GET /api/v1/splits`). Required for
     /// `train`/`test`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_file: Option<String>,
-    /// Domains run concurrently (`--workers`, 1..=WORKERS_MAX). Tasks within a domain stay
+    /// Domains run concurrently (`--workers`, 1 to 64). Tasks within a domain stay
     /// ordered because each reads the library entries of the ones before it.
     #[serde(default = "default_workers")]
     pub workers: u32,

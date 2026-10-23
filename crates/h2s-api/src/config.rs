@@ -71,8 +71,10 @@ pub struct EnvVar {
     /// `^[A-Z_][A-Z0-9_]{0,127}$`; names that control the server or the child's loader
     /// (`LD_*`, `PYTHON*`, `PATH`, ...) are refused.
     pub name: String,
+    /// Literal value (never a secret; use `secret`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// Name of a stored secret whose value becomes the variable's value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
 }
@@ -82,9 +84,13 @@ pub struct EnvVar {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Prices {
+    /// Low estimate of USD per executor rollout.
     pub rollout_usd_low: f64,
+    /// High estimate of USD per executor rollout.
     pub rollout_usd_high: f64,
+    /// Low estimate of USD per improver session.
     pub session_usd_low: f64,
+    /// High estimate of USD per improver session.
     pub session_usd_high: f64,
 }
 
@@ -95,7 +101,9 @@ pub struct Prices {
 pub struct ModelProfile {
     /// `^[a-z0-9][a-z0-9_-]{0,62}$`.
     pub name: String,
+    /// How the models are reached.
     pub kind: ProfileKind,
+    /// Free-text description.
     #[serde(default)]
     pub description: String,
     /// `HARNESS2_SOLVER_MODEL` in OpenCode `provider/model` form (for `openai_compatible`
@@ -110,6 +118,7 @@ pub struct ModelProfile {
     /// `HARNESS2_CODEX_MODEL`, for the Codex executor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_model: Option<String>,
+    /// Vertex AI project settings (`vertex` profiles).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vertex: Option<VertexSettings>,
     /// Executor/improver endpoint (`openai_compatible`).
@@ -121,8 +130,10 @@ pub struct ModelProfile {
     /// `HARNESS2_CODEX_BASE_URL` / `HARNESS2_CODEX_API_KEY` (a Responses-API endpoint).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_endpoint: Option<Endpoint>,
+    /// Further harness2 environment variables (literals or secret references).
     #[serde(default)]
     pub extra_env: Vec<EnvVar>,
+    /// Price assumptions for cost estimates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prices: Option<Prices>,
     /// Hosts the jobs must reach (added to the container egress allowlist). Derived from
@@ -141,10 +152,12 @@ pub struct ModelProfile {
 pub struct SecretInfo {
     /// `^[A-Z][A-Z0-9_]{0,63}$`.
     pub name: String,
+    /// A value is stored.
     pub set: bool,
     /// Length of the stored value, so a truncated paste is noticeable without exposure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chars: Option<u32>,
+    /// When the value was last set (RFC 3339, UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
 }
@@ -154,6 +167,7 @@ pub struct SecretInfo {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SetSecretRequest {
+    /// The secret value. Write-only: never returned by any endpoint.
     pub value: String,
 }
 
@@ -163,14 +177,21 @@ pub struct SetSecretRequest {
 pub struct TokenInfo {
     /// Public token id (the `<id>` in `h2s_<id>_<secret>`).
     pub id: String,
+    /// Display name given at creation.
     pub name: String,
+    /// Role the token grants.
     pub role: Role,
+    /// Creation time (RFC 3339, UTC).
     pub created_at: String,
+    /// Display name of the principal that created it.
     pub created_by: String,
+    /// Last successful authentication with it (RFC 3339, UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_used_at: Option<String>,
+    /// Expiry (RFC 3339, UTC); absent = never.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+    /// The token no longer authenticates.
     pub revoked: bool,
 }
 
@@ -179,7 +200,9 @@ pub struct TokenInfo {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CreateTokenRequest {
+    /// Display name (letters, digits, space, `._-@`, up to 64).
     pub name: String,
+    /// Role the token grants.
     pub role: Role,
     /// `None` = never expires (discouraged; the UI defaults to 90 days).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -191,7 +214,9 @@ pub struct CreateTokenRequest {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenCreated {
+    /// The new token. Shown exactly once; store it like a password.
     pub token: String,
+    /// The token's metadata.
     pub info: TokenInfo,
 }
 
@@ -200,6 +225,7 @@ pub struct TokenCreated {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LoginRequest {
+    /// An API token; exchanged for an HttpOnly session cookie.
     pub token: String,
 }
 
@@ -220,7 +246,9 @@ pub enum AuditOutcome {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AuditEvent {
+    /// Position in the audit chain (from 1).
     pub seq: u64,
+    /// Time of the event (RFC 3339, UTC).
     pub ts: String,
     /// Principal display name, or `anonymous`.
     pub actor: String,
@@ -228,14 +256,20 @@ pub struct AuditEvent {
     pub action: String,
     /// What was acted on (job id, token id, secret NAME, experiment), never a value.
     pub target: String,
+    /// Whether the action succeeded, was denied or failed.
     pub outcome: AuditOutcome,
+    /// Client address as the server saw it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ip: Option<String>,
+    /// Request id, also in the server's logs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// What was found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Hash of the previous record (hex).
     pub prev_hash: String,
+    /// SHA-256 of this record chained to the previous one (hex).
     pub hash: String,
 }
 
@@ -243,7 +277,9 @@ pub struct AuditEvent {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AuditVerification {
+    /// Every record's hash matches its content and its predecessor.
     pub ok: bool,
+    /// Records checked.
     pub entries: u64,
     /// First record whose hash does not match, when `ok` is false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -255,14 +291,22 @@ pub struct AuditVerification {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SplitInfo {
+    /// Split file name (the value for `RunOptions.split_file`).
     pub name: String,
+    /// Benchmark.
     pub bench: Bench,
+    /// WorkBuddy-Bench subset (wb only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subset: Option<WbSubset>,
+    /// Seed of the stratified shuffle.
     pub seed: u64,
+    /// Fraction of each domain's tasks in the train partition.
     pub train_fraction: f64,
+    /// Tasks in the train partition.
     pub train: u32,
+    /// Tasks in the test partition.
     pub test: u32,
+    /// Creation time (RFC 3339, UTC).
     pub created_at: String,
 }
 

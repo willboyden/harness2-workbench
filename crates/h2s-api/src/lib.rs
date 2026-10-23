@@ -78,6 +78,7 @@ pub enum ErrorCode {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ErrorBody {
+    /// The error.
     pub error: ApiError,
 }
 
@@ -85,12 +86,14 @@ pub struct ErrorBody {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ApiError {
+    /// Machine-readable error code.
     pub code: ErrorCode,
     /// Human-readable, safe to show to the user. Never contains secret values.
     pub message: String,
     /// For `validation`: one entry per problem, `{"field": "...", "problem": "..."}`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub details: Vec<FieldProblem>,
+    /// Request id, also in the server's logs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
 }
@@ -99,7 +102,9 @@ pub struct ApiError {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FieldProblem {
+    /// Field the problem is about.
     pub field: String,
+    /// What is wrong, as a sentence.
     pub problem: String,
 }
 
@@ -109,7 +114,9 @@ pub struct FieldProblem {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Page<T> {
+    /// The entries on this page.
     pub items: Vec<T>,
+    /// Pass back as `cursor` for the next page; absent on the last page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }
@@ -119,7 +126,9 @@ pub struct Page<T> {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct KeyValue {
+    /// Key.
     pub key: String,
+    /// Value.
     pub value: String,
 }
 
@@ -128,7 +137,9 @@ pub struct KeyValue {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FileText {
+    /// Relative, `/`-separated path (no `..`, no leading `/`).
     pub path: String,
+    /// The file's text (UTF-8).
     pub content: String,
 }
 
@@ -188,7 +199,9 @@ pub struct Principal {
     pub id: String,
     /// Display name (token name or proxy user).
     pub name: String,
+    /// Role of the caller.
     pub role: Role,
+    /// How the caller authenticated.
     pub kind: PrincipalKind,
 }
 
