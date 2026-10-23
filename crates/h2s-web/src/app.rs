@@ -135,6 +135,12 @@ fn Root() -> impl IntoView {
                     <Route path=path!("/experiments") view=pages::experiments::Experiments />
                     <Route path=path!("/experiments/:exp") view=pages::experiment::ExperimentPage />
                     <Route path=path!("/experiments/:exp/sweeps/:sweep") view=pages::sweep::SweepPage />
+                    <Route
+                        path=path!("/experiments/:exp/sweeps/:sweep/tasks/:task")
+                        view=pages::task::TaskPage
+                    />
+                    <Route path=path!("/jobs") view=pages::jobs::Jobs />
+                    <Route path=path!("/jobs/:id") view=pages::job::JobPage />
                     <Route path=path!("/settings") view=|| view! { <Redirect path="/settings/profiles" /> } />
                     <Route path=path!("/help") view=pages::help::Help />
                 </Routes>

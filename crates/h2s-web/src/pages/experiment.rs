@@ -249,7 +249,7 @@ pub(crate) fn ExperimentPage() -> impl IntoView {
                                                         let modes = sw.modes.iter().map(|m| mode_label(*m)).collect::<Vec<_>>().join(" + ");
                                                         view! {
                                                             <tr data-testid="sweep-row" data-sweep=sw.id.clone()>
-                                                                <td>
+                                                                <td class="nowrap">
                                                                     <a class="cell-title mono" href=route::sweep(&name, &sw.id)>{sw.id.clone()}</a>
                                                                     <span class="cell-sub">{sw.bench_name.clone()}</span>
                                                                 </td>

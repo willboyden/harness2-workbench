@@ -326,7 +326,7 @@ pub(crate) fn Experiments() -> impl IntoView {
                                                             })}
                                                     </td>
                                                     <td>{kind_badge(e.kind)}</td>
-                                                    <td>
+                                                    <td class="nowrap">
                                                         {e.profile.clone().map_or_else(
                                                             || view! { <span class="muted">"not pinned"</span> }.into_any(),
                                                             |p| view! { <code>{p}</code> }.into_any(),

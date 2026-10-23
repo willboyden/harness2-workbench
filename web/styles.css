@@ -288,8 +288,10 @@ svg {
   font-family: var(--mono);
 }
 
-.nowrap {
+.nowrap,
+.nowrap code {
   white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .icon {
@@ -2900,6 +2902,234 @@ details.disclosure[open] summary {
   margin-bottom: var(--s2);
 }
 
+/* ---------- Charts: bars, provenance, deltas ---------- */
+
+.score-bars {
+  margin: 0 0 var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 190px) minmax(0, 1fr);
+  gap: var(--s3);
+  align-items: center;
+}
+
+.bar-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.bar-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bar-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.2em;
+  gap: var(--s2);
+  align-items: center;
+}
+
+.bar-svg {
+  display: block;
+  width: 100%;
+  height: 14px;
+}
+
+.bar-track {
+  fill: var(--surface-3);
+}
+
+.bar-score {
+  fill: var(--chart-1);
+}
+
+.bar-allpass {
+  fill: var(--chart-2);
+}
+
+.base-line {
+  stroke: var(--chart-3);
+  stroke-width: 3;
+  stroke-dasharray: 4 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.bar-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.88rem;
+  text-align: right;
+}
+
+.bar-axis {
+  display: flex;
+  justify-content: space-between;
+  padding-left: calc(190px + var(--s3));
+  padding-right: calc(4.2em + var(--s2));
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.prov-bar {
+  display: block;
+  width: 100%;
+  min-width: 120px;
+  height: 10px;
+}
+
+.seg-final {
+  fill: var(--chart-1);
+}
+
+.seg-candidate {
+  fill: var(--chart-2);
+}
+
+.seg-base {
+  fill: var(--neutral-line);
+}
+
+.delta-overview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+}
+
+.delta-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.delta-svg {
+  display: block;
+  width: 100%;
+  height: 180px;
+  background: var(--surface-2);
+  border-radius: var(--r1);
+}
+
+.gridline {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.zero-line {
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.delta-pos {
+  fill: var(--success-line);
+}
+
+.delta-neg {
+  fill: var(--danger-line);
+}
+
+.delta-zero {
+  fill: var(--neutral-line);
+}
+
+.delta-cell {
+  display: block;
+  width: 120px;
+  height: 10px;
+}
+
+/* ---------- Page parts added with the task and job pages ---------- */
+
+.hidden-mode {
+  display: none;
+}
+
+.why {
+  margin: var(--s2) 0;
+  padding: var(--s2) var(--s3);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 0 var(--r1) var(--r1) 0;
+  background: var(--surface-2);
+  font-size: 0.92rem;
+}
+
+.lib-entry {
+  padding: var(--s3) 0;
+  border-top: 1px solid var(--border);
+}
+
+.lib-entry:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.lib-entry .lesson {
+  margin-bottom: var(--s2);
+}
+
+.code-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--s2);
+}
+
+.stat-wide {
+  grid-column: span 2;
+}
+
+.stat-value.small {
+  font-size: 1rem;
+}
+
+.plan {
+  padding-left: 1.4rem;
+}
+
+.plan li {
+  margin: 2px 0;
+}
+
+.stream-list {
+  max-height: 320px;
+  overflow: auto;
+  font-size: 0.88rem;
+}
+
+.pipeline-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.pipeline-results > li {
+  border-left: 3px solid var(--border);
+  padding-left: var(--s3);
+}
+
+.diff-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.mode-section .card {
+  box-shadow: none;
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 1100px) {
@@ -3002,6 +3232,19 @@ details.disclosure[open] summary {
   .lesson,
   .kv {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bar-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s1);
+  }
+
+  .bar-axis {
+    padding-left: 0;
+  }
+
+  .stat-wide {
+    grid-column: auto;
   }
 
   .lesson dt,
