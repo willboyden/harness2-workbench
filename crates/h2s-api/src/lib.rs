@@ -78,6 +78,7 @@ pub enum ErrorCode {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ErrorBody {
+    /// The error.
     pub error: ApiError,
 }
 
@@ -85,12 +86,14 @@ pub struct ErrorBody {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ApiError {
+    /// Machine-readable error code.
     pub code: ErrorCode,
     /// Human-readable, safe to show to the user. Never contains secret values.
     pub message: String,
     /// For `validation`: one entry per problem, `{"field": "...", "problem": "..."}`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub details: Vec<FieldProblem>,
+    /// Request id, also in the server's logs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
 }
@@ -99,7 +102,9 @@ pub struct ApiError {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FieldProblem {
+    /// Field the problem is about.
     pub field: String,
+    /// What is wrong, as a sentence.
     pub problem: String,
 }
 
@@ -109,7 +114,9 @@ pub struct FieldProblem {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Page<T> {
+    /// The entries on this page.
     pub items: Vec<T>,
+    /// Pass back as `cursor` for the next page; absent on the last page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }
@@ -119,7 +126,9 @@ pub struct Page<T> {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct KeyValue {
+    /// Key.
     pub key: String,
+    /// Value.
     pub value: String,
 }
 
@@ -128,7 +137,9 @@ pub struct KeyValue {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FileText {
+    /// Path relative to the harness or project root, `/`-separated (e.g. `systemprompt.md`, `skills/review/SKILL.md`); no `..`, no leading `/`.
     pub path: String,
+    /// The file's text (UTF-8).
     pub content: String,
 }
 
@@ -188,7 +199,9 @@ pub struct Principal {
     pub id: String,
     /// Display name (token name or proxy user).
     pub name: String,
+    /// Role of the caller.
     pub role: Role,
+    /// How the caller authenticated.
     pub kind: PrincipalKind,
 }
 
@@ -203,6 +216,16 @@ mod tests {
         assert!(Role::Operator.allows(Role::Viewer));
         assert!(!Role::Viewer.allows(Role::Operator));
         assert!(!Role::Operator.allows(Role::Admin));
+    }
+
+    /// harness2 writes floats with Python's repr. Parsing must be correctly rounded (serde_json
+    /// `float_roundtrip`), or 17-significant-digit values come back 1 ulp off and the report
+    /// port stops matching upstream byte for byte. Rust's literal parser is the oracle.
+    #[test]
+    fn floats_parse_correctly_rounded() {
+        let v: f64 = serde_json::from_str("-0.12499999999999999").unwrap();
+        assert_eq!(v.to_bits(), (-0.124_999_999_999_999_99_f64).to_bits());
+        assert_ne!(v, -0.125);
     }
 
     #[test]

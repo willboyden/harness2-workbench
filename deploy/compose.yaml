@@ -1,0 +1,73 @@
+# Reference deployment: everything contained, egress allowlisted, TLS at the edge.
+#
+#   browser ──https──> ingress (Caddy, TLS) ──> studio ──> egress proxy ──> allowed hosts only
+#                        [edge + jobs nets]     [jobs net, internal]   [jobs + uplink nets]
+#
+# - `studio` sits only on `jobs`, an internal network with no route out. harness2 jobs inherit
+#   HTTP(S)_PROXY and can reach exactly the hosts in `[egress] allow` of the mounted config.
+# - `ingress` publishes the UI; set your domain in deploy/examples/Caddyfile (or replace it
+#   with your organisation's reverse proxy, adding it to `server.trusted_proxies`).
+# - First run: docker compose run --rm studio init   (prints the first admin token once).
+#
+# Usage (from the repository root, after building both images — see deploy/docker/):
+#   cp deploy/examples/h2studio.toml deploy/h2studio.toml   # then edit it
+#   docker compose -f deploy/compose.yaml up -d
+
+name: harness2-studio
+
+services:
+  studio:
+    image: harness2-studio:0.1.0
+    restart: unless-stopped
+    networks: [jobs]
+    environment:
+      HTTPS_PROXY: http://egress:3128
+      HTTP_PROXY: http://egress:3128
+      NO_PROXY: localhost,127.0.0.1,studio
+    volumes:
+      - studio-data:/data
+      - ./h2studio.toml:/config/h2studio.toml:ro
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 4096
+    mem_limit: 16g
+    cpus: 8
+
+  egress:
+    image: harness2-studio:0.1.0
+    restart: unless-stopped
+    command: ["egress-proxy", "--config", "/config/h2studio.toml"]
+    networks: [jobs, uplink]
+    volumes:
+      - ./h2studio.toml:/config/h2studio.toml:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 256m
+
+  ingress:
+    image: docker.io/library/caddy:2.11-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    restart: unless-stopped
+    networks: [edge, jobs]
+    # Loopback by default, so trying this on a workstation exposes nothing to the network.
+    # On a real server set H2S_INGRESS_BIND=0.0.0.0 (or a specific interface address).
+    ports:
+      - "${H2S_INGRESS_BIND:-127.0.0.1}:443:443"
+      - "${H2S_INGRESS_BIND:-127.0.0.1}:80:80"
+    volumes:
+      - ./examples/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  jobs:
+    internal: true
+  uplink: {}
+  edge: {}
+
+volumes:
+  studio-data: {}
+  caddy-data: {}

@@ -1,0 +1,16 @@
+# Keep the build context small and free of local state: images are built from source only.
+target/
+**/target/
+dist/
+.git/
+.github/
+*.db
+*.db-*
+secrets.toml
+*.token
+*.key
+*.pem
+.env
+.env.*
+screenshots/
+tests/e2e-artifacts/
