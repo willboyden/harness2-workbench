@@ -439,8 +439,8 @@ mod tests {
         assert!(base_url("http://example.com:99999").is_err());
         assert!(base_url("http://exa mple.com").is_err());
         assert_eq!(
-            url_host("http://LiteLLM:4000/v1"),
-            Some(("litellm".to_owned(), Some(4000)))
+            url_host("http://Gateway.Example:8080/v1"),
+            Some(("gateway.example".to_owned(), Some(8080)))
         );
         assert!(relative_path("").is_ok());
         assert!(relative_path("a/b/c.txt").is_ok());
