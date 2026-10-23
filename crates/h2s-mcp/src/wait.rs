@@ -8,7 +8,7 @@ use rmcp::{
     Peer, RoleServer,
     model::{ProgressNotificationParam, ProgressToken},
 };
-use tokio::time::{Instant, sleep_until, timeout};
+use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -76,7 +76,11 @@ pub(crate) async fn wait_for_job(
         return Ok(done(job, WaitEnd::Finished));
     }
 
-    match follow_events(api, token, job_id, &mut job, deadline, reporter, ct).await {
+    let timing = StreamTiming {
+        idle: STREAM_IDLE,
+        heartbeat: HEARTBEAT,
+    };
+    match follow_events(api, token, job_id, &mut job, deadline, timing, reporter, ct).await {
         Follow::Finished => {
             // Events carry status and progress but not the parsed result: fetch the full job.
             let job = refresh(api, token, job_id, job).await;
@@ -138,6 +142,16 @@ async fn refresh(api: &ApiClient, token: &Token, job_id: &str, fallback: Job) ->
     }
 }
 
+/// How the event stream is watched.
+#[derive(Debug, Clone, Copy)]
+struct StreamTiming {
+    /// No bytes at all for this long means the stream is dead.
+    idle: Duration,
+    /// How often a progress heartbeat is considered while the stream is quiet.
+    heartbeat: Duration,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum Follow {
     Finished,
     Deadline,
@@ -145,38 +159,49 @@ enum Follow {
     Unavailable(String),
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn follow_events(
     api: &ApiClient,
     token: &Token,
     job_id: &str,
     job: &mut Job,
     deadline: Instant,
+    timing: StreamTiming,
     reporter: &mut ProgressReporter,
     ct: &CancellationToken,
 ) -> Follow {
+    let StreamTiming { idle, heartbeat } = timing;
     let mut response = match api.job_events(token, job_id).await {
         Ok(response) => response,
         Err(e) => return Follow::Unavailable(e.to_string()),
     };
     let mut parser = SseParser::new();
-    let mut heartbeat = tokio::time::interval_at(Instant::now() + HEARTBEAT, HEARTBEAT);
+    let mut heartbeat = tokio::time::interval_at(Instant::now() + heartbeat, heartbeat);
+    // Only bytes from the server move this forward (not our own heartbeat ticks).
+    let mut silent_until = Instant::now() + idle;
     loop {
         let chunk = tokio::select! {
             () = ct.cancelled() => return Follow::Cancelled,
             () = sleep_until(deadline) => return Follow::Deadline,
+            () = sleep_until(silent_until) => {
+                return Follow::Unavailable(format!(
+                    "no event or keep-alive for {} s",
+                    idle.as_secs()
+                ));
+            }
             _ = heartbeat.tick() => {
                 reporter.update(job).await;
                 continue;
             }
-            chunk = timeout(STREAM_IDLE, response.chunk()) => chunk,
+            chunk = response.chunk() => chunk,
         };
+        silent_until = Instant::now() + idle;
         let bytes = match chunk {
-            Err(_) => return Follow::Unavailable("no event or keep-alive for 45 s".into()),
-            Ok(Err(e)) => return Follow::Unavailable(format!("event stream failed: {e}")),
-            Ok(Ok(None)) => {
+            Err(e) => return Follow::Unavailable(format!("event stream failed: {e}")),
+            Ok(None) => {
                 return Follow::Unavailable("the server closed the event stream".into());
             }
-            Ok(Ok(Some(bytes))) => bytes,
+            Ok(Some(bytes)) => bytes,
         };
         let frames = match parser.push(&bytes) {
             Ok(frames) => frames,
@@ -418,6 +443,63 @@ mod tests {
 
     fn state() -> ProgressState {
         ProgressState::new(Some(ProgressToken(NumberOrString::String("t".into()))))
+    }
+
+    /// A server that answers the event stream with headers, then never sends a byte.
+    async fn silent_event_stream() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = socket.read(&mut buf).await;
+                    let _ = socket
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\
+                              transfer-encoding: chunked\r\n\r\n",
+                        )
+                        .await;
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    drop(socket);
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn a_silent_stream_is_abandoned_despite_heartbeats() {
+        let url = silent_event_stream().await;
+        let api = ApiClient::new(&url, &crate::client::ClientOptions::default()).unwrap();
+        let token = Token::parse("h2s_alice_s3cret").unwrap();
+        let mut j = job(JobStatus::Running, None);
+        let mut reporter = ProgressReporter::new(None);
+        let started = Instant::now();
+        let follow = follow_events(
+            &api,
+            &token,
+            "j1",
+            &mut j,
+            started + Duration::from_secs(10),
+            StreamTiming {
+                idle: Duration::from_millis(400),
+                heartbeat: Duration::from_millis(100),
+            },
+            &mut reporter,
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(
+            matches!(&follow, Follow::Unavailable(why) if why.contains("no event")),
+            "{follow:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
