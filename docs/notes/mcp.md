@@ -42,9 +42,15 @@ as a command-line argument (it would show in `ps` and shell history).
 
 HTTP mode refuses, in this order: an unknown `Host` with 421 (DNS-rebinding defence; loopback
 forms of the listen port are allowed, add others with `--allowed-host`), a foreign `Origin` with
-403 (`--allowed-origin` adds one), and a missing or malformed bearer token with 401. Bodies over
-1 MiB get 413 (`--max-body-bytes`). Put a TLS reverse proxy in front before listening beyond
-loopback, and list its host name with `--allowed-host`.
+403 (`--allowed-origin` adds one), a missing or malformed bearer token with 401, and a request
+beyond `--max-concurrent-requests` (default 32; a request counts until it has been handled,
+event-stream answers included) with 503 and `Retry-After: 1`. Bodies over 1 MiB get 413
+(`--max-body-bytes`). Put a TLS reverse proxy in front before listening beyond loopback, and list
+its host name with `--allowed-host`.
+
+Each API token may run at most `--max-waits-per-token` waits at once (default 4, both
+transports): `wait_for_job` beyond it is a tool error starting `rate_limited:`, and a job tool
+called with `wait_secs` returns the job it created without waiting, with a note.
 
 `h2studio-mcp` refuses a plain-`http` `--server-url` on a non-loopback host, because the token
 would cross the network unencrypted; use `https` (or `--allow-insecure-remote` if you accept

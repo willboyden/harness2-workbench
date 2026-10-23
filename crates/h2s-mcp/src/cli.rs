@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     client::{ApiClient, ClientOptions},
     http::{self, HttpOptions, MCP_PATH},
+    limits::WaitLimiter,
     server::{Credentials, H2sMcp},
     token::Token,
 };
@@ -87,6 +88,25 @@ pub struct Cli {
     #[arg(long, default_value_t = 1024 * 1024, value_name = "BYTES")]
     pub max_body_bytes: usize,
 
+    /// Most MCP requests handled at once with --transport http; more are refused with 503 and
+    /// `Retry-After: 1`.
+    #[arg(
+        long,
+        default_value_t = 32,
+        value_name = "N",
+        value_parser = clap::value_parser!(u32).range(1..=10_000)
+    )]
+    pub max_concurrent_requests: u32,
+
+    /// Most waits (wait_for_job, or job tools with wait_secs) one API token may run at once.
+    #[arg(
+        long,
+        default_value_t = 4,
+        value_name = "N",
+        value_parser = clap::value_parser!(u32).range(1..=1_000)
+    )]
+    pub max_waits_per_token: u32,
+
     /// Allow a plain-http --server-url on a non-loopback host (API tokens would cross the
     /// network unencrypted).
     #[arg(long)]
@@ -104,11 +124,13 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     };
     let api = ApiClient::new(&cli.server_url, &options)?;
     let env_token = std::env::var(TOKEN_ENV).ok();
+    let max_waits = usize::try_from(cli.max_waits_per_token).unwrap_or(usize::MAX);
     match cli.transport {
         TransportKind::Stdio => {
             let token = Token::resolve(env_token.as_deref(), cli.token_file.as_deref())?;
             tracing::info!(server = api.server_url(), "serving MCP over stdio");
             let service = H2sMcp::new(api, Credentials::Fixed(token))
+                .with_wait_limiter(WaitLimiter::new(max_waits))
                 .serve(rmcp::transport::stdio())
                 .await?;
             let reason = service.waiting().await?;
@@ -141,6 +163,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 allowed_hosts: cli.allowed_hosts,
                 allowed_origins: cli.allowed_origins,
                 max_body_bytes: cli.max_body_bytes,
+                max_concurrent_requests: usize::try_from(cli.max_concurrent_requests)
+                    .unwrap_or(usize::MAX),
+                max_waits_per_token: max_waits,
             };
             http::serve(listener, api, &http_options, shutdown).await?;
         }
@@ -201,5 +226,10 @@ mod tests {
         assert_eq!(cli.transport, TransportKind::Stdio);
         assert_eq!(cli.listen.to_string(), "127.0.0.1:8723");
         assert_eq!(cli.max_body_bytes, 1024 * 1024);
+        assert_eq!(
+            (cli.max_concurrent_requests, cli.max_waits_per_token),
+            (32, 4)
+        );
+        assert!(Cli::try_parse_from(["h2studio-mcp", "--max-waits-per-token", "0"]).is_err());
     }
 }

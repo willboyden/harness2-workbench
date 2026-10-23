@@ -358,3 +358,135 @@ async fn every_response_carries_security_headers() {
         );
     }
 }
+
+/// POST one self-contained `tools/call` and read the whole (event-stream) answer, so the
+/// request stays in flight until the tool has finished.
+async fn raw_tool_call(url: String, tool: &str, arguments: Value) -> (u16, String) {
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                      "params": {"name": tool, "arguments": arguments}});
+    let response = raw_client()
+        .post(url)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", "2025-06-18")
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .body(body.to_string())
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.text().await.unwrap_or_default())
+}
+
+#[tokio::test]
+async fn requests_over_the_concurrency_cap_get_503_until_a_slot_frees() {
+    let studio = Studio::start().await;
+    get_route(&api(&format!("/jobs/{JOB_ID}")), TOKEN)
+        .respond_with(ResponseTemplate::new(200).set_body_json(job(
+            JOB_ID,
+            &demo_spec(),
+            "running",
+            None,
+        )))
+        .mount(&studio.server)
+        .await;
+    let mcp = McpHttp::start(
+        &studio.url(),
+        HttpOptions {
+            max_concurrent_requests: 2,
+            ..HttpOptions::default()
+        },
+    )
+    .await;
+
+    // Two three-second waits take both slots.
+    let wait = json!({"job_id": JOB_ID, "timeout_secs": 3, "poll_interval_secs": 1});
+    let first = tokio::spawn(raw_tool_call(mcp.url(), "wait_for_job", wait.clone()));
+    let second = tokio::spawn(raw_tool_call(mcp.url(), "wait_for_job", wait));
+    until_requests(&studio, "GET", &api(&format!("/jobs/{JOB_ID}")), 2).await;
+
+    let refused = post_initialize(&mcp, &[bearer(TOKEN)]).await;
+    assert_eq!(refused.status(), 503);
+    let header = |name: &str| {
+        refused
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert_eq!(header("retry-after"), "1");
+    assert_eq!(header("x-content-type-options"), "nosniff");
+    assert_eq!(header("cache-control"), "no-store");
+    assert_eq!(error_code(refused).await, "unavailable");
+
+    // Authentication still comes first: no token is 401, not 503.
+    assert_eq!(post_initialize(&mcp, &[]).await.status(), 401);
+
+    for task in [first, second] {
+        let (status, body) = task.await.unwrap();
+        assert_eq!(status, 200);
+        assert!(body.contains("still running"), "{body}");
+    }
+    // Both slots are free again.
+    assert_eq!(post_initialize(&mcp, &[bearer(TOKEN)]).await.status(), 200);
+    assert_eq!(post_initialize(&mcp, &[bearer(TOKEN)]).await.status(), 200);
+}
+
+#[tokio::test]
+async fn each_token_has_its_own_cap_on_concurrent_waits() {
+    let studio = Studio::start().await;
+    for token in [TOKEN, OTHER_TOKEN] {
+        get_route(&api(&format!("/jobs/{JOB_ID}")), token)
+            .respond_with(ResponseTemplate::new(200).set_body_json(job(
+                JOB_ID,
+                &demo_spec(),
+                "running",
+                None,
+            )))
+            .mount(&studio.server)
+            .await;
+    }
+    let mcp = McpHttp::start(
+        &studio.url(),
+        HttpOptions {
+            max_waits_per_token: 1,
+            ..HttpOptions::default()
+        },
+    )
+    .await;
+    let alice = std::sync::Arc::new(mcp.client(TOKEN).await);
+    let bob = mcp.client(OTHER_TOKEN).await;
+
+    let long_wait = {
+        let alice = std::sync::Arc::clone(&alice);
+        tokio::spawn(async move {
+            call(
+                &alice,
+                "wait_for_job",
+                json!({"job_id": JOB_ID, "timeout_secs": 3, "poll_interval_secs": 1}),
+            )
+            .await
+        })
+    };
+    until_requests(&studio, "GET", &api(&format!("/jobs/{JOB_ID}")), 1).await;
+
+    let short = json!({"job_id": JOB_ID, "timeout_secs": 1, "poll_interval_secs": 1});
+    let refused = call(&alice, "wait_for_job", short.clone()).await;
+    assert_eq!(refused.is_error, Some(true));
+    assert!(
+        text(&refused).starts_with("rate_limited: too many concurrent waits for this token"),
+        "{}",
+        text(&refused)
+    );
+    // Another caller is not affected.
+    let other = call(&bob, "wait_for_job", short.clone()).await;
+    assert_eq!(other.is_error, Some(false), "{}", text(&other));
+    assert_eq!(payload(&other)["status"], "running");
+
+    let first = long_wait.await.unwrap();
+    assert_eq!(first.is_error, Some(false), "{}", text(&first));
+    // The slot came back when the first wait ended.
+    let again = call(&alice, "wait_for_job", short).await;
+    assert_eq!(again.is_error, Some(false), "{}", text(&again));
+}

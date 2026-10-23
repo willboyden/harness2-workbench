@@ -28,7 +28,7 @@ use h2s_api::{
     LogChunk, Manifest, ModelProfile, Page, Principal, ScoreReport, Scores, SplitInfo, SystemInfo,
     TaskDetail, TaskRow, ValidationReport,
 };
-use h2s_mcp::{ApiClient, ClientOptions, Credentials, H2sMcp, Token};
+use h2s_mcp::{ApiClient, ClientOptions, Credentials, H2sMcp, Token, WaitLimiter};
 use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
     model::{CallToolRequestParams, CallToolResult, ProgressNotificationParam},
@@ -634,6 +634,17 @@ pub fn requests_to<'a>(requests: &'a [Request], verb: &str, route: &str) -> Vec<
         .collect()
 }
 
+/// Wait (up to 5 s) until the Studio has received at least `n` requests for `route`.
+pub async fn until_requests(studio: &Studio, verb: &str, route: &str, n: usize) {
+    for _ in 0..500 {
+        if requests_to(&studio.received().await, verb, route).len() >= n {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the Studio never saw {n} {verb} {route}");
+}
+
 /// The query of a request as sorted `key=value` pairs.
 pub fn query(request: &Request) -> Vec<(String, String)> {
     let mut pairs: Vec<(String, String)> = request
@@ -667,8 +678,14 @@ pub type Client = RunningService<RoleClient, TestClient>;
 
 /// An in-process MCP session (stdio credentials) against the Studio at `url`.
 pub async fn connect(url: &str, token: &str) -> Client {
+    connect_with(url, token, WaitLimiter::default()).await
+}
+
+/// [`connect`] with a given wait limiter.
+pub async fn connect_with(url: &str, token: &str, waits: WaitLimiter) -> Client {
     let api = ApiClient::new(url, &ClientOptions::default()).unwrap();
-    let server = H2sMcp::new(api, Credentials::Fixed(Token::parse(token).unwrap()));
+    let server =
+        H2sMcp::new(api, Credentials::Fixed(Token::parse(token).unwrap())).with_wait_limiter(waits);
     let (server_io, client_io) = tokio::io::duplex(1 << 20);
     tokio::spawn(async move {
         if let Ok(running) = server.serve(server_io).await {
