@@ -809,6 +809,17 @@ pub fn image_is_pinned(image: &str) -> bool {
         let hex = digest.strip_prefix("sha256:").unwrap_or("");
         return !name.is_empty() && hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit());
     }
+    // The name (everything before the tag) is lowercase, as docker's reference grammar and
+    // h2s-core's container argv require; only the tag may contain capitals.
+    let (prefix, last) = image.rsplit_once('/').map_or(("", image), |(p, l)| (p, l));
+    let repo = last.split_once(':').map_or(last, |(r, _)| r);
+    if prefix
+        .chars()
+        .chain(repo.chars())
+        .any(|c| c.is_ascii_uppercase())
+    {
+        return false;
+    }
     // The tag is after the last ':' that follows the last '/' (a registry port is not a tag).
     let last_segment = image.rsplit('/').next().unwrap_or(image);
     match last_segment.split_once(':') {
@@ -838,20 +849,15 @@ pub fn network_ok(n: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
-/// `uid`, `uid:gid` or a user name.
+/// `uid` or `uid:gid` (numeric).
 #[must_use]
 pub fn container_user_ok(u: &str) -> bool {
-    if u.is_empty() || u.len() > 64 {
-        return false;
-    }
+    // h2s-core's container argv accepts numeric ids only (no name resolution in the image).
     let numeric = |s: &str| !s.is_empty() && s.len() <= 10 && s.chars().all(|c| c.is_ascii_digit());
-    if let Some((a, b)) = u.split_once(':') {
-        return numeric(a) && numeric(b);
+    match u.split_once(':') {
+        Some((a, b)) => numeric(a) && numeric(b),
+        None => numeric(u),
     }
-    numeric(u)
-        || (u.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
-            && u.chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-')))
 }
 
 fn check_hostname(problems: &mut Vec<String>, key: &str, host: &str) {
@@ -1107,7 +1113,7 @@ fn validate(
     );
     if !c.user.is_empty() && !container_user_ok(&c.user) {
         problems.push(format!(
-            "isolation.container.user: {:?} must be uid, uid:gid or a user name",
+            "isolation.container.user: {:?} must be a numeric uid or uid:gid",
             c.user
         ));
     }
@@ -1455,6 +1461,7 @@ mode = "proxy"
             "runner@sha256:abc",
             "-runner:1",
             "run ner:1",
+            "Runner:1",
             "",
         ] {
             assert!(!image_is_pinned(bad), "{bad}");
@@ -1468,10 +1475,10 @@ mode = "proxy"
         for bad in ["host", "bridge", "container:x", "-x", ""] {
             assert!(!network_ok(bad), "{bad}");
         }
-        for ok in ["1000", "1000:1000", "0:0", "runner"] {
+        for ok in ["1000", "1000:1000", "0:0"] {
             assert!(container_user_ok(ok), "{ok}");
         }
-        for bad in ["1000:", ":1", "Root", "a b", "1:2:3"] {
+        for bad in ["1000:", ":1", "Root", "runner", "a b", "1:2:3", ""] {
             assert!(!container_user_ok(bad), "{bad}");
         }
     }
@@ -1490,7 +1497,6 @@ mode = "proxy"
     }
 
     #[test]
-    #[ignore = "needs feat/core"]
     fn egress_hostnames_are_validated_by_core() {
         let c = cfg_from(
             "[egress]\nallow = [\"aiplatform.googleapis.com\", \"*.googleapis.com\", {host = \"litellm\", allow_private = true}]\n",

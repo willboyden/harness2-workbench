@@ -81,6 +81,7 @@ pub async fn info(
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[serde(deny_unknown_fields)]
 pub struct DoctorQuery {
     /// Run the probes now instead of using the cached report (operator).
     #[serde(default)]

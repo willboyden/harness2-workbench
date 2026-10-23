@@ -241,7 +241,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs feat/core"]
     async fn stops_only_matching_labels() {
         let f = Fake::new(vec![(0, "job-1\n"), (0, "")]);
         assert!(

@@ -67,8 +67,15 @@ pub async fn put_profile(
     }
     profile.secrets.clear();
     h2s_core::env::validate_profile(&profile)?;
+    let warnings = h2s_core::env::profile_warnings(&profile);
+    for w in &warnings {
+        tracing::warn!(profile = %name, "{w}");
+    }
     let p = profile.clone();
-    let entry = auth.audit("profile.put", &name, AuditOutcome::Success);
+    let mut entry = auth.audit("profile.put", &name, AuditOutcome::Success);
+    if !warnings.is_empty() {
+        entry.detail = Some(format!("warnings: {}", warnings.join("; ")));
+    }
     state
         .db
         .call(move |c| {

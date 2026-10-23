@@ -663,7 +663,6 @@ async fn listing_filters_and_pages_newest_first() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "needs feat/core"]
 async fn listing_filters_by_experiment() {
     // The experiment filter is validated with h2s_core::names::experiment_name.
     let t = TestServer::start().await;
@@ -760,7 +759,6 @@ async fn bridge_key_is_captured_as_a_secret_and_masked_in_the_log() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "needs feat/core"]
 async fn secrets_printed_by_a_job_are_redacted_everywhere() {
     // Redaction is `h2s_core::redact::Redactor`, a stub until core lands.
     let t = TestServer::start().await;

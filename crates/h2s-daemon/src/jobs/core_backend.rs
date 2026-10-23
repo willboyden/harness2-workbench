@@ -27,6 +27,11 @@ use super::backend::{
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CoreBackend;
 
+/// Directory (inside the job dir) a split job writes its file to.
+pub const SPLIT_OUT_DIR: &str = "out";
+/// The split file name there.
+pub const SPLIT_FILE: &str = "split.json";
+
 fn name_problem(out: &mut Vec<FieldProblem>, field: &str, r: h2s_core::Result<()>) {
     match r {
         Ok(()) => {}
@@ -119,7 +124,6 @@ impl Planner<'_> {
         budget: bool,
         bridge: bool,
         home_rw: bool,
-        jobfiles_rw: bool,
     ) -> Result<StepPlan, String> {
         let program = self.program_path(inv.program);
         let mut display = vec![inv.program.bin_name().to_owned()];
@@ -132,11 +136,13 @@ impl Planner<'_> {
             display,
             (parse, ExitSemantics::Harness2),
             (progress, budget, bridge),
-            (home_rw, jobfiles_rw),
+            (home_rw, None),
         )
     }
 
-    /// Run `program args` on the host, or inside the runner container.
+    /// Run `program args` on the host, or inside the runner container. `out_dir`, when
+    /// given, is mounted read-write at the experiment mount point in place of an
+    /// experiment (the job-files mount is always read-only).
     #[allow(clippy::too_many_arguments)]
     fn wrap(
         &self,
@@ -147,7 +153,7 @@ impl Planner<'_> {
         display: Vec<String>,
         (parse, exit): (ParseKind, ExitSemantics),
         (progress, budget, bridge): (bool, bool, bool),
-        (home_rw, jobfiles_rw): (bool, bool),
+        (home_rw, out_dir): (bool, Option<&Path>),
     ) -> Result<StepPlan, String> {
         let input = self.input;
         let base = StepPlan {
@@ -176,7 +182,7 @@ impl Planner<'_> {
             container: HARNESS2_MOUNT.to_owned(),
             read_only: !home_rw,
         }];
-        if let Some((exp, _)) = input.experiment {
+        if let Some(exp) = out_dir.or(input.experiment.map(|(p, _)| p)) {
             mounts.push(Mount {
                 host: mount_source(exp)?,
                 container: EXPERIMENT_MOUNT.to_owned(),
@@ -186,7 +192,7 @@ impl Planner<'_> {
         mounts.push(Mount {
             host: mount_source(input.job_dir)?,
             container: JOBFILES_MOUNT.to_owned(),
-            read_only: !jobfiles_rw,
+            read_only: true,
         });
         let spec = ContainerSpec {
             runtime: c.runtime.core(),
@@ -343,7 +349,7 @@ impl JobBackend for CoreBackend {
         let v = &planner.view;
         let step = |name: &str, inv: Result<Invocation, h2s_core::CoreError>, parse: ParseKind| {
             let inv = inv.map_err(|e| e.to_string())?;
-            planner.h2_step(name, &inv, parse, false, false, false, false, false)
+            planner.h2_step(name, &inv, parse, false, false, false, false)
         };
 
         match input.spec {
@@ -363,17 +369,45 @@ impl JobBackend for CoreBackend {
                         extras.push(*e);
                     }
                 }
-                let steps = h2s_core::install::plan(&v.home, &commit, &extras, p.reinstall)
+                // The plan inspects the checkout on the host; container jobs then see the
+                // same paths under the fixed mount point.
+                let host_home = text(input.harness2_home)?;
+                let steps = h2s_core::install::plan(&host_home, &commit, &extras, p.reinstall)
                     .map_err(|e| e.to_string())?;
+                let host_parent = input
+                    .harness2_home
+                    .parent()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let mount_parent = std::path::Path::new(HARNESS2_MOUNT)
+                    .parent()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let map = |x: &str| -> String {
+                    if !container {
+                        return x.to_owned();
+                    }
+                    if x == host_home {
+                        HARNESS2_MOUNT.to_owned()
+                    } else if let Some(rest) = x.strip_prefix(&format!("{host_home}/")) {
+                        format!("{HARNESS2_MOUNT}/{rest}")
+                    } else if x == host_parent {
+                        mount_parent.clone()
+                    } else {
+                        x.to_owned()
+                    }
+                };
                 let last = steps.len().saturating_sub(1);
                 for (i, s) in steps.iter().enumerate() {
-                    let mut display = vec![s.program.clone()];
-                    display.extend(s.args.iter().cloned());
+                    let program = map(&s.program);
+                    let args: Vec<String> = s.args.iter().map(|a| map(a)).collect();
+                    let mut display = vec![program.clone()];
+                    display.extend(args.iter().cloned());
                     plan.steps.push(planner.wrap(
                         s.name,
-                        &s.program,
-                        &s.args,
-                        &s.cwd,
+                        &program,
+                        &args,
+                        &map(&s.cwd),
                         display,
                         (
                             if i == last {
@@ -384,7 +418,7 @@ impl JobBackend for CoreBackend {
                             ExitSemantics::Plain,
                         ),
                         (false, false, false),
-                        (true, false),
+                        (true, None),
                     )?);
                 }
             }
@@ -403,7 +437,6 @@ impl JobBackend for CoreBackend {
                     false,
                     false,
                     true,
-                    false,
                 )?);
             }
             JobSpec::Check(p) => {
@@ -431,7 +464,6 @@ impl JobBackend for CoreBackend {
                     true,
                     false,
                     false,
-                    false,
                 )?);
             }
             JobSpec::Judge(p) => plan.steps.push(step(
@@ -444,7 +476,16 @@ impl JobBackend for CoreBackend {
                     .push(step("report", cli::report(p), ParseKind::Report)?);
             }
             JobSpec::Split(p) => {
-                let out = format!("{}/split.json", v.jobfiles);
+                // The script writes into <job dir>/out (the job-files mount stays
+                // read-only; in a container `out` is mounted at the experiment point).
+                let out_dir = input.job_dir.join(SPLIT_OUT_DIR);
+                crate::util::ensure_private_dir(&out_dir)
+                    .map_err(|e| format!("split output: {e}"))?;
+                let out = if container {
+                    format!("{EXPERIMENT_MOUNT}/{SPLIT_FILE}")
+                } else {
+                    format!("{}/{SPLIT_FILE}", text(&out_dir)?)
+                };
                 let inv = cli::split(p, &out).map_err(|e| e.to_string())?;
                 let program = format!("{}/.venv/bin/python", v.home);
                 let mut display = vec!["python".to_owned()];
@@ -457,7 +498,7 @@ impl JobBackend for CoreBackend {
                     display,
                     (ParseKind::Split, ExitSemantics::Plain),
                     (false, false, false),
-                    (false, true),
+                    (false, Some(&out_dir)),
                 )?);
             }
             JobSpec::Bridge(p) => {
@@ -474,7 +515,6 @@ impl JobBackend for CoreBackend {
                     false,
                     false,
                     true,
-                    false,
                     false,
                 )?);
             }
@@ -494,7 +534,6 @@ impl JobBackend for CoreBackend {
                     ParseKind::Run,
                     true,
                     true,
-                    false,
                     false,
                     false,
                 )?);
@@ -612,7 +651,7 @@ impl JobBackend for CoreBackend {
                 let JobSpec::Split(p) = out.spec else {
                     return Ok(None);
                 };
-                let t = std::fs::read_to_string(out.job_dir.join("split.json"))
+                let t = std::fs::read_to_string(out.job_dir.join(SPLIT_OUT_DIR).join(SPLIT_FILE))
                     .map_err(|e| format!("split file: {e}"))?;
                 let (train, test) = parse::split_file(&t).map_err(|e| e.to_string())?;
                 Ok(Some(JobResult::Split(SplitResult {
@@ -677,7 +716,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs feat/core"]
     fn plans_a_host_check() {
         let d = tempfile::tempdir().unwrap();
         let snapshot = crate::secrets::SecretSnapshot::default();

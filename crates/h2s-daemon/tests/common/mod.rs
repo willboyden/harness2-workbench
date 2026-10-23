@@ -461,6 +461,8 @@ pub struct Setup {
     pub proxy_secret: Option<String>,
     pub install_harness2: bool,
     pub sleep_secs: f64,
+    /// Plan jobs with the production backend (`h2s-core`) instead of [`FakeBackend`].
+    pub core_backend: bool,
 }
 
 impl Setup {
@@ -472,6 +474,7 @@ impl Setup {
             proxy_secret: None,
             install_harness2: true,
             sleep_secs: 1.0,
+            core_backend: false,
         }
     }
 }
@@ -686,12 +689,16 @@ pub async fn start_server(
     bridge_key: &str,
 ) -> RunningServer {
     let cfg = Config::from_file(setup.file.clone(), None, &|_| None).unwrap();
-    let backend = Arc::new(FakeBackend {
-        home: root.join("harness2"),
-        secret_value: secret_value.to_owned(),
-        bridge_key: bridge_key.to_owned(),
-        sleep_secs: setup.sleep_secs,
-    });
+    let backend: Arc<dyn JobBackend> = if setup.core_backend {
+        Arc::new(h2s_daemon::jobs::core_backend::CoreBackend)
+    } else {
+        Arc::new(FakeBackend {
+            home: root.join("harness2"),
+            secret_value: secret_value.to_owned(),
+            bridge_key: bridge_key.to_owned(),
+            sleep_secs: setup.sleep_secs,
+        })
+    };
     let mut opts = ServerOptions::new(backend);
     opts.kill_grace = Some(setup.kill_grace);
     opts.proxy_secret.clone_from(&setup.proxy_secret);
@@ -826,6 +833,34 @@ pub async fn full_log(t: &TestServer, id: &str) -> Vec<h2s_api::LogLine> {
             return out;
         }
     }
+}
+
+/// Copy a fixture experiment (tests/fixtures/<name>) to `to`, rewriting the neutral
+/// `/fixture/<name>` prefix to the copy's real path, as harness2 would have recorded it.
+pub fn copy_fixture(name: &str, to: &Path) {
+    let from = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures")
+        .join(name);
+    let prefix = format!("/fixture/{name}");
+    let real = to.display().to_string();
+    fn walk(from: &Path, to: &Path, prefix: &str, real: &str) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap() {
+            let e = e.unwrap();
+            let target = to.join(e.file_name());
+            let ft = e.file_type().unwrap();
+            if ft.is_dir() {
+                walk(&e.path(), &target, prefix, real);
+            } else if ft.is_file() {
+                let bytes = std::fs::read(e.path()).unwrap();
+                match String::from_utf8(bytes) {
+                    Ok(text) => std::fs::write(&target, text.replace(prefix, real)).unwrap(),
+                    Err(e) => std::fs::write(&target, e.into_bytes()).unwrap(),
+                }
+            }
+        }
+    }
+    walk(&from, to, &prefix, &real);
 }
 
 pub fn assert_terminal(j: &Job, status: JobStatus) {

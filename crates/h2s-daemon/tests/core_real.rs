@@ -1,0 +1,808 @@
+//! The real `h2s-core` behind the API: identifier rules, the CoreBackend's argv and parsers
+//! (against the stub harness2 home), experiments, profiles, secrets and tokens through the
+//! API, and every results endpoint on real harness2 output (tests/fixtures).
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+mod common;
+
+use common::*;
+use h2s_api::{
+    AuditSession, Comparison, ErrorBody, Experiment, ExportBundle, FileContent, FileEntry,
+    HarnessDiff, HarnessTree, Job, JobResult, JobStatus, LibraryDomain, Manifest, ModelProfile,
+    Page, ScoreReport, Scores, SecretInfo, TaskDetail, TaskRow, TokenCreated,
+};
+use serde_json::json;
+
+async fn core_server() -> TestServer {
+    TestServer::start_with(|s| s.core_backend = true).await
+}
+
+async fn get_json<T: serde::de::DeserializeOwned>(t: &TestServer, path: &str) -> T {
+    let r = t.get(path, Some(&t.viewer)).send().await.unwrap();
+    let status = r.status();
+    let text = r.text().await.unwrap();
+    assert_eq!(status, 200, "{path}: {text}");
+    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{path}: {e}: {text}"))
+}
+
+async fn status_of(t: &TestServer, path: &str) -> u16 {
+    t.get(path, Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn demo_runs_through_the_core_backend() {
+    let t = core_server().await;
+    let job: Job = t
+        .create_job(&t.operator, demo_spec("core-demo"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 30).await;
+    assert_terminal(&done, JobStatus::Succeeded);
+    match done.result {
+        Some(JobResult::Demo(d)) => assert_eq!((d.done, d.failed), (2, 0)),
+        other => panic!("{other:?}"),
+    }
+    let log = full_log(&t, &job.id).await;
+    assert!(
+        log.iter()
+            .any(|l| l.text == "▶ demo: harness2-demo --output <experiment> --k 2 --mode both"),
+        "{:#?}",
+        log.iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+    // Core's names rule now guards experiment names (422 with the field).
+    let r = t.create_job(&t.operator, demo_spec("Bad Name")).await;
+    assert_eq!(r.status(), 422);
+    let e: ErrorBody = r.json().await.unwrap();
+    assert_eq!(e.error.details[0].field, "params.experiment");
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn check_jobs_parse_harness2_check_output() {
+    let t = core_server().await;
+    let job: Job = t
+        .create_job(
+            &t.operator,
+            json!({"kind": "check", "params": {"cell": {"bench": "lab"}}}),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 30).await;
+    assert_terminal(&done, JobStatus::Succeeded);
+    match done.result {
+        Some(JobResult::Check(c)) => {
+            assert!(c.ready);
+            assert_eq!(c.tasks, Some(3));
+            assert!(c.failures.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn experiments_through_the_api() {
+    let t = core_server().await;
+    let r = t
+        .post("/api/v1/experiments", Some(&t.operator))
+        .json(&json!({"name": "exp-one", "description": "first", "tags": ["a", "b"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let e: Experiment = r.json().await.unwrap();
+    assert_eq!(
+        (e.name.as_str(), e.created_by.as_str()),
+        ("exp-one", "operator-t")
+    );
+    assert_eq!(e.tags, vec!["a", "b"]);
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(t.experiment_dir("exp-one"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o700);
+    // Duplicate, invalid name, invalid tag, unknown profile, viewer.
+    for (body, status) in [
+        (json!({"name": "exp-one"}), 409),
+        (json!({"name": "Exp One"}), 422),
+        (json!({"name": "exp-two", "tags": ["Bad Tag"]}), 422),
+        (json!({"name": "exp-two", "profile": "nope"}), 422),
+    ] {
+        let r = t
+            .post("/api/v1/experiments", Some(&t.operator))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), status, "{body}");
+    }
+    let r = t
+        .post("/api/v1/experiments", Some(&t.viewer))
+        .json(&json!({"name": "exp-v"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    // Update and archive.
+    let r = t
+        .send(
+            reqwest::Method::PATCH,
+            "/api/v1/experiments/exp-one",
+            Some(&t.operator),
+        )
+        .json(&json!({"description": "changed", "archived": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let e: Experiment = r.json().await.unwrap();
+    assert!(e.archived && e.description == "changed");
+    let list: Vec<Experiment> = get_json(&t, "/api/v1/experiments").await;
+    assert!(list.iter().all(|x| x.name != "exp-one"));
+    let all: Vec<Experiment> = get_json(&t, "/api/v1/experiments?archived=true").await;
+    assert!(all.iter().any(|x| x.name == "exp-one"));
+    let one: Experiment = get_json(&t, "/api/v1/experiments/exp-one").await;
+    assert!(one.size_bytes.is_some());
+    assert_eq!(status_of(&t, "/api/v1/experiments/nope").await, 404);
+    assert_eq!(status_of(&t, "/api/v1/experiments/NOPE").await, 422);
+    // Writing jobs refuse archived experiments.
+    t.put_profile(json!({"name": "p1", "kind": "custom", "solver_model": "m/x"}))
+        .await;
+    let r = t
+        .create_job(&t.operator, run_spec("exp-one", "p1", None))
+        .await;
+    assert_eq!(r.status(), 409);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn profiles_and_secrets_through_the_api() {
+    let t = core_server().await;
+    let profile = json!({
+        "name": "local", "kind": "openai_compatible", "solver_model": "glm-5",
+        "endpoint": {"base_url": "http://127.0.0.1:4000/v1", "api_key_secret": "LOCAL_KEY"}
+    });
+    let r = t
+        .send(
+            reqwest::Method::PUT,
+            "/api/v1/profiles/local",
+            Some(&t.admin),
+        )
+        .json(&profile)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let r = t
+        .send(
+            reqwest::Method::PUT,
+            "/api/v1/profiles/local",
+            Some(&t.admin),
+        )
+        .json(&profile)
+        .send()
+        .await
+        .unwrap();
+    let p: ModelProfile = r.json().await.unwrap();
+    assert_eq!(p.secrets.len(), 1);
+    assert!(!p.secrets[0].set);
+    // Name mismatch, invalid URL, operator.
+    let r = t
+        .send(
+            reqwest::Method::PUT,
+            "/api/v1/profiles/other",
+            Some(&t.admin),
+        )
+        .json(&profile)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 422);
+    let mut bad = profile.clone();
+    bad["endpoint"]["base_url"] = json!("ftp://x");
+    let r = t
+        .send(
+            reqwest::Method::PUT,
+            "/api/v1/profiles/local",
+            Some(&t.admin),
+        )
+        .json(&bad)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 422);
+    let r = t
+        .send(
+            reqwest::Method::PUT,
+            "/api/v1/profiles/local",
+            Some(&t.operator),
+        )
+        .json(&profile)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+
+    // A planted secret value is write-only.
+    let planted = format!("planted-{}", random_text(30));
+    let r = t
+        .send(
+            reqwest::Method::PUT,
+            "/api/v1/secrets/LOCAL_KEY",
+            Some(&t.admin),
+        )
+        .json(&json!({"value": planted}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let body = r.text().await.unwrap();
+    assert!(!body.contains(&planted));
+    let info: SecretInfo = serde_json::from_str(&body).unwrap();
+    assert!(info.set && info.chars == Some(u32::try_from(planted.len()).unwrap()));
+    let p: Vec<ModelProfile> = get_json(&t, "/api/v1/profiles").await;
+    assert!(p[0].secrets[0].set);
+    for (name, body, status) in [
+        ("lower_case", json!({"value": "x"}), 422),
+        ("LOCAL_KEY", json!({"value": ""}), 422),
+        ("LOCAL_KEY", json!({"valu": planted}), 400),
+    ] {
+        let r = t
+            .send(
+                reqwest::Method::PUT,
+                &format!("/api/v1/secrets/{name}"),
+                Some(&t.admin),
+            )
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), status, "{name} {body}");
+        assert!(!r.text().await.unwrap().contains(&planted));
+    }
+    let audit = t
+        .get("/api/v1/audit?limit=100", Some(&t.admin))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!audit.contains(&planted));
+    assert!(audit.contains("secret.set"));
+    // A pinned profile cannot be deleted; an unpinned one can.
+    t.put_experiment("pinned-exp", Some("local")).await;
+    let r = t
+        .send(
+            reqwest::Method::DELETE,
+            "/api/v1/profiles/local",
+            Some(&t.admin),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 409);
+    let r = t
+        .send(
+            reqwest::Method::DELETE,
+            "/api/v1/secrets/LOCAL_KEY",
+            Some(&t.admin),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let r = t
+        .send(
+            reqwest::Method::DELETE,
+            "/api/v1/secrets/LOCAL_KEY",
+            Some(&t.admin),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tokens_through_the_api() {
+    let t = core_server().await;
+    let r = t
+        .post("/api/v1/tokens", Some(&t.admin))
+        .json(&json!({"name": "ci bot", "role": "operator", "expires_in_days": 30}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let c: TokenCreated = r.json().await.unwrap();
+    assert!(c.token.starts_with("h2s_"));
+    assert_eq!(c.info.role, h2s_api::Role::Operator);
+    assert!(c.info.expires_at.is_some());
+    let me = t
+        .get("/api/v1/auth/me", Some(&c.token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me.status(), 200);
+    let list = t
+        .get("/api/v1/tokens", Some(&t.admin))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!list.contains(&c.token[13..]), "a token secret was listed");
+    for body in [
+        json!({"name": "", "role": "viewer"}),
+        json!({"name": "x", "role": "viewer", "expires_in_days": 0}),
+        json!({"name": "x", "role": "root"}),
+    ] {
+        let r = t
+            .post("/api/v1/tokens", Some(&t.admin))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            r.status() == 422 || r.status() == 400,
+            "{body}: {}",
+            r.status()
+        );
+    }
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metrics_accept_the_configured_metrics_token() {
+    let t = TestServer::start_with(|s| {
+        s.core_backend = true;
+        s.file.telemetry.metrics_token_secret = "METRICS_TOKEN".into();
+        s.secret_env = vec![(
+            "H2S_SECRET_METRICS_TOKEN".into(),
+            "scrape-me-0123456789".into(),
+        )];
+    })
+    .await;
+    t.client.get(t.url("/healthz")).send().await.unwrap();
+    let r = t
+        .client
+        .get(t.url("/metrics"))
+        .bearer_auth("scrape-me-0123456789")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(r.text().await.unwrap().contains("h2s_http_requests_total"));
+    let r = t
+        .client
+        .get(t.url("/metrics"))
+        .bearer_auth("scrape-me-wrong")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+    let r = t
+        .client
+        .get(t.url("/metrics"))
+        .bearer_auth(&t.viewer)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tools_and_system_endpoints() {
+    let t = core_server().await;
+    let r = t
+        .post("/api/v1/estimate", Some(&t.viewer))
+        .json(&json!({"tasks": 10, "k": 2, "modes": ["parallel", "sequential"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let e: h2s_api::CostEstimate = r.json().await.unwrap();
+    assert_eq!((e.tasks, e.k, e.modes), (10, 2, 2));
+    assert!(e.rollouts > 0 && e.improver_sessions > 0);
+    let r = t
+        .post("/api/v1/estimate", Some(&t.viewer))
+        .json(&json!({"tasks": 0, "k": 99, "modes": []}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 422);
+    assert_eq!(r.json::<ErrorBody>().await.unwrap().error.details.len(), 3);
+
+    let r = t
+        .post("/api/v1/harness/validate", Some(&t.viewer))
+        .json(&json!({"surface": "opencode", "files": [
+            {"path": "systemprompt.md", "content": "Be careful."},
+            {"path": "skills/x/SKILL.md", "content": "no frontmatter"}
+        ]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let v: h2s_api::ValidationReport = r.json().await.unwrap();
+    assert!(!v.ok && !v.errors.is_empty(), "{v:?}");
+    let r = t
+        .post("/api/v1/harness/validate", Some(&t.viewer))
+        .json(&json!({"surface": "opencode", "files": [{"path": "../escape.md", "content": ""}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 422);
+
+    let b: Vec<h2s_api::BenchmarkStatus> = get_json(&t, "/api/v1/benchmarks").await;
+    assert!(b.len() >= 3, "{b:?}");
+    let info: h2s_api::SystemInfo = get_json(&t, "/api/v1/system/info").await;
+    assert_eq!(
+        info.harness2.tested_commit,
+        h2s_core::TESTED_HARNESS2_COMMIT
+    );
+    assert!(
+        info.harness2.home.is_none() && info.data_dir.is_none(),
+        "admin-only fields leaked"
+    );
+    let admin_info: h2s_api::SystemInfo = serde_json::from_str(
+        &t.get("/api/v1/system/info", Some(&t.admin))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(admin_info.data_dir.is_some() && admin_info.harness2.home.is_some());
+    let d: h2s_api::DoctorReport = get_json(&t, "/api/v1/system/doctor").await;
+    assert!(!d.checks.is_empty());
+    let r = t
+        .get("/api/v1/system/doctor?refresh=true", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    let r = t
+        .get("/api/v1/system/doctor?refresh=true", Some(&t.operator))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    t.stop().await;
+}
+
+async fn adopt(t: &TestServer, fixture: &str, name: &str, kind: &str) -> Experiment {
+    copy_fixture(fixture, &t.experiment_dir(name));
+    let r = t
+        .post("/api/v1/experiments", Some(&t.operator))
+        .json(&json!({"name": name, "kind": kind}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    r.json().await.unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn results_endpoints_on_real_demo_output() {
+    let t = core_server().await;
+    let e = adopt(&t, "demo-k2", "demo-fx", "demo").await;
+    assert_eq!(e.sweeps.len(), 1);
+    assert_eq!(e.sweeps[0].id, "demo-oc-agg2");
+    let base = "/api/v1/experiments/demo-fx/sweeps/demo-oc-agg2";
+
+    let rows: Page<TaskRow> = get_json(&t, &format!("{base}/tasks")).await;
+    let ids: Vec<&str> = rows.items.iter().map(|r| r.task_id.as_str()).collect();
+    assert_eq!(ids, vec!["ledger-1", "ledger-2"]);
+    let p1: Page<TaskRow> = get_json(&t, &format!("{base}/tasks?limit=1")).await;
+    assert_eq!(p1.items.len(), 1);
+    let p2: Page<TaskRow> = get_json(
+        &t,
+        &format!("{base}/tasks?limit=1&cursor={}", p1.next_cursor.unwrap()),
+    )
+    .await;
+    assert_eq!(p2.items[0].task_id, "ledger-2");
+    assert!(p2.next_cursor.is_none());
+    let none: Page<TaskRow> = get_json(&t, &format!("{base}/tasks?status=partial")).await;
+    assert!(none.items.is_empty());
+    assert_eq!(
+        status_of(&t, &format!("{base}/tasks?status=weird")).await,
+        422
+    );
+
+    let d: TaskDetail = get_json(&t, &format!("{base}/tasks/ledger-1")).await;
+    assert_eq!(d.modes[0].finals, vec!["agg1", "agg2"]);
+    assert_eq!(d.base.len(), 2);
+
+    for mode in ["parallel", "agg"] {
+        let tree: HarnessTree = get_json(
+            &t,
+            &format!("{base}/tasks/ledger-1/modes/{mode}/harnesses/agg1"),
+        )
+        .await;
+        assert_eq!(tree.label, "agg1");
+        assert!(!tree.files.is_empty() && tree.fingerprint.len() == 16);
+    }
+    assert_eq!(
+        status_of(
+            &t,
+            &format!("{base}/tasks/ledger-1/modes/both/harnesses/agg1")
+        )
+        .await,
+        422
+    );
+    assert_eq!(
+        status_of(
+            &t,
+            &format!("{base}/tasks/ledger-1/modes/parallel/harnesses/nope")
+        )
+        .await,
+        422
+    );
+    assert_eq!(
+        status_of(
+            &t,
+            &format!("{base}/tasks/ledger-9/modes/parallel/harnesses/agg1")
+        )
+        .await,
+        404
+    );
+
+    let diff: HarnessDiff = get_json(
+        &t,
+        &format!("{base}/tasks/ledger-1/modes/parallel/diff?from=base&to=agg1"),
+    )
+    .await;
+    assert_eq!((diff.from.as_str(), diff.to.as_str()), ("base", "agg1"));
+    assert!(
+        diff.files
+            .iter()
+            .any(|f| f.change != h2s_api::ChangeKind::Unchanged)
+    );
+    assert_eq!(
+        status_of(
+            &t,
+            &format!("{base}/tasks/ledger-1/modes/parallel/diff?from=base")
+        )
+        .await,
+        422
+    );
+
+    let bundle: ExportBundle = get_json(
+        &t,
+        &format!(
+            "{base}/tasks/ledger-1/modes/parallel/harnesses/agg1/export?target=opencode&format=json"
+        ),
+    )
+    .await;
+    assert!(!bundle.files.is_empty());
+    let r = t
+        .get(&format!("{base}/tasks/ledger-1/modes/parallel/harnesses/agg1/export?target=raw&format=tar.gz"), Some(&t.viewer))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["content-type"], "application/gzip");
+    assert!(
+        r.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment; filename=\"harness-agg1-raw.tar.gz\"")
+    );
+    let bytes = r.bytes().await.unwrap();
+    assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+    assert_eq!(
+        status_of(
+            &t,
+            &format!(
+                "{base}/tasks/ledger-1/modes/parallel/harnesses/agg1/export?target=zip&format=json"
+            )
+        )
+        .await,
+        422
+    );
+
+    let files: Vec<FileEntry> = get_json(
+        &t,
+        &format!("{base}/tasks/ledger-1/modes/parallel/rollouts/base1/files"),
+    )
+    .await;
+    assert!(files.iter().any(|f| f.name == "answer.txt"), "{files:?}");
+    let f: FileContent = get_json(
+        &t,
+        &format!("{base}/tasks/ledger-1/modes/parallel/rollouts/base1/file?path=answer.txt"),
+    )
+    .await;
+    assert!(f.text.unwrap().contains("Total"));
+    for bad in ["../x", "/etc/passwd", "a/../../b"] {
+        let s = status_of(
+            &t,
+            &format!("{base}/tasks/ledger-1/modes/parallel/rollouts/base1/file?path={bad}"),
+        )
+        .await;
+        assert!(s == 422 || s == 400, "{bad}: {s}");
+    }
+    assert_eq!(
+        status_of(
+            &t,
+            &format!("{base}/tasks/ledger-1/modes/parallel/rollouts/base1/file")
+        )
+        .await,
+        422
+    );
+
+    let scores: Scores = get_json(&t, &format!("{base}/scores")).await;
+    assert!(scores.rows.is_empty());
+    let _report: ScoreReport = get_json(&t, &format!("{base}/report")).await;
+    let lib: Vec<LibraryDomain> = get_json(&t, &format!("{base}/library")).await;
+    assert!(lib.iter().any(|l| l.domain == "accounting"));
+    let _audit: Vec<AuditSession> = get_json(&t, &format!("{base}/audit")).await;
+    let cmp: Comparison = get_json(
+        &t,
+        "/api/v1/compare?a=demo-fx/demo-oc-agg2/parallel&b=demo-fx/demo-oc-agg2/seq",
+    )
+    .await;
+    assert_eq!(cmp.a, "demo-fx/demo-oc-agg2/parallel");
+    assert_eq!(
+        status_of(&t, "/api/v1/compare?a=demo-fx/demo-oc-agg2&b=x/y/z").await,
+        422
+    );
+    let m: Manifest = get_json(&t, "/api/v1/experiments/demo-fx/manifest").await;
+    assert_eq!(m.experiment, "demo-fx");
+    assert_eq!(m.results_digest.len(), 64);
+    assert!(!m.sweep_identities.is_empty() || m.jobs.is_empty());
+    assert_eq!(
+        status_of(&t, "/api/v1/experiments/demo-fx/sweeps/not-a-sweep/tasks").await,
+        404
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn results_endpoints_on_a_standard_experiment() {
+    let t = core_server().await;
+    let e = adopt(&t, "std", "std-fx", "standard").await;
+    let ids: Vec<&str> = e.sweeps.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&"lab-oc-agg1"), "{ids:?}");
+    let base = "/api/v1/experiments/std-fx/sweeps/lab-oc-agg1";
+    let scores: Scores = get_json(&t, &format!("{base}/scores")).await;
+    assert!(!scores.rows.is_empty() && !scores.base_rows.is_empty());
+    let report: ScoreReport = get_json(&t, &format!("{base}/report")).await;
+    assert!(!report.summaries.is_empty() && !report.text.is_empty());
+    let sessions: Vec<AuditSession> = get_json(&t, &format!("{base}/audit")).await;
+    assert!(!sessions.is_empty());
+    let s = &sessions[0];
+    let part = s.parts.first().unwrap();
+    let r = t
+        .get(&format!("{base}/audit/{}/{part}", s.id), Some(&t.viewer))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["content-type"], "text/plain; charset=utf-8");
+    assert_eq!(
+        status_of(&t, &format!("{base}/audit/{}/secrets", s.id)).await,
+        422
+    );
+    assert_eq!(
+        status_of(&t, &format!("{base}/audit/..%2Fx/mission")).await,
+        422
+    );
+    let cmp: Comparison = get_json(
+        &t,
+        "/api/v1/compare?a=std-fx/lab-oc-agg1/parallel&b=std-fx/lab-oc-agg1/sequential",
+    )
+    .await;
+    assert!(cmp.n_common > 0, "{cmp:?}");
+    // A preview estimate can use this experiment's measured spend.
+    let r = t
+        .post("/api/v1/estimate", Some(&t.viewer))
+        .json(&json!({"tasks": 3, "k": 1, "modes": ["parallel"], "experiment": "std-fx"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    t.stop().await;
+}
+
+#[test]
+fn container_plans_use_fixed_hardening_and_numeric_users() {
+    use h2s_daemon::jobs::backend::{ContainerSettings, JobBackend, PlanInput};
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("harness2");
+    let job_dir = d.path().join("job");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&job_dir).unwrap();
+    let snapshot = h2s_daemon::secrets::SecretSnapshot::default();
+    let container = ContainerSettings {
+        runtime: h2s_daemon::config::RuntimeKind::Docker,
+        image: "harness2-studio-runner:0.1.0".into(),
+        network: "none".into(),
+        cpus: 2.0,
+        memory_mb: 4096,
+        pids_limit: 512,
+        user: "0:0".into(),
+    };
+    let check = h2s_api::JobSpec::Check(h2s_api::CheckParams {
+        cell: serde_json::from_value(json!({"bench": "lab"})).unwrap(),
+        profile: None,
+    });
+    let split = h2s_api::JobSpec::Split(h2s_api::SplitParams {
+        bench: h2s_api::Bench::Lab,
+        subset: None,
+        seed: 42,
+        train_fraction: 0.5,
+        name: "half".into(),
+    });
+    for spec in [&check, &split] {
+        let input = PlanInput {
+            job_id: "0190c5f0-0000-7000-8000-000000000000",
+            spec,
+            isolation: h2s_api::Isolation::Container,
+            harness2_home: &home,
+            harness2_managed: true,
+            experiment: None,
+            job_dir: &job_dir,
+            split_file: None,
+            profile: None,
+            secrets: &snapshot,
+            container: Some(&container),
+        };
+        let plan = h2s_daemon::jobs::core_backend::CoreBackend
+            .plan(&input)
+            .unwrap();
+        let step = &plan.steps[0];
+        assert_eq!(step.program, "docker");
+        let argv = step.args.join(" ");
+        for must in [
+            "run",
+            "--rm",
+            "--cap-drop ALL",
+            "--security-opt no-new-privileges",
+            "--pids-limit 512",
+            "--network none",
+            "--user 0:0",
+            "harness2-studio-runner:0.1.0",
+        ] {
+            assert!(argv.contains(must), "{must} missing in {argv}");
+        }
+        assert!(
+            argv.contains(&format!("{}:/h2s/job:ro", job_dir.display())),
+            "{argv}"
+        );
+        assert!(step.container.is_some() && step.runtime_env);
+        // Values never reach argv: env vars travel by name.
+        for (k, v) in &step.env {
+            assert!(!argv.contains(&format!("{k}={v}")));
+        }
+        if matches!(spec, h2s_api::JobSpec::Split(_)) {
+            assert!(
+                argv.contains(&format!(
+                    "{}:/h2s/experiment",
+                    job_dir.join("out").display()
+                )),
+                "{argv}"
+            );
+            assert!(
+                argv.contains("--output /h2s/experiment/split.json"),
+                "{argv}"
+            );
+        }
+    }
+}

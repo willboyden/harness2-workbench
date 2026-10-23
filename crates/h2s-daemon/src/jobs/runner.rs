@@ -377,6 +377,11 @@ async fn prepare<'a>(
         }
         None => None,
     };
+    if let Some(p) = &profile {
+        for w in h2s_core::env::profile_warnings(p) {
+            pump.system(format!("profile {}: {w}", p.name)).await;
+        }
+    }
     let names = profile
         .as_ref()
         .map(crate::db::profiles::referenced_secrets)
@@ -502,7 +507,9 @@ async fn register_split(
     p: &h2s_api::SplitParams,
     s: &h2s_api::SplitResult,
 ) -> Result<(), String> {
-    let src = job_dir.join("split.json");
+    let src = job_dir
+        .join(super::core_backend::SPLIT_OUT_DIR)
+        .join(super::core_backend::SPLIT_FILE);
     let dst = mgr
         .settings()
         .paths
