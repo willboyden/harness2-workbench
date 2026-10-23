@@ -1046,9 +1046,62 @@ impl JobManager {
             .set(i64::from(self.running_count()));
         let me = Arc::clone(self);
         let l = Arc::clone(live);
-        let handle = tokio::spawn(async move { runner::run(me, l).await });
-        lock(&self.tasks).insert(live.id.clone(), handle);
+        let runner = tokio::spawn(async move { runner::run(me, l).await });
+        // A panicking runner must not leave its job `running` (holding a slot) forever.
+        let me = Arc::clone(self);
+        let l = Arc::clone(live);
+        let supervisor = tokio::spawn(async move {
+            if let Err(e) = runner.await
+                && e.is_panic()
+            {
+                tracing::error!(job = %l.id, "the job runner panicked");
+                me.fail_after_panic(&l).await;
+            }
+        });
+        lock(&self.tasks).insert(live.id.clone(), supervisor);
         true
+    }
+
+    async fn fail_after_panic(&self, live: &Arc<LiveJob>) {
+        let id = live.id.clone();
+        let row = self
+            .db
+            .call(move |c| crate::db::jobs::get(c, &id))
+            .await
+            .ok()
+            .flatten();
+        if let Some(r) = row
+            && let (Some(pid), Some(start)) = (r.pid, r.pid_start)
+            && let (Ok(pid), Ok(start)) = (i32::try_from(pid), u64::try_from(start))
+        {
+            procfs::terminate_recorded_group(pid, start, self.settings.kill_grace).await;
+        }
+        let now = now_rfc3339();
+        live.mutate(|job| {
+            job.status = JobStatus::Failed;
+            job.error = Some("internal error in the job runner (see the server log)".to_owned());
+            job.finished_at = Some(now.clone());
+            let mut events: Vec<JobEvent> = Vec::new();
+            for s in &mut job.steps {
+                if !s.status.is_terminal() {
+                    s.status = JobStatus::Failed;
+                    s.finished_at = Some(now.clone());
+                    events.push(JobEvent::Step { step: s.clone() });
+                }
+            }
+            events.push(JobEvent::Status {
+                status: JobStatus::Failed,
+                exit_code: None,
+                error: job.error.clone(),
+            });
+            events
+        });
+        let job = live.snapshot();
+        self.persist(job.clone()).await;
+        let _ = tokio::fs::remove_dir_all(self.job_dir(&live.id)).await;
+        self.metrics
+            .job_finished(job.kind.as_str(), JobStatus::Failed.as_str(), 0.0);
+        self.job_done(&live.id);
     }
 
     /// Called by the runner when a job ended: state is already final and persisted.

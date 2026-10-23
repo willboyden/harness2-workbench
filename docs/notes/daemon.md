@@ -8,10 +8,11 @@ otherwise.
 
 Status (2026-10-23): every route of §8 is implemented against the real `h2s-core`. Tested with
 real subprocesses (stub harness2 executables that print upstream's captured output formats),
-real sockets and the real harness2 fixtures; the real `harness2-demo` was run by hand through
-`h2studio serve` against an unmodified harness2 checkout. Not exercised: container isolation
-end to end (the `docker`/`podman run` argv is tested, no container was started), the OTLP
-exporter against a collector, and TLS (served by a reverse proxy, not by this server).
+real sockets, the real harness2 fixtures and a local OTLP/HTTP collector; the real
+`harness2-demo` ran through `h2studio serve` against an unmodified harness2 checkout, by hand
+and in the `h2s-e2e` server and MCP suites. Not exercised: container isolation end to end (the
+`docker`/`podman run` argv is tested, no container was started), the request timeout (503), and
+TLS (served by a reverse proxy, not by this server).
 
 ## Command line
 
@@ -136,6 +137,8 @@ environment variable `auth.proxy.secret_env` when the server starts.
 - **Cancellation reasons**: user (cancelled, "cancelled by <name>"), budget (cancelled, "budget
   reached"), wall clock (failed, "timed out after 1h 30m"), shutdown (failed, "server stopped"),
   restart (failed, "server restarted").
+- A runner that panics (a bug) fails its job ("internal error in the job runner"), terminates
+  its recorded process group and frees its slot.
 - **Restart recovery** signals a recorded process group only when the recorded leader still has
   the recorded start time (`/proc/<pid>/stat` field 22), or when members of that group started
   no earlier than it; container jobs are stopped through the label-verified stop.

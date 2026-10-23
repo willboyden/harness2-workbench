@@ -347,6 +347,13 @@ impl JobBackend for FakeBackend {
         step: &StepPlan,
         out: &StepOutput<'_>,
     ) -> Result<Option<JobResult>, String> {
+        if step
+            .env
+            .iter()
+            .any(|(k, v)| k == "FAKE_SCENARIO" && v == "panic")
+        {
+            panic!("simulated parser bug");
+        }
         match step.parse {
             ParseKind::Demo => {
                 let Some((dir, _)) = out.experiment else {

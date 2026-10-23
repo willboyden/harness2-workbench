@@ -1080,3 +1080,30 @@ async fn preacknowledged_host_risks_need_no_flag() {
     t.wait_terminal(&j.id, 30).await;
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_panicking_runner_fails_its_job_and_frees_the_slot() {
+    let t = TestServer::start_with(|s| s.file.jobs.max_concurrent = 1).await;
+    let bad: Job = t
+        .create_job(&t.operator, demo_spec("panic-p"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let after: Job = t
+        .create_job(&t.operator, demo_spec("ok-after"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let bad = t.wait_terminal(&bad.id, 30).await;
+    assert_terminal(&bad, JobStatus::Failed);
+    assert!(
+        bad.error
+            .as_deref()
+            .unwrap()
+            .starts_with("internal error in the job runner")
+    );
+    assert_terminal(&t.wait_terminal(&after.id, 30).await, JobStatus::Succeeded);
+    t.stop().await;
+}
