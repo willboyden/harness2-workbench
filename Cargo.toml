@@ -1,0 +1,141 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/h2s-api",
+    "crates/h2s-core",
+    "crates/h2s-daemon",
+    "crates/h2s-mcp",
+    "crates/h2s-web",
+    "crates/h2s-e2e",
+    "tools/h2s-mock-api",
+    "xtask",
+]
+default-members = [
+    "crates/h2s-api",
+    "crates/h2s-core",
+    "crates/h2s-daemon",
+    "crates/h2s-mcp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "Apache-2.0"
+repository = "https://github.com/willboyden/harness2-studio"
+homepage = "https://github.com/willboyden/harness2-studio"
+authors = ["Harness² Studio contributors"]
+publish = false
+
+# Direct dependency versions follow the 14-day cooldown policy in docs/SUPPLY-CHAIN.md:
+# each is the newest stable release that had been public for at least 14 days when chosen.
+[workspace.dependencies]
+h2s-api = { path = "crates/h2s-api" }
+h2s-core = { path = "crates/h2s-core" }
+
+anyhow = "1.0.104"
+async-stream = "0.3.6"
+axum = { version = "0.8.9", features = ["http1", "json", "query", "tokio", "macros", "matched-path", "original-uri", "tracing"] }
+base64 = "0.23.1"
+bytes = "1.12.1"
+cap-std = "4.0.3"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+console_error_panic_hook = "0.1.7"
+cookie = "0.18.2"
+directories = "6.0.0"
+fantoccini = { version = "0.22.1", default-features = false, features = ["rustls-tls"] }
+flate2 = "1.1.10"
+futures = "0.3.34"
+getrandom = "0.4.3"
+gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
+hex = "0.4.3"
+http = "1.5.0"
+http-body-util = "0.1.5"
+hyper = { version = "1.12.0", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+ipnet = "2.12.2"
+js-sys = "0.3.106"
+leptos = { version = "0.8.22", features = ["csr"] }
+leptos_router = "0.8.17"
+mime_guess = "2.0.5"
+nix = { version = "0.31.3", features = ["signal", "process", "user", "fs"] }
+opentelemetry = "0.33.0"
+opentelemetry-otlp = { version = "0.33.0", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
+opentelemetry_sdk = { version = "0.33.0", features = ["rt-tokio"] }
+predicates = "3.1.4"
+prometheus-client = "0.25.1"
+proptest = "1.11.0"
+regex = "1.13.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "stream"] }
+rmcp = { version = "3.5.1" }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rust-embed = { version = "8.13.0", features = ["include-exclude"] }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha1 = "0.11.0"
+sha2 = "0.11.0"
+similar = "3.2.0"
+subtle = "2.6.1"
+tar = "0.4.46"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+time = { version = "0.3.55", features = ["formatting", "parsing", "macros"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "process", "signal", "fs", "io-util", "net", "sync", "time"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
+toml = "0.9.8"
+tower = { version = "0.5.3", features = ["util", "limit", "timeout"] }
+tower-http = { version = "0.7.1", features = ["trace", "limit", "timeout", "set-header", "request-id", "sensitive-headers"] }
+tracing = "0.1.44"
+tracing-opentelemetry = "0.34.0"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fmt"] }
+url = "2.5.8"
+utoipa = "6.0.0"
+uuid = { version = "1.27.0", features = ["v4", "v7"] }
+wasm-bindgen = "0.2.129"
+wasm-bindgen-test = "0.3.79"
+web-sys = "0.3.106"
+wiremock = "0.6.5"
+zeroize = "1.9.1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+large_futures = "warn"
+needless_pass_by_value = "warn"
+redundant_clone = "warn"
+semicolon_if_nothing_returned = "warn"
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+inefficient_to_string = "warn"
+manual_let_else = "warn"
+match_same_arms = "warn"
+explicit_iter_loop = "warn"
+implicit_clone = "warn"
+uninlined_format_args = "warn"
+
+# Unwinding stays on for the server: tokio contains a panicking request task instead of
+# aborting the whole daemon.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.release-web]
+inherits = "release"
+opt-level = "z"
+panic = "abort"

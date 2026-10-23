@@ -1,0 +1,32 @@
+[package]
+name = "h2s-core"
+description = "Harness² Studio domain logic: harness2 CLI contracts, output parsers, results reader, harness tree validation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+h2s-api.workspace = true
+cap-std.workspace = true
+flate2.workspace = true
+hex.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+similar.workspace = true
+tar.workspace = true
+thiserror.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

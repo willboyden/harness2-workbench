@@ -1,0 +1,65 @@
+# cargo-deny policy (https://embarkstudios.github.io/cargo-deny/). Run: cargo deny check
+# Changing an allow-list here is a supply-chain decision: say why in the PR.
+
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "wasm32-unknown-unknown",
+]
+all-features = true
+
+[output]
+feature-depth = 1
+
+[advisories]
+# Every RustSec advisory (vulnerability, unsound, unmaintained, yanked) fails the check unless
+# listed here with a reason and a review date.
+ignore = [
+    # Archived-as-finished proc-macro pulled in by leptos -> either_of. Compile time only, no
+    # known vulnerability, no maintained drop-in that leptos accepts. Re-check: 2027-01-31.
+    { id = "RUSTSEC-2024-0436", reason = "compile-time macro via leptos; no vulnerability; review 2027-01-31" },
+]
+
+[licenses]
+# Permissive licences compatible with distributing Apache-2.0 binaries.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSL-1.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+    "OpenSSL",
+]
+confidence-threshold = 0.9
+exceptions = []
+
+[licenses.private]
+# Workspace crates are publish = false; their licence is still Apache-2.0.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+deny = [
+    # OpenSSL bindings: this project uses rustls only.
+    { crate = "openssl-sys", reason = "rustls only; no system OpenSSL dependency" },
+    { crate = "native-tls", reason = "rustls only" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

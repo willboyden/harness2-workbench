@@ -1,0 +1,7 @@
+# One exact toolchain for every developer and CI job, so a green build means the same thing
+# everywhere. Bump deliberately (docs/RELEASING.md) and re-run the full gate when you do.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

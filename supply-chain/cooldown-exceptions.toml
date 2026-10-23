@@ -1,0 +1,28 @@
+# Locked versions allowed despite being younger than the dependency cooldown
+# (docs/SUPPLY-CHAIN.md). The only accepted reason is a security fix: a release that fixes a
+# RustSec advisory always wins over the cooldown. Each entry expires once the release is old
+# enough to pass on its own; `cargo xtask cooldown` reports stale entries.
+
+[[exception]]
+crate = "rustls"
+version = "0.23.46"
+reason = "fixes RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348, RUSTSEC-2026-0349"
+expires = "2026-10-28"
+
+[[exception]]
+crate = "rustls-webpki"
+version = "0.103.16"
+reason = "fixes RUSTSEC-2026-0382"
+expires = "2026-11-03"
+
+[[exception]]
+crate = "tokio"
+version = "1.54.1"
+reason = "fixes RUSTSEC-2026-0386 (unsound AsyncFd constructors in 1.53.x)"
+expires = "2026-11-04"
+
+[[exception]]
+crate = "webpki-root-certs"
+version = "1.0.11"
+reason = "fixes RUSTSEC-2026-0383 (distrusted emSign intermediates in the bundled roots)"
+expires = "2026-11-06"

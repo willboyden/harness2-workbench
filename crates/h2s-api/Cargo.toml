@@ -1,0 +1,26 @@
+[package]
+name = "h2s-api"
+description = "Wire types shared by the Harness² Studio server, web UI and MCP server (LOCKED contract)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# JSON Schema derives for MCP tool input/output schemas.
+schema = ["dep:schemars"]
+# OpenAPI derives for the server's /api/v1/openapi.json.
+openapi = ["dep:utoipa"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+schemars = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+
+[lints]
+workspace = true
