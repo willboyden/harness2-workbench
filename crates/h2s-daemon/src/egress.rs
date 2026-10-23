@@ -191,6 +191,9 @@ fn text_response(status: StatusCode, msg: &str) -> Response<ProxyBody> {
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/plain; charset=utf-8"),
     );
+    // A refused client gets its answer and the connection ends.
+    r.headers_mut()
+        .insert(header::CONNECTION, HeaderValue::from_static("close"));
     r
 }
 
