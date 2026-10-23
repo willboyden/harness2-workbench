@@ -707,6 +707,9 @@ pub struct TaskDelta {
 }
 
 /// `GET /api/v1/compare`: per-task deltas between two (sweep, mode) results.
+///
+/// Units (contract v1.1): every score here is a FRACTION in 0..1 (partial credit, as
+/// [`JudgedRow::frac`]); `delta = b - a` in the same unit.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

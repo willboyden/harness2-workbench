@@ -405,4 +405,17 @@ spans carry method, matched route, status, request id (never headers or bodies).
 
 ## 16. Contract addenda
 
-(none yet)
+**v1.1 (2026-10-23) — SSE framing.** `GET /api/v1/jobs/{id}/events` frames are UNNAMED: no
+`event:` line, so browsers deliver them to `EventSource.onmessage`. Each frame carries exactly one
+`JobEvent` JSON object in its `data:` field (axum `Event::default().json_data(..)`). The server
+MAY set `id:` to the job-log line number of `log` events; clients may ignore it. Comment frames
+(`: keep-alive`) are allowed in addition to `heartbeat` events.
+
+**v1.1 (2026-10-23) — units.** `Comparison.tasks[].{a,b,delta}` and
+`Comparison.{mean_a,mean_b,mean_delta}` are FRACTIONS in 0..1 (partial credit, the same unit as
+`JudgedRow.frac` and `TaskModeOutcome.score`); `delta = b - a` in fraction units (show ×100 as
+percentage points). Percent (0..100) is used only by `ModeScore`, `ModeSummary` and
+`ScoreReport.base_score`, matching upstream's report.
+
+**v1.1 (2026-10-23) — dependencies.** `tools/h2s-mock-api` may use `tokio-stream` (already in the
+lockfile) to stream SSE.
