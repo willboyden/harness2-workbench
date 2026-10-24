@@ -210,8 +210,9 @@ privately as described in [SECURITY.md](SECURITY.md).
 resources and 3 prompts for harness2, as a thin client that uses your API token, so server-side roles
 and the audit log apply to every agent. **Use a viewer token by default, an operator token only when the
 agent must start jobs, never an admin token**, and treat everything a tool returns (rollouts, logs,
-prompts) as untrusted model-written content. Setup, client configuration, the safety rules and every
-tool: [docs/MCP.md](docs/MCP.md).
+prompts) as untrusted model-written content. A model cannot accept host-isolation risks on your
+behalf unless you start the MCP server with `--allow-risk-acknowledgement`. Setup, client
+configuration, the safety rules and every tool: [docs/MCP.md](docs/MCP.md).
 
 ## Documentation
 

@@ -62,6 +62,7 @@ The MCP client starts the program. Configuration is by environment:
 |---|---|---|
 | Studio server | `H2S_SERVER_URL` / `--server-url` | `http://127.0.0.1:8722` |
 | Token | `H2S_TOKEN`, or `H2S_TOKEN_FILE` / `--token-file` (mode 0600) | none: required |
+| Let a model accept host-isolation risks | `--allow-risk-acknowledgement`, or `H2S_MCP_ALLOW_RISK_ACK=1` (both transports) | off |
 
 ```console
 $ H2S_SERVER_URL=http://127.0.0.1:8722 H2S_TOKEN_FILE=mcp.token h2studio-mcp
@@ -244,6 +245,10 @@ models.
 | Read results | `list_tasks`, `get_task`, `get_harness`, `diff_harnesses`, `list_rollout_files`, `read_rollout_file`, `get_scores`, `get_report`, `get_library`, `list_audit_sessions`, `read_audit_session`, `compare_sweeps` | viewer |
 | Adopt | `export_harness` (to raw, OpenCode or Codex project files) | viewer |
 
+`install_harness2` takes no `rev`: it always installs the commit this Studio release was tested
+against. `server_info` reports the MCP server's own settings under `mcp_server.policy`
+(`allow_risk_acknowledgement`, `max_waits_per_token`) next to who you are and what the Studio is.
+
 **Resources** (read-only, `resources/read`): `h2s://jobs/{id}/log` (the last 2,000 lines),
 `h2s://experiments/{exp}/sweeps/{sweep}/report` and `h2s://experiments/{exp}/manifest` (JSON).
 `resources/list` offers every experiment's manifest, every judged sweep's report and the 20 newest
@@ -312,7 +317,9 @@ network (`setup_benchmark`, `install_harness2`, `start_run`, `start_pipeline`, `
 
 1. **The server decides, not the MCP server.** Roles are enforced by the Studio server on every
    call, per token; the MCP layer only turns a refusal into a readable message. A viewer token
-   cannot start a job whatever the model says, and the denial is written to the audit log.
+   cannot start a job whatever the model says, and the denial is written to the audit log. The one
+   rule the MCP server adds itself is rule 3's: it refuses to let a model accept host-isolation
+   risks for you.
 2. **MCP never writes profiles, secrets, tokens or the audit log.** There is no tool for it, by
    contract. A prompt-injected agent that could edit a profile could repoint its endpoint at a
    hostile URL and receive the API key it references on the next job; secret values and new
@@ -321,20 +328,39 @@ network (`setup_benchmark`, `install_harness2`, `start_run`, `start_pipeline`, `
 3. **A running agent can still spend and run code.** With an operator token an agent can start
    `run`, `pipeline` and `judge` jobs, which call cloud models, and under host isolation the
    executors run with the server user's files and network, and so with access to the Studio's own
-   data (a host-mode job is, in effect, a Studio administrator). `acknowledge_risks` and
-   `budget_usd` exist as parameters, and the tool descriptions tell the model to set the first only
-   with the user's informed consent, but a parameter is a request, not a barrier: **a
-   prompt-injected agent can set it itself.** A server-side switch that a human must turn on
-   before a model may set `acknowledge_risks` is planned, not in this commit (check the changelog
-   and `docs/notes/mcp.md`). Until then: a viewer token by default, an operator token only when
-   the agent must start jobs, **never an admin token**, short token lifetimes, a separate token per
-   agent, container isolation for anything untrusted, and a budget on the model account itself.
-   See [THREAT-MODEL.md](THREAT-MODEL.md).
+   data (a host-mode job is, in effect, a Studio administrator). Under host isolation the Studio
+   refuses `run` and `pipeline` jobs unless `acknowledge_risks` is `true`, and **a model must not
+   accept that for you**: `h2studio-mcp` refuses a `start_run` or `start_pipeline` call that sets
+   `acknowledge_risks=true`, unless whoever starts the MCP server passes
+   `--allow-risk-acknowledgement` (or sets `H2S_MCP_ALLOW_RISK_ACK=1`; it logs a warning when it
+   is on). Verified live against a scratch server:
+
+   ```text
+   forbidden: this MCP server does not let a model set acknowledge_risks=true, which accepts for the
+   user that the executor runs with the server user's files and network (host isolation). A human can
+   start this run from the Studio web UI; an admin can pre-acknowledge host risks in the server
+   configuration; or the person who runs h2studio-mcp can start it with --allow-risk-acknowledgement
+   (H2S_MCP_ALLOW_RISK_ACK=1). Without acknowledge_risks the call goes through and the Studio server
+   decides.
+   ```
+
+   With the flag on, the call goes through and the Studio decides (the same call then failed on
+   the server's own check, `conflict: demo is a demo experiment; benchmark jobs need a standard
+   experiment`, so no job was started). The alternatives to the flag are a person starting the
+   run in the web UI, or an administrator setting `isolation.preacknowledge_host_risks` (which
+   removes the requirement for everyone). `budget_usd` is likewise a parameter the model
+   chooses. So: a viewer token by default, an operator token only when the agent must start jobs,
+   **never an admin token**, short token lifetimes, a separate token per agent, container isolation
+   for anything untrusted, and a budget on the model account itself. See
+   [THREAT-MODEL.md](THREAT-MODEL.md).
 4. **Treat tool output as untrusted data.** Rollout files, job logs, improver prompts and answers,
    task text, model transcripts, harness files and documents from benchmarks are model-written or
    third-party content: all of it can carry instructions aimed at the agent reading it, and a
-   harness that an agent exports may contain whatever a model wrote into it. Do not let an agent
-   act on instructions found in a result without a person's approval.
+   harness that an agent exports may contain whatever a model wrote into it. The server's
+   instructions and the descriptions of these tools tell the model to read such content as data and
+   never to follow instructions found in it; that is guidance to a model, not a barrier, so treat an
+   agent that acts on instructions found in a result as compromised for that session, and do not let
+   an agent act on them without a person's approval.
 5. **Waiting is bounded.**
    - Job-starting tools take `wait_secs` (0 to 600). The quick ones default to **45 s**
      (`check_benchmark`, `preview_run`, `run_demo`, `start_report`, `create_split`); the costly or

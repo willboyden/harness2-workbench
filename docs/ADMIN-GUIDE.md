@@ -387,7 +387,7 @@ SSE heartbeats every 15 s, 10 minutes idle and 1 hour maximum per event stream.
 | Key | Type | Default | Validation | Effect |
 |---|---|---|---|---|
 | `isolation.mode` | string | `"host"` | `host` or `container` | `host`: jobs run as the server's user with its files and network (upstream's behaviour). `container`: each job runs in a hardened container ([section 8](#8-container-isolation-step-by-step)) |
-| `isolation.preacknowledge_host_risks` | boolean | `false` | | When `false`, `run` and `pipeline` jobs in host mode must carry `acknowledge_risks: true` or are refused (`422`). `true` accepts every such run without the flag: set it only on a machine where every operator has been told |
+| `isolation.preacknowledge_host_risks` | boolean | `false` | | When `false`, `run` and `pipeline` jobs in host mode must carry `acknowledge_risks: true` or are refused (`422`). `true` accepts every such run without the flag, **including runs started by MCP agents** (their own acknowledgement guard has nothing left to refuse): set it only on a machine where every operator has been told and no agent holds an operator token |
 | `isolation.container.runtime` | string | `"docker"` | `docker` or `podman` | The container CLI |
 | `isolation.container.image` | string | `"harness2-studio-runner:0.1.0"` | pinned: `name:tag` with a tag other than `latest`, or `name@sha256:<64 hex>`; the repository name in lowercase | The runner image |
 | `isolation.container.network` | string | `"none"` | `none`, or a user-defined network name (`[A-Za-z0-9][A-Za-z0-9_.-]*`, at most 64 characters; never `host`, `bridge` or `default`) | `none`: no network (the demo works; model calls and installs do not). A network name puts jobs on it, normally an internal one behind an egress proxy |
@@ -1160,4 +1160,3 @@ elsewhere are to be turned into plain statements.
 | Container jobs receive their variables through a 0600 environment file | `-e NAME`, values in the runtime command's environment | [section 8](#8-container-isolation-step-by-step) |
 | Redaction also covers base64 forms of a secret | literal value and its JSON-escaped form | [section 6.4](#64-secrets) |
 | Duplicate identity headers in proxy mode are refused with `401` | first user value, union of groups | [section 6.3](#63-proxy-sso-mode) |
-| A human-set `h2studio-mcp` flag must be on before a model can set `acknowledge_risks` | the parameter is model-settable | [MCP.md](MCP.md#3-safety-rules) |
