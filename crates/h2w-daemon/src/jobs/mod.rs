@@ -110,8 +110,8 @@ impl Actor {
     pub fn system() -> Actor {
         Actor {
             principal: Principal {
-                id: "server".into(),
-                name: "server".into(),
+                id: crate::db::audit::SERVER_ACTOR.into(),
+                name: crate::db::audit::SERVER_ACTOR.into(),
                 role: h2w_api::Role::Admin,
                 kind: h2w_api::PrincipalKind::Token,
             },
@@ -127,7 +127,7 @@ impl Actor {
         outcome: h2w_api::AuditOutcome,
     ) -> AuditEntry {
         AuditEntry {
-            actor: self.principal.name.clone(),
+            actor: crate::db::audit::actor_of(&self.principal),
             action: action.to_owned(),
             target: target.to_owned(),
             outcome,

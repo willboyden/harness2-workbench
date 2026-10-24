@@ -175,6 +175,11 @@ Keys beyond §11 (all optional, defaults shown):
   (success and denied, with the reason), `job.cancel`, `experiment.create|update`,
   `profile.put|delete` (with `env::profile_warnings` in the detail), `secret.set|delete|capture`
   (the length, never the value), `token.create|revoke`.
+- Audit actors name their kind: `token:<name>` (API tokens and their browser sessions),
+  `proxy:<user>` (reverse-proxy users), `cli`, `server` (the server itself, e.g. capturing the
+  bridge key), `anonymous` (failed authentication). A proxy user called `initial admin` is
+  `proxy:initial admin`, never the bootstrap token's `token:initial admin`. `GET /auth/me`, job
+  and experiment `created_by` keep the plain name.
 
 ## Jobs
 

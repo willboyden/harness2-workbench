@@ -576,6 +576,78 @@ async fn proxied(t: &TestServer, user: &str, groups: &str, secret: &str) -> reqw
         .unwrap()
 }
 
+/// Audit actors carry their kind: a proxy user who calls itself `initial admin` is recorded
+/// as `proxy:initial admin`, never as the bootstrap token (`token:initial admin`). The
+/// current-user view keeps the plain name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn audit_actors_name_their_kind() {
+    let t = TestServer::start_with(|s| proxy_setup(s, "127.0.0.1")).await;
+    let r = t
+        .client
+        .put(t.url("/api/v1/secrets/POSE_KEY"))
+        .header("x-forwarded-user", "initial admin")
+        .header("x-forwarded-groups", "admins")
+        .header("x-h2w-proxy-secret", PROXY_SECRET)
+        .header("x-h2w-request", "1")
+        .json(&json!({"value": "pose-value-0123456789"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.text().await.unwrap());
+    let r = proxied(&t, "initial admin", "admins", PROXY_SECRET).await;
+    assert_eq!(r.json::<Principal>().await.unwrap().name, "initial admin");
+    let r = t
+        .send(
+            reqwest::Method::PUT,
+            "/api/v1/secrets/TOKEN_KEY",
+            Some(&t.admin),
+        )
+        .json(&json!({"value": "token-value-0123456789"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success());
+    let r = t
+        .get("/api/v1/tokens", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    let audit: Page<AuditEvent> = t
+        .get("/api/v1/audit?limit=100", Some(&t.admin))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let actor_of = |action: &str, target: &str| {
+        audit
+            .items
+            .iter()
+            .find(|e| e.action == action && e.target == target)
+            .map(|e| e.actor.clone())
+            .unwrap_or_else(|| panic!("no {action} {target} in {:#?}", audit.items))
+    };
+    assert_eq!(actor_of("secret.set", "POSE_KEY"), "proxy:initial admin");
+    assert_eq!(actor_of("secret.set", "TOKEN_KEY"), "token:admin-t");
+    let denied = audit
+        .items
+        .iter()
+        .find(|e| e.action == "access.denied")
+        .unwrap();
+    assert_eq!(denied.actor, "token:viewer-t");
+    assert!(
+        denied
+            .detail
+            .as_deref()
+            .unwrap()
+            .starts_with("token:viewer-t holds viewer"),
+        "{denied:?}"
+    );
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn proxy_mode_maps_groups_to_roles() {
     let t = TestServer::start_with(|s| proxy_setup(s, "127.0.0.1")).await;

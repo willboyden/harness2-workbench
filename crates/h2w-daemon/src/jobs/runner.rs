@@ -1190,14 +1190,18 @@ impl PumpState {
             self.bridge_stored = true;
             let key = self.bridge_acc.api_key.clone();
             self.redactor.add(BRIDGE_SECRET.to_owned(), key.clone());
-            let actor = self.live.snapshot().created_by;
+            // The server captured it (from the bridge job's output); the job names its creator.
+            let creator = self.live.snapshot().created_by;
             let entry = AuditEntry::new(
-                actor,
+                crate::db::audit::SERVER_ACTOR,
                 "secret.capture",
                 BRIDGE_SECRET,
                 h2w_api::AuditOutcome::Success,
             )
-            .detail(format!("captured from bridge job {}", self.live.id));
+            .detail(format!(
+                "captured from bridge job {} (started by {creator})",
+                self.live.id
+            ));
             let res = self
                 .mgr
                 .db()

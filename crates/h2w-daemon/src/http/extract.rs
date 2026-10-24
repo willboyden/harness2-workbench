@@ -597,8 +597,12 @@ impl<R: Need> Auth<R> {
     /// An audit entry by this caller.
     #[must_use]
     pub fn audit(&self, action: &str, target: &str, outcome: AuditOutcome) -> AuditEntry {
-        self.meta
-            .audit(&self.principal.name, action, target, outcome)
+        self.meta.audit(
+            &crate::db::audit::actor_of(&self.principal),
+            action,
+            target,
+            outcome,
+        )
     }
 
     #[must_use]
@@ -616,16 +620,11 @@ pub(crate) async fn deny(
     needed: Role,
 ) -> ApiError {
     state.metrics.auth_failure("forbidden");
+    let actor = crate::db::audit::actor_of(principal);
     let entry = meta
-        .audit(
-            &principal.name,
-            "access.denied",
-            route,
-            AuditOutcome::Denied,
-        )
+        .audit(&actor, "access.denied", route, AuditOutcome::Denied)
         .detail(format!(
-            "{} holds {}; this needs {}",
-            principal.name,
+            "{actor} holds {}; this needs {}",
             principal.role.as_str(),
             needed.as_str()
         ));

@@ -70,7 +70,12 @@ pub async fn login(
     let ttl = i64::try_from(state.cfg.session_ttl.as_secs()).unwrap_or(43_200);
     let expires = rec.expires_at.map_or(now + ttl, |e| e.min(now + ttl));
     let token_id = rec.id.clone();
-    let entry = meta.audit(&rec.name, "auth.login", &rec.id, AuditOutcome::Success);
+    let entry = meta.audit(
+        &format!("token:{}", rec.name),
+        "auth.login",
+        &rec.id,
+        AuditOutcome::Success,
+    );
     state
         .db
         .call(move |c| {
