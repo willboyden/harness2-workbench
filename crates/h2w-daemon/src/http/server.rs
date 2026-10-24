@@ -241,12 +241,14 @@ impl Server {
         if let Some(g) = opts.kill_grace {
             settings.kill_grace = g;
         }
+        let reads = crate::reads::Reads::new();
         let jobs = JobManager::new(
             db.clone(),
             settings,
             opts.backend,
             secrets.clone(),
             Arc::clone(&metrics),
+            Arc::clone(&reads),
         );
         jobs.start().await?;
         jobs.probe_container_runtime();
@@ -271,8 +273,7 @@ impl Server {
                 super::extract::AUDITED_FAILURES_PER_MINUTE,
             ),
             doctor: DoctorService::default(),
-            results_reads: Arc::new(tokio::sync::Semaphore::new(super::routes::RESULTS_READS)),
-            sweep_cache: Arc::new(super::sweeps::SweepCache::default()),
+            reads: Arc::clone(&reads),
             hosts,
             sse_open: AtomicUsize::new(0),
             sse_by_principal: std::sync::Mutex::new(std::collections::HashMap::new()),

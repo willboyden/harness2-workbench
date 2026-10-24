@@ -68,8 +68,17 @@ pub async fn estimate(
         Some(name) => {
             let (rec, path) = super::experiments::locate(&state, name).await?;
             let kind = rec.kind;
-            super::results_read(&state, move || {
-                Ok(crate::jobs::core_backend::history(&path, kind))
+            let reads = std::sync::Arc::clone(&state.reads);
+            let name = name.clone();
+            // The same bounded, cached sweep listing as the experiment views.
+            super::results_read(&state, move |cancel| {
+                let dir = super::experiments::open_dir(&path, kind)?;
+                let mut budget = cancel.budget(
+                    crate::reads::VIEW_BYTES,
+                    u32::try_from(crate::sweeps::MAX_SWEEPS_LISTED).unwrap_or(u32::MAX),
+                );
+                let sweeps = reads.sweeps_of(&name, &path, kind, &dir, cancel, &mut budget);
+                Ok(crate::jobs::core_backend::history_of(&sweeps))
             })
             .await?
         }

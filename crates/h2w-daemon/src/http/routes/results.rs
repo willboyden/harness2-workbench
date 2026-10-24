@@ -3,7 +3,6 @@
 
 use std::collections::BTreeMap;
 
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use h2w_api::{
@@ -16,10 +15,11 @@ use http::{HeaderValue, header};
 use serde::Deserialize;
 
 use super::experiments::{locate, open_dir};
-use super::{check_name, clamp_limit, results_read};
+use super::{check_name, clamp_limit, results_json, results_read};
 use crate::error::ApiError;
 use crate::http::AppState;
 use crate::http::extract::{ApiQuery, Auth, ViewerRole};
+use crate::reads::{COMPARE_BYTES, SCORES_BYTES, TASKS_BYTES};
 
 #[derive(Debug, Deserialize)]
 pub struct SweepPath {
@@ -114,7 +114,7 @@ pub async fn tasks(
     State(state): State<AppState>,
     Path(p): Path<SweepPath>,
     ApiQuery(q): ApiQuery<TasksQuery>,
-) -> Result<Json<Page<TaskRow>>, ApiError> {
+) -> Result<Response, ApiError> {
     let (rec, path) = locate(&state, &p.exp).await?;
     let ns = sweep_ns(&p.sweep)?;
     if let Some(d) = &q.domain {
@@ -139,20 +139,23 @@ pub async fn tasks(
         None => 0,
     };
     let kind = rec.kind;
-    let rows = results_read(&state, move || Ok(open_dir(&path, kind)?.tasks(&ns)?)).await?;
-    let filtered: Vec<TaskRow> = rows
-        .into_iter()
-        .filter(|r| q.domain.as_ref().is_none_or(|d| &r.domain == d))
-        .filter(|r| q.status.as_ref().is_none_or(|s| &r.status == s))
-        .collect();
-    let end = offset.saturating_add(limit).min(filtered.len());
-    let items = filtered
-        .get(offset.min(end)..end)
-        .unwrap_or_default()
-        .to_vec();
-    let next_cursor = (end < filtered.len())
-        .then(|| crate::db::cursor::encode(i64::try_from(end).unwrap_or(i64::MAX)));
-    Ok(Json(Page { items, next_cursor }))
+    results_json(&state, move |cancel| {
+        let rows = open_dir(&path, kind)?.tasks_with(&ns, &mut cancel.budget(TASKS_BYTES, 1))?;
+        let filtered: Vec<TaskRow> = rows
+            .into_iter()
+            .filter(|r| q.domain.as_ref().is_none_or(|d| &r.domain == d))
+            .filter(|r| q.status.as_ref().is_none_or(|s| &r.status == s))
+            .collect();
+        let end = offset.saturating_add(limit).min(filtered.len());
+        let items = filtered
+            .get(offset.min(end)..end)
+            .unwrap_or_default()
+            .to_vec();
+        let next_cursor = (end < filtered.len())
+            .then(|| crate::db::cursor::encode(i64::try_from(end).unwrap_or(i64::MAX)));
+        Ok(Page { items, next_cursor })
+    })
+    .await
 }
 
 /// Everything known about one task.
@@ -163,17 +166,15 @@ pub async fn task(
     _auth: Auth<ViewerRole>,
     State(state): State<AppState>,
     Path(p): Path<TaskPath>,
-) -> Result<Json<TaskDetail>, ApiError> {
+) -> Result<Response, ApiError> {
     let (rec, path) = locate(&state, &p.exp).await?;
     let ns = sweep_ns(&p.sweep)?;
     task_slug(&p.task)?;
     let kind = rec.kind;
-    Ok(Json(
-        results_read(&state, move || {
-            Ok(open_dir(&path, kind)?.task(&ns, &p.task)?)
-        })
-        .await?,
-    ))
+    results_json(&state, move |_| {
+        Ok(open_dir(&path, kind)?.task(&ns, &p.task)?)
+    })
+    .await
 }
 
 /// One harness tree with file contents.
@@ -185,19 +186,17 @@ pub async fn harness(
     _auth: Auth<ViewerRole>,
     State(state): State<AppState>,
     Path(p): Path<LabelPath>,
-) -> Result<Json<HarnessTree>, ApiError> {
+) -> Result<Response, ApiError> {
     let (rec, path) = locate(&state, &p.exp).await?;
     let ns = sweep_ns(&p.sweep)?;
     task_slug(&p.task)?;
     let m = mode("mode", &p.mode)?;
     label("label", &p.label)?;
     let kind = rec.kind;
-    Ok(Json(
-        results_read(&state, move || {
-            Ok(open_dir(&path, kind)?.harness(&ns, &p.task, m, &p.label)?)
-        })
-        .await?,
-    ))
+    results_json(&state, move |_| {
+        Ok(open_dir(&path, kind)?.harness(&ns, &p.task, m, &p.label)?)
+    })
+    .await
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -218,7 +217,7 @@ pub async fn diff(
     State(state): State<AppState>,
     Path(p): Path<ModePath>,
     ApiQuery(q): ApiQuery<DiffQuery>,
-) -> Result<Json<HarnessDiff>, ApiError> {
+) -> Result<Response, ApiError> {
     let (rec, path) = locate(&state, &p.exp).await?;
     let ns = sweep_ns(&p.sweep)?;
     task_slug(&p.task)?;
@@ -226,12 +225,10 @@ pub async fn diff(
     label("from", &q.from)?;
     label("to", &q.to)?;
     let kind = rec.kind;
-    Ok(Json(
-        results_read(&state, move || {
-            Ok(open_dir(&path, kind)?.diff(&ns, &p.task, m, &q.from, &q.to)?)
-        })
-        .await?,
-    ))
+    results_json(&state, move |_| {
+        Ok(open_dir(&path, kind)?.diff(&ns, &p.task, m, &q.from, &q.to)?)
+    })
+    .await
 }
 
 /// Export format.
@@ -269,17 +266,22 @@ pub async fn export(
     label("label", &p.label)?;
     let kind = rec.kind;
     let target = q.target;
+    let format = q.format;
     let lbl = p.label.clone();
-    let bundle = results_read(&state, move || {
+    // The bundle and its encoding are built inside one read permit, and capped.
+    let body = results_read(&state, move |_| {
         let tree = open_dir(&path, kind)?.harness(&ns, &p.task, m, &p.label)?;
-        Ok(h2w_core::export::export(&tree, target)?)
+        let bundle = h2w_core::export::export(&tree, target)?;
+        match format {
+            ExportFormat::Json => crate::reads::json_capped(&bundle),
+            ExportFormat::TarGz => crate::reads::capped_bytes(h2w_core::export::tar_gz(&bundle)?),
+        }
     })
     .await?;
-    match q.format {
-        ExportFormat::Json => Ok(Json(bundle).into_response()),
+    match format {
+        ExportFormat::Json => Ok(super::json_body(body)),
         ExportFormat::TarGz => {
-            let bytes =
-                results_read(&state, move || Ok(h2w_core::export::tar_gz(&bundle)?)).await?;
+            let bytes = body;
             let target_name = match target {
                 ExportTarget::Raw => "raw",
                 ExportTarget::Opencode => "opencode",
@@ -317,7 +319,7 @@ pub async fn rollout_files(
     State(state): State<AppState>,
     Path(p): Path<LabelPath>,
     ApiQuery(q): ApiQuery<FilesQuery>,
-) -> Result<Json<Vec<FileEntry>>, ApiError> {
+) -> Result<Response, ApiError> {
     let (rec, path) = locate(&state, &p.exp).await?;
     let ns = sweep_ns(&p.sweep)?;
     task_slug(&p.task)?;
@@ -326,12 +328,10 @@ pub async fn rollout_files(
     let sub = q.path.unwrap_or_default();
     check_name("path", h2w_core::names::relative_path(&sub))?;
     let kind = rec.kind;
-    Ok(Json(
-        results_read(&state, move || {
-            Ok(open_dir(&path, kind)?.rollout_files(&ns, &p.task, m, &p.label, &sub)?)
-        })
-        .await?,
-    ))
+    results_json(&state, move |_| {
+        Ok(open_dir(&path, kind)?.rollout_files(&ns, &p.task, m, &p.label, &sub)?)
+    })
+    .await
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -350,7 +350,7 @@ pub async fn rollout_file(
     State(state): State<AppState>,
     Path(p): Path<LabelPath>,
     ApiQuery(q): ApiQuery<FileQuery>,
-) -> Result<Json<FileContent>, ApiError> {
+) -> Result<Response, ApiError> {
     let (rec, path) = locate(&state, &p.exp).await?;
     let ns = sweep_ns(&p.sweep)?;
     task_slug(&p.task)?;
@@ -361,19 +361,17 @@ pub async fn rollout_file(
         return Err(ApiError::invalid("path", "name a file"));
     }
     let kind = rec.kind;
-    Ok(Json(
-        results_read(&state, move || {
-            Ok(open_dir(&path, kind)?.rollout_file(
-                &ns,
-                &p.task,
-                m,
-                &p.label,
-                &q.path,
-                DEFAULT_READ_CAP,
-            )?)
-        })
-        .await?,
-    ))
+    results_json(&state, move |_| {
+        Ok(open_dir(&path, kind)?.rollout_file(
+            &ns,
+            &p.task,
+            m,
+            &p.label,
+            &q.path,
+            DEFAULT_READ_CAP,
+        )?)
+    })
+    .await
 }
 
 /// `judged.json` and `base_judged.json`.
@@ -384,13 +382,14 @@ pub async fn scores(
     _auth: Auth<ViewerRole>,
     State(state): State<AppState>,
     Path(p): Path<SweepPath>,
-) -> Result<Json<Scores>, ApiError> {
+) -> Result<Response, ApiError> {
     let (rec, path) = locate(&state, &p.exp).await?;
     let ns = sweep_ns(&p.sweep)?;
     let kind = rec.kind;
-    Ok(Json(
-        results_read(&state, move || Ok(open_dir(&path, kind)?.scores(&ns)?)).await?,
-    ))
+    results_json(&state, move |cancel| {
+        Ok(open_dir(&path, kind)?.scores_with(&ns, &mut cancel.budget(SCORES_BYTES, 1))?)
+    })
+    .await
 }
 
 /// The score report computed from cached judge rows.
@@ -401,13 +400,14 @@ pub async fn report(
     _auth: Auth<ViewerRole>,
     State(state): State<AppState>,
     Path(p): Path<SweepPath>,
-) -> Result<Json<ScoreReport>, ApiError> {
+) -> Result<Response, ApiError> {
     let (rec, path) = locate(&state, &p.exp).await?;
     let ns = sweep_ns(&p.sweep)?;
     let kind = rec.kind;
-    Ok(Json(
-        results_read(&state, move || Ok(open_dir(&path, kind)?.report(&ns)?)).await?,
-    ))
+    results_json(&state, move |cancel| {
+        Ok(open_dir(&path, kind)?.report_with(&ns, &mut cancel.budget(SCORES_BYTES, 1))?)
+    })
+    .await
 }
 
 /// Experience libraries of a sweep.
@@ -418,13 +418,11 @@ pub async fn library(
     _auth: Auth<ViewerRole>,
     State(state): State<AppState>,
     Path(p): Path<SweepPath>,
-) -> Result<Json<Vec<LibraryDomain>>, ApiError> {
+) -> Result<Response, ApiError> {
     let (rec, path) = locate(&state, &p.exp).await?;
     let ns = sweep_ns(&p.sweep)?;
     let kind = rec.kind;
-    Ok(Json(
-        results_read(&state, move || Ok(open_dir(&path, kind)?.library(&ns)?)).await?,
-    ))
+    results_json(&state, move |_| Ok(open_dir(&path, kind)?.library(&ns)?)).await
 }
 
 /// Improver and selector sessions of a sweep.
@@ -435,13 +433,11 @@ pub async fn audit_sessions(
     _auth: Auth<ViewerRole>,
     State(state): State<AppState>,
     Path(p): Path<SweepPath>,
-) -> Result<Json<Vec<AuditSession>>, ApiError> {
+) -> Result<Response, ApiError> {
     let (rec, path) = locate(&state, &p.exp).await?;
     let ns = sweep_ns(&p.sweep)?;
     let kind = rec.kind;
-    Ok(Json(
-        results_read(&state, move || Ok(open_dir(&path, kind)?.audit(&ns)?)).await?,
-    ))
+    results_json(&state, move |_| Ok(open_dir(&path, kind)?.audit(&ns)?)).await
 }
 
 /// Audit session ids are file stems (`inv1.a1.3f9c0d2e11aa7b40`).
@@ -476,7 +472,7 @@ pub async fn audit_text(
         ));
     }
     let kind = rec.kind;
-    let text = results_read(&state, move || {
+    let text = results_read(&state, move |_| {
         Ok(open_dir(&path, kind)?.audit_text(&ns, &p.session, &p.part, DEFAULT_READ_CAP)?)
     })
     .await?;
@@ -515,7 +511,7 @@ pub async fn compare(
     _auth: Auth<ViewerRole>,
     State(state): State<AppState>,
     ApiQuery(q): ApiQuery<CompareQuery>,
-) -> Result<Json<Comparison>, ApiError> {
+) -> Result<Response, ApiError> {
     let (ea, sa, ma) = split_side("a", &q.a)?;
     let (eb, sb, mb) = split_side("b", &q.b)?;
     let (ra, pa) = locate(&state, &ea).await?;
@@ -523,21 +519,24 @@ pub async fn compare(
     let (na, nb) = (sweep_ns(&sa)?, sweep_ns(&sb)?);
     let (ka, kb) = (ra.kind, rb.kind);
     let (la, lb) = (q.a.clone(), q.b.clone());
-    let cmp = results_read(&state, move || {
+    results_json(&state, move |cancel| {
+        // One budget for the request: two sweeps' scores and task rows.
+        let mut budget = cancel.budget(COMPARE_BYTES, 4);
         let da = open_dir(&pa, ka)?;
         let db = open_dir(&pb, kb)?;
-        let scores_a = da.scores(&na)?;
-        let scores_b = db.scores(&nb)?;
+        let scores_a = da.scores_with(&na, &mut budget)?;
+        let scores_b = db.scores_with(&nb, &mut budget)?;
         let mut domains = BTreeMap::new();
-        for r in da.tasks(&na)?.into_iter().chain(db.tasks(&nb)?) {
+        let rows_a = da.tasks_with(&na, &mut budget)?;
+        let rows_b = db.tasks_with(&nb, &mut budget)?;
+        for r in rows_a.into_iter().chain(rows_b) {
             domains.entry(r.task_id).or_insert(r.domain);
         }
         Ok(h2w_core::results::compare(
             &la, &scores_a, ma, &lb, &scores_b, mb, &domains,
         ))
     })
-    .await?;
-    Ok(Json(cmp))
+    .await
 }
 
 #[cfg(test)]

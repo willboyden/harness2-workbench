@@ -267,11 +267,14 @@ pub async fn events(
         Some(from) if from < snapshot_lines => {
             let ring_ok = sub.recent.first().is_some_and(|l| l.n <= from);
             if ring_ok {
-                sub.recent
-                    .iter()
-                    .filter(|l| l.n >= from && l.n < snapshot_lines)
-                    .cloned()
-                    .collect()
+                // At most one page of bytes, like the file replay below.
+                crate::jobs::logs::within_bytes(
+                    sub.recent
+                        .iter()
+                        .filter(|l| l.n >= from && l.n < snapshot_lines)
+                        .cloned(),
+                    crate::jobs::logs::PAGE_BYTES,
+                )
             } else {
                 state.jobs.replay(&id, from, snapshot_lines).await
             }

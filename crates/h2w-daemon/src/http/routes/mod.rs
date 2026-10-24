@@ -10,32 +10,45 @@ pub mod root;
 pub mod system;
 pub mod tools;
 
-use std::sync::Arc;
+use axum::response::{IntoResponse, Response};
+use http::{HeaderValue, header};
 
 use crate::error::ApiError;
 use crate::http::AppState;
+use crate::reads::ReadCancel;
 
-/// Blocking reads of experiment results that run at once; more wait for a permit (each
-/// read is bounded by h2w-core's caps, so this bounds the memory they take together).
-pub const RESULTS_READS: usize = 4;
-
-/// Run a blocking read of experiment results under one of the server's
-/// [`RESULTS_READS`] permits. The permit moves into the blocking task, so a request that
-/// times out still holds it until its read has finished.
+/// Run a blocking read of experiment results under one of the server's read permits (see
+/// [`crate::reads`]).
 pub(crate) async fn results_read<T, F>(state: &AppState, f: F) -> Result<T, ApiError>
 where
     T: Send + 'static,
-    F: FnOnce() -> Result<T, ApiError> + Send + 'static,
+    F: FnOnce(&ReadCancel) -> Result<T, ApiError> + Send + 'static,
 {
-    let permit = Arc::clone(&state.results_reads)
-        .acquire_owned()
-        .await
-        .map_err(|_| ApiError::unavailable("the server is shutting down"))?;
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        f()
-    })
-    .await?
+    state.reads.run(f).await
+}
+
+/// A results read answered as JSON: serialized inside the read permit, and 413 when the
+/// body would exceed [`crate::reads::MAX_RESULTS_RESPONSE`].
+pub(crate) async fn results_json<T, F>(state: &AppState, f: F) -> Result<Response, ApiError>
+where
+    T: serde::Serialize,
+    F: FnOnce(&ReadCancel) -> Result<T, ApiError> + Send + 'static,
+{
+    let body = state
+        .reads
+        .run(move |cancel| crate::reads::json_capped(&f(cancel)?))
+        .await?;
+    Ok(json_body(body))
+}
+
+/// A JSON response from already serialized bytes.
+pub(crate) fn json_body(body: Vec<u8>) -> Response {
+    let mut r = body.into_response();
+    r.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    r
 }
 
 /// Run a blocking closure (filesystem, results parsing) off the async runtime.

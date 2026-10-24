@@ -18,6 +18,8 @@ pub mod http;
 pub mod jobs;
 pub mod metrics;
 pub mod ratelimit;
+pub mod reads;
 pub mod secrets;
+pub mod sweeps;
 pub mod telemetry;
 pub mod util;

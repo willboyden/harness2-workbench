@@ -227,6 +227,11 @@ async fn execute(mgr: &Arc<JobManager>, live: &Arc<LiveJob>, pump: &Pump) -> Fin
 
         // Parse whatever the step produced, even on failure (check reports its problems).
         let parsed = if outcome.spawn_error.is_none() {
+            let history = if step.parse == ParseKind::Preview {
+                preview_history(mgr, live, ctx.experiment.as_ref()).await
+            } else {
+                None
+            };
             let out = StepOutput {
                 spec: &live.spec,
                 exit_code: outcome.exit_code,
@@ -236,6 +241,7 @@ async fn execute(mgr: &Arc<JobManager>, live: &Arc<LiveJob>, pump: &Pump) -> Fin
                 profile: ctx.profile.as_ref(),
                 harness2_home: &mgr.settings().paths.harness2_home,
                 harness2_managed: mgr.settings().paths.harness2_managed,
+                history,
             };
             match mgr.backend().parse_step(step, &out) {
                 Ok(r) => r.map(|r| mask_result(r, &ctx.masker)),
@@ -385,6 +391,31 @@ fn mask_result(r: JobResult, m: &PathMasker) -> JobResult {
         }
         other => other,
     }
+}
+
+/// The experiment's measured spend for a preview's estimate: the same bounded, cached sweep
+/// listing as the experiment views, under a read permit.
+async fn preview_history(
+    mgr: &Arc<JobManager>,
+    live: &LiveJob,
+    experiment: Option<&(PathBuf, ExperimentKind)>,
+) -> Option<h2w_core::estimate::History> {
+    let (path, kind) = experiment.map(|(p, k)| (p.clone(), *k))?;
+    let name = live.spec.experiment()?.to_owned();
+    let reads = Arc::clone(mgr.reads());
+    mgr.reads()
+        .run(move |cancel| {
+            let dir = crate::reads::open_experiment(&path, kind)?;
+            let mut budget = cancel.budget(
+                crate::reads::VIEW_BYTES,
+                u32::try_from(crate::sweeps::MAX_SWEEPS_LISTED).unwrap_or(u32::MAX),
+            );
+            let sweeps = reads.sweeps_of(&name, &path, kind, &dir, cancel, &mut budget);
+            Ok(super::core_backend::history_of(&sweeps))
+        })
+        .await
+        .ok()
+        .flatten()
 }
 
 fn set_step(live: &LiveJob, idx: usize, f: impl FnOnce(&mut JobStep)) {
@@ -898,10 +929,19 @@ async fn budget_guard(
     let Some(ns) = summary_ns else {
         return;
     };
+    // Each poll reads the sweep's summaries under a read permit and within a budget.
     let read = |mgr: &Arc<JobManager>| {
         let backend = Arc::clone(mgr.backend());
         let (d, n) = (exp_dir.clone(), ns.clone());
-        tokio::task::spawn_blocking(move || backend.spend_usd(&d, kind, &n))
+        let reads = Arc::clone(mgr.reads());
+        async move {
+            reads
+                .run(move |cancel| {
+                    let mut budget = cancel.budget(crate::reads::SWEEP_BYTES, 1);
+                    Ok(backend.spend_usd(&d, kind, &n, &mut budget))
+                })
+                .await
+        }
     };
     let baseline = read(&mgr).await.ok().flatten().unwrap_or(0.0);
     let experiment = live.spec.experiment().unwrap_or_default().to_owned();

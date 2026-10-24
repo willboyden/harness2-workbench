@@ -19,19 +19,21 @@ use crate::db::experiments::ExperimentRecord;
 use crate::error::ApiError;
 use crate::http::AppState;
 use crate::http::extract::{ApiJson, ApiQuery, Auth, OperatorRole, ViewerRole};
+use crate::reads::{DIGEST_BYTES, DIGEST_SWEEPS, LIST_BYTES, LIST_SWEEPS, ReadCancel, VIEW_BYTES};
 use crate::util::{now_unix, rfc3339};
+use h2w_core::results::ReadBudget;
 
 /// Longest description accepted.
 pub const DESCRIPTION_MAX: usize = 4000;
 /// Most tags per experiment.
 pub const TAGS_MAX: usize = 32;
 
-/// Open an experiment's results read-only (host path plus the container mount as roots).
+/// Open an experiment's results read-only (see [`crate::reads::open_experiment`]).
 pub(crate) fn open_dir(
     path: &std::path::Path,
     kind: ExperimentKind,
 ) -> Result<ExperimentDir, ApiError> {
-    ExperimentDir::open(path, kind, &[EXPERIMENT_MOUNT.to_owned()]).map_err(ApiError::from)
+    crate::reads::open_experiment(path, kind)
 }
 
 /// The record and directory of an experiment named in a URL.
@@ -60,41 +62,45 @@ pub(crate) async fn locate(
     Ok((rec, path))
 }
 
-/// The API view of an experiment: its record plus the sweeps on disk (one at a time and
-/// cached, see `http::sweeps`; a sweep that cannot be read is left out and logged) and,
-/// with `with_size`, the size of its directory.
+/// The API view of an experiment: its record plus the sweeps on disk (bounded, one at a
+/// time and cached, see `crate::sweeps`; misses are read within `budget`) and, with
+/// `with_size`, the size of its directory. Returns the budget for the request's next view.
 async fn view(
     state: &AppState,
     rec: ExperimentRecord,
     path: Option<PathBuf>,
     with_size: bool,
-) -> Result<Experiment, ApiError> {
+    cancel: &ReadCancel,
+    mut budget: ReadBudget,
+) -> Result<(Experiment, ReadBudget), ApiError> {
     let kind = rec.kind;
     let name = rec.name.clone();
-    let cache = std::sync::Arc::clone(&state.sweep_cache);
-    let (sweeps, size) = match path {
+    let reads = std::sync::Arc::clone(&state.reads);
+    let (sweeps, size, budget) = match path {
         Some(p) => {
-            results_read(state, move || {
-                let dir = match open_dir(&p, kind) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        tracing::warn!(experiment = %name, error = %e.message, "could not open an experiment's directory");
-                        return Ok((Vec::new(), None));
-                    }
-                };
-                let sweeps = cache.list(&name, &p, kind, &dir);
-                let size = if with_size {
-                    dir.size_bytes().ok()
-                } else {
-                    None
-                };
-                Ok((sweeps, size))
-            })
-            .await?
+            state
+                .reads
+                .run_in(cancel, move |cancel| {
+                    let dir = match open_dir(&p, kind) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            tracing::warn!(experiment = %name, error = %e.message, "could not open an experiment's directory");
+                            return Ok((Vec::new(), None, budget));
+                        }
+                    };
+                    let sweeps = reads.sweeps_of(&name, &p, kind, &dir, cancel, &mut budget);
+                    let size = if with_size {
+                        dir.size_bytes().ok()
+                    } else {
+                        None
+                    };
+                    Ok((sweeps, size, budget))
+                })
+                .await?
         }
-        None => (Vec::new(), None),
+        None => (Vec::new(), None, budget),
     };
-    Ok(Experiment {
+    let exp = Experiment {
         name: rec.name,
         kind: rec.kind,
         description: rec.description,
@@ -105,7 +111,25 @@ async fn view(
         archived: rec.archived,
         sweeps,
         size_bytes: size,
-    })
+    };
+    Ok((exp, budget))
+}
+
+/// One experiment's view with a budget of its own (see [`crate::reads::VIEW_BYTES`]).
+async fn view_one(
+    state: &AppState,
+    rec: ExperimentRecord,
+    path: Option<PathBuf>,
+    with_size: bool,
+) -> Result<Experiment, ApiError> {
+    let (cancel, _guard) = ReadCancel::for_request();
+    let budget = cancel.budget(VIEW_BYTES, sweep_budget());
+    Ok(view(state, rec, path, with_size, &cancel, budget).await?.0)
+}
+
+/// The sweeps one view may read: as many as it lists.
+fn sweep_budget() -> u32 {
+    u32::try_from(crate::sweeps::MAX_SWEEPS_LISTED).unwrap_or(u32::MAX)
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -129,12 +153,17 @@ pub async fn list(
         .db
         .call(move |c| crate::db::experiments::list(c, include))
         .await?;
+    // One read budget for the whole list (sweeps the cache holds cost nothing).
+    let (cancel, _guard) = ReadCancel::for_request();
+    let mut budget = cancel.budget(LIST_BYTES, LIST_SWEEPS);
     let mut out = Vec::with_capacity(recs.len());
     for rec in recs {
         let root = state.cfg.paths.experiments_dir.clone();
         let n = rec.name.clone();
         let path = blocking(move || Ok(crate::expdirs::existing(&root, &n).ok())).await?;
-        out.push(view(&state, rec, path, false).await?);
+        let (exp, rest) = view(&state, rec, path, false, &cancel, budget).await?;
+        budget = rest;
+        out.push(exp);
     }
     Ok(Json(out))
 }
@@ -251,7 +280,7 @@ pub async fn create(
             other => other.into(),
         });
     }
-    let exp = view(&state, rec, Some(path), false).await?;
+    let exp = view_one(&state, rec, Some(path), false).await?;
     Ok((StatusCode::CREATED, Json(exp)).into_response())
 }
 
@@ -265,7 +294,7 @@ pub async fn get_one(
     Path(exp): Path<String>,
 ) -> Result<Json<Experiment>, ApiError> {
     let (rec, path) = locate(&state, &exp).await?;
-    Ok(Json(view(&state, rec, Some(path), true).await?))
+    Ok(Json(view_one(&state, rec, Some(path), true).await?))
 }
 
 /// Change description, tags or the archived flag.
@@ -312,7 +341,7 @@ pub async fn update(
         })
         .await?
         .ok_or_else(|| ApiError::not_found(format!("no experiment named {exp}")))?;
-    Ok(Json(view(&state, rec, Some(path), false).await?))
+    Ok(Json(view_one(&state, rec, Some(path), false).await?))
 }
 
 /// Replace absolute host paths in an argv with placeholders.
@@ -428,10 +457,10 @@ pub async fn manifest(
     let home = state.cfg.paths.harness2_home.clone();
     let managed = state.cfg.paths.harness2_managed;
     let kind = rec.kind;
-    let (identities, digest, status) = results_read(&state, move || {
+    let (identities, digest, status) = results_read(&state, move |cancel| {
         let dir = open_dir(&path, kind)?;
         let identities = dir.sweep_identities()?;
-        let digest = dir.results_digest()?;
+        let digest = dir.results_digest_with(&mut cancel.budget(DIGEST_BYTES, DIGEST_SWEEPS))?;
         Ok((
             identities,
             digest,

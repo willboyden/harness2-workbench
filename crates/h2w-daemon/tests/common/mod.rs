@@ -476,7 +476,13 @@ impl JobBackend for FakeBackend {
         line.starts_with("HARNESS2_CODEX_")
     }
 
-    fn spend_usd(&self, dir: &Path, _kind: ExperimentKind, _ns: &str) -> Option<f64> {
+    fn spend_usd(
+        &self,
+        dir: &Path,
+        _kind: ExperimentKind,
+        _ns: &str,
+        _budget: &mut h2w_core::results::ReadBudget,
+    ) -> Option<f64> {
         let t = std::fs::read_to_string(dir.join("spend.json")).ok()?;
         serde_json::from_str::<Value>(&t).ok()?["usd"].as_f64()
     }
