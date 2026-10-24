@@ -26,7 +26,9 @@ use super::clamp_limit;
 use crate::db::jobs::{JobFilter, parse_enum};
 use crate::error::ApiError;
 use crate::http::AppState;
-use crate::http::extract::{ApiJson, ApiQuery, Auth, OperatorRole, ViewerRole, credential_valid};
+use crate::http::extract::{
+    ApiJson, ApiQuery, Auth, OperatorRole, ViewerRole, credential_valid, principal_key,
+};
 
 /// Heartbeat interval of event streams.
 pub const HEARTBEAT: Duration = Duration::from_secs(15);
@@ -172,15 +174,6 @@ struct SseSlot {
     principal: String,
 }
 
-/// The key streams are counted under: a token and its browser sessions together, or one
-/// proxy user.
-fn principal_key(p: &h2w_api::Principal) -> String {
-    match p.kind {
-        h2w_api::PrincipalKind::Proxy => format!("proxy:{}", p.id),
-        _ => format!("token:{}", p.id),
-    }
-}
-
 impl SseSlot {
     fn acquire(state: &AppState, principal: String) -> Result<SseSlot, ApiError> {
         let per = usize::try_from(state.cfg.file.server.sse_max_per_principal).unwrap_or(8);
@@ -274,11 +267,14 @@ pub async fn events(
         Some(from) if from < snapshot_lines => {
             let ring_ok = sub.recent.first().is_some_and(|l| l.n <= from);
             if ring_ok {
-                sub.recent
-                    .iter()
-                    .filter(|l| l.n >= from && l.n < snapshot_lines)
-                    .cloned()
-                    .collect()
+                // At most one page of bytes, like the file replay below.
+                crate::jobs::logs::within_bytes(
+                    sub.recent
+                        .iter()
+                        .filter(|l| l.n >= from && l.n < snapshot_lines)
+                        .cloned(),
+                    crate::jobs::logs::PAGE_BYTES,
+                )
             } else {
                 state.jobs.replay(&id, from, snapshot_lines).await
             }

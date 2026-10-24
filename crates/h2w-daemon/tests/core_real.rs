@@ -937,6 +937,54 @@ async fn a_sweep_that_cannot_be_read_does_not_hide_the_others() {
     t.stop().await;
 }
 
+/// A results response is built inside its read permit and refused with 413 past 64 MiB: a
+/// harness of control characters (12 MiB on disk, within h2w-core's tree caps) would be a
+/// 72 MiB JSON body. Its tar.gz export, much smaller, still works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn oversized_results_responses_are_refused() {
+    let t = core_server().await;
+    copy_fixture("demo-k2", &t.experiment_dir("demo-big"));
+    let scripts = t
+        .experiment_dir("demo-big")
+        .join("runs/demo-oc-agg2/ledger-1/harnesses/agg1/scripts");
+    for i in 0..3 {
+        std::fs::write(
+            scripts.join(format!("big{i}.py")),
+            vec![1_u8; 4 * 1024 * 1024],
+        )
+        .unwrap();
+    }
+    let r = t
+        .post("/api/v1/experiments", Some(&t.operator))
+        .json(&json!({"name": "demo-big", "kind": "demo"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    let base = "/api/v1/experiments/demo-big/sweeps/demo-oc-agg2/tasks/ledger-1/modes/parallel";
+    for path in [
+        format!("{base}/harnesses/agg1"),
+        format!("{base}/harnesses/agg1/export?target=raw&format=json"),
+    ] {
+        let r = t.get(&path, Some(&t.viewer)).send().await.unwrap();
+        assert_eq!(r.status(), 413, "{path}");
+        let e: h2w_api::ErrorBody = r.json().await.unwrap();
+        assert_eq!(e.error.code, h2w_api::ErrorCode::PayloadTooLarge, "{path}");
+        assert!(e.error.message.contains("64 MiB"), "{e:?}");
+    }
+    let r = t
+        .get(
+            &format!("{base}/harnesses/agg1/export?target=raw&format=tar.gz"),
+            Some(&t.viewer),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(status_of(&t, &format!("{base}/harnesses/agg2")).await, 200);
+    t.stop().await;
+}
+
 /// Results reads take one of the server's `RESULTS_READS` permits: with all of them held,
 /// a read waits; once they are free it is answered.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -944,8 +992,8 @@ async fn results_reads_wait_for_a_permit() {
     let t = core_server().await;
     adopt(&t, "std", "std-sem", "standard").await;
     let path = "/api/v1/experiments/std-sem/sweeps/lab-oc-agg1/scores";
-    let n = u32::try_from(h2w_daemon::http::routes::RESULTS_READS).unwrap();
-    let permits = std::sync::Arc::clone(&t.srv().state.results_reads)
+    let n = u32::try_from(h2w_daemon::reads::RESULTS_READS).unwrap();
+    let permits = std::sync::Arc::clone(&t.srv().state.reads.permits)
         .acquire_many_owned(n)
         .await
         .unwrap();

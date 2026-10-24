@@ -99,7 +99,7 @@ async fn security_relevant_actions_form_a_verifiable_chain() {
         .iter()
         .find(|e| e.action == "job.create" && e.outcome == AuditOutcome::Success)
         .unwrap();
-    assert_eq!(create.actor, "operator-t");
+    assert_eq!(create.actor, "token:operator-t");
     assert_eq!(create.target, job.id);
     assert_eq!(create.ip.as_deref(), Some("127.0.0.1"));
     assert!(create.request_id.is_some());

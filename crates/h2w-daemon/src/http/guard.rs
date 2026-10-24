@@ -133,13 +133,15 @@ pub(crate) fn host_allowed(state: &AppState, req: &Request) -> bool {
     }
 }
 
+/// `public_url`'s origin, or a same-origin request for the `Host` it was sent to (already on
+/// the allowlist). Behind an `https` public URL only `https://<host>` counts: a page served
+/// over plain HTTP on the same host is a different, weaker origin.
 pub(crate) fn origin_allowed(state: &AppState, req: &Request, origin: &HeaderValue) -> bool {
     let Ok(o) = origin.to_str() else { return false };
     let o = o.trim().trim_end_matches('/').to_ascii_lowercase();
     if o == state.cfg.public_origin.to_ascii_lowercase() {
         return true;
     }
-    // A same-origin request for the Host it was sent to (already on the allowlist).
     let Some(host) = req
         .headers()
         .get(header::HOST)
@@ -148,7 +150,7 @@ pub(crate) fn origin_allowed(state: &AppState, req: &Request, origin: &HeaderVal
         return false;
     };
     let host = host.to_ascii_lowercase();
-    o == format!("http://{host}") || o == format!("https://{host}")
+    o == format!("https://{host}") || (!state.cfg.public_https && o == format!("http://{host}"))
 }
 
 fn content_length(req: &Request) -> Option<u64> {
@@ -180,6 +182,18 @@ async fn check_and_run(state: &AppState, req: Request, next: Next) -> Response {
                 h2w_api::CSRF_HEADER
             ))
             .into_response();
+        }
+        // Browsers send one Origin; a second one is not a browser request to trust.
+        if req
+            .headers()
+            .get_all(header::ORIGIN)
+            .iter()
+            .nth(1)
+            .is_some()
+        {
+            state.metrics.auth_failure("origin");
+            return ApiError::forbidden("the request has more than one Origin header")
+                .into_response();
         }
         if let Some(origin) = req.headers().get(header::ORIGIN)
             && !origin_allowed(state, &req, origin)

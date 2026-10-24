@@ -110,8 +110,8 @@ impl Actor {
     pub fn system() -> Actor {
         Actor {
             principal: Principal {
-                id: "server".into(),
-                name: "server".into(),
+                id: crate::db::audit::SERVER_ACTOR.into(),
+                name: crate::db::audit::SERVER_ACTOR.into(),
                 role: h2w_api::Role::Admin,
                 kind: h2w_api::PrincipalKind::Token,
             },
@@ -127,7 +127,7 @@ impl Actor {
         outcome: h2w_api::AuditOutcome,
     ) -> AuditEntry {
         AuditEntry {
-            actor: self.principal.name.clone(),
+            actor: crate::db::audit::actor_of(&self.principal),
             action: action.to_owned(),
             target: target.to_owned(),
             outcome,
@@ -316,6 +316,8 @@ pub struct JobManager {
     backend: Arc<dyn JobBackend>,
     secrets: SecretStore,
     metrics: Arc<Metrics>,
+    /// Read permits and the sweep cache, shared with the HTTP layer.
+    reads: Arc<crate::reads::Reads>,
     live: Mutex<HashMap<String, Arc<LiveJob>>>,
     sched: tokio::sync::Mutex<()>,
     wake: Notify,
@@ -341,6 +343,7 @@ impl JobManager {
         backend: Arc<dyn JobBackend>,
         secrets: SecretStore,
         metrics: Arc<Metrics>,
+        reads: Arc<crate::reads::Reads>,
     ) -> Arc<JobManager> {
         Arc::new(JobManager {
             db,
@@ -348,6 +351,7 @@ impl JobManager {
             backend,
             secrets,
             metrics,
+            reads,
             live: Mutex::new(HashMap::new()),
             sched: tokio::sync::Mutex::new(()),
             wake: Notify::new(),
@@ -832,19 +836,21 @@ impl JobManager {
         let job = self.get(id).await?;
         let path = logs::log_path(&self.settings.paths.job_logs_dir, &job.id);
         let limit = limit.clamp(1, LOG_PAGE_MAX);
-        let (lines, next) =
-            tokio::task::spawn_blocking(move || logs::read_page(&path, from, limit))
-                .await?
-                .map_err(|e| {
+        // Under a read permit, and at most `logs::PAGE_BYTES` of lines per page.
+        let page = self
+            .reads
+            .run(move |_| {
+                logs::read_page(&path, from, limit, logs::PAGE_BYTES).map_err(|e| {
                     tracing::error!(error = %e, "could not read a job log");
                     ApiError::internal("could not read the job log")
-                })?;
+                })
+            })
+            .await?;
         // A terminal job's log ends at the end of its file (also when retention deleted it).
-        let short = u64::try_from(lines.len()).unwrap_or(u64::MAX) < limit;
-        let complete = job.status.is_terminal() && (next >= job.log_lines || short);
+        let complete = job.status.is_terminal() && (page.next >= job.log_lines || page.eof);
         Ok(LogChunk {
-            lines,
-            next,
+            lines: page.lines,
+            next: page.next,
             complete,
         })
     }
@@ -877,11 +883,14 @@ impl JobManager {
         }
         let path = logs::log_path(&self.settings.paths.job_logs_dir, id);
         let limit = (to - from).min(LOG_PAGE_MAX);
-        tokio::task::spawn_blocking(move || logs::read_page(&path, from, limit))
+        // At most one page: the client pages the rest (`GET /jobs/{id}/log`).
+        self.reads
+            .run(move |_| {
+                logs::read_page(&path, from, limit, logs::PAGE_BYTES)
+                    .map_err(|e| ApiError::internal(e.to_string()))
+            })
             .await
-            .ok()
-            .and_then(Result::ok)
-            .map(|(l, _)| l)
+            .map(|p| p.lines)
             .unwrap_or_default()
     }
 
@@ -1345,6 +1354,10 @@ impl JobManager {
 
     pub(crate) fn secrets(&self) -> &SecretStore {
         &self.secrets
+    }
+
+    pub(crate) fn reads(&self) -> &Arc<crate::reads::Reads> {
+        &self.reads
     }
 
     pub(crate) fn metrics(&self) -> &Metrics {

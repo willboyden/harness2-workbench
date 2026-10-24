@@ -37,6 +37,16 @@ impl RequestMeta {
         self.client_ip.map(|i| i.to_string())
     }
 
+    /// Who per-client limits count this request against: `(TCP peer, attributed client)`.
+    /// Without a trusted proxy both are the peer; behind one the client comes from
+    /// `X-Forwarded-For`, and the limiters keep each peer's clients apart (see `ratelimit`).
+    #[must_use]
+    pub fn limiter_key(&self) -> (IpAddr, IpAddr) {
+        let unspecified = IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+        let peer = self.peer.map_or(unspecified, |p| p.ip());
+        (peer, self.client_ip.unwrap_or(peer))
+    }
+
     /// An audit entry carrying this request's context.
     #[must_use]
     pub fn audit(
@@ -519,10 +529,8 @@ pub async fn authenticate(parts: &mut Parts, state: &AppState) -> Result<Princip
                 state.metrics.auth_failure(why.reason());
                 return Err(why.into_error());
             }
-            let key = meta
-                .client_ip
-                .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
-            if let Err(wait) = state.auth_failures.check(key) {
+            let (peer, client) = meta.limiter_key();
+            if let Err(wait) = state.auth_failures.check_from(peer, client) {
                 state.metrics.auth_failure("rate_limited");
                 return Err(ApiError::rate_limited(wait.as_secs().max(1)));
             }
@@ -535,7 +543,7 @@ pub async fn authenticate(parts: &mut Parts, state: &AppState) -> Result<Princip
                     AuditOutcome::Denied,
                 )
                 .detail(format!("{} on {}", why.reason(), parts.uri.path()));
-            state.audit_failure(meta.client_ip, entry).await;
+            state.audit_failure(&meta, entry).await;
             Err(why.into_error())
         }
     }
@@ -597,8 +605,12 @@ impl<R: Need> Auth<R> {
     /// An audit entry by this caller.
     #[must_use]
     pub fn audit(&self, action: &str, target: &str, outcome: AuditOutcome) -> AuditEntry {
-        self.meta
-            .audit(&self.principal.name, action, target, outcome)
+        self.meta.audit(
+            &crate::db::audit::actor_of(&self.principal),
+            action,
+            target,
+            outcome,
+        )
     }
 
     #[must_use]
@@ -607,7 +619,18 @@ impl<R: Need> Auth<R> {
     }
 }
 
-/// Refuse with 403 and record the denial.
+/// The key a principal's limits count against: a token together with its browser sessions
+/// (`token:<id>`), or one proxy user (`proxy:<user>`).
+#[must_use]
+pub fn principal_key(p: &Principal) -> String {
+    match p.kind {
+        PrincipalKind::Proxy => format!("proxy:{}", p.id),
+        _ => format!("token:{}", p.id),
+    }
+}
+
+/// Refuse with 403 and record the denial (at most [`AUDITED_FAILURES_PER_MINUTE`] records per
+/// principal and minute; the rest are counted in `h2w_audit_suppressed_total`).
 pub(crate) async fn deny(
     state: &AppState,
     principal: &Principal,
@@ -616,20 +639,15 @@ pub(crate) async fn deny(
     needed: Role,
 ) -> ApiError {
     state.metrics.auth_failure("forbidden");
+    let actor = crate::db::audit::actor_of(principal);
     let entry = meta
-        .audit(
-            &principal.name,
-            "access.denied",
-            route,
-            AuditOutcome::Denied,
-        )
+        .audit(&actor, "access.denied", route, AuditOutcome::Denied)
         .detail(format!(
-            "{} holds {}; this needs {}",
-            principal.name,
+            "{actor} holds {}; this needs {}",
             principal.role.as_str(),
             needed.as_str()
         ));
-    state.audit(entry).await;
+    state.audit_denial(principal, entry).await;
     ApiError::forbidden(format!("this requires the {} role", needed.as_str()))
 }
 

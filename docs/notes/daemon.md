@@ -92,8 +92,11 @@ Keys beyond §11 (all optional, defaults shown):
   more than one `Host` header is 400 (RFC 9112 §3.2); an absolute-form target
   (`GET http://host/...`) must name an allowed host as well as its `Host` header.
 - **Unsafe methods** (everything but GET/HEAD/OPTIONS) need `x-h2w-request: 1`. An `Origin`, when
-  sent, must be `public_url`'s origin or `http(s)://<the request's Host>` (so a UI opened at
-  `http://localhost:P` works); `null` is refused. No CORS headers are ever sent.
+  sent, must be `public_url`'s origin or `https://<the request's Host>`, or, only when
+  `public_url` is plain `http`, `http://<the request's Host>` (so a UI opened at
+  `http://localhost:P` works). Behind an `https` public URL a page served over plain HTTP on
+  the same host cannot change anything: use the public URL. `null` is refused, and so is a
+  request with more than one `Origin` header (403). No CORS headers are ever sent.
 - **Errors**: every error response is `ErrorBody` with `request_id`, including 404/405 for unknown
   routes and methods, 413, 421 and rejections from extractors. Status mapping beyond §4: unknown
   query parameters, unknown enum values and unparsable numbers in a query are **422** (field
@@ -121,17 +124,41 @@ Keys beyond §11 (all optional, defaults shown):
   `skipped`, `partial`, `base-failed`, `running`, `exception`) and the reader's `too-large` and
   `unreadable` (a `summary.json` over 4 MiB, or not a JSON object); anything else is 422. Data
   over one of h2w-core's reader caps (`CoreError::TooLarge`: summaries, judged files, harness
-  trees, sweeps with too many tasks) is 413 `payload_too_large`, naming the limit. At most 4
-  results reads run at once (`http::routes::RESULTS_READS`); more wait for a permit, within the
-  request timeout.
-- **Sweep lists** (`Experiment.sweeps` in every experiment view): read one sweep at a time with
-  `ExperimentDir::sweep_namespaces()` and `ExperimentDir::sweep()` (h2w-core wrappers added for
-  this, additive after contract v1.2), so a sweep that cannot be read (for example a judged
-  file over the row cap) is left out of the list, with one warning naming the experiment, the
-  sweep and the error, and the other sweeps are still listed. Each sweep's summary is cached
-  until its stamp changes (the sweep directory, each task's `summary.json` and the judged
-  files: size, modification time, inode) or for at most 5 minutes, so `GET /experiments` does
-  not parse every summary of every experiment on each call.
+  trees, sweeps with too many tasks) is 413 `payload_too_large`, naming the limit.
+- **Read bounds** (`crate::reads`): at most 4 blocking reads of results or job logs run at once
+  (`RESULTS_READS`); more wait for a permit, within the request timeout. A request that goes
+  away (it timed out, or its client left) sets its cancellation flag: h2w-core stops at its
+  next file or sweep (`CoreError::Cancelled`, 503) and the permit comes back. Every JSON
+  results response is serialized inside the permit and refused with 413 past 64 MiB
+  (`MAX_RESULTS_RESPONSE`), tar.gz exports too. Per-request read budgets (bytes of results
+  files, and sweeps; past them h2w-core answers 413 "this request may read at most ..."):
+
+  | Request | Bytes | Sweeps |
+  |---|---|---|
+  | `GET /experiments` (all experiments together; cached sweeps cost nothing) | 512 MiB | 1,000 |
+  | `GET /experiments/{exp}`, create, update; `POST /estimate`'s history; a preview's estimate | 256 MiB | 200 |
+  | `GET .../tasks` | 256 MiB | 1 |
+  | `GET .../scores`, `.../report` | 64 MiB | 1 |
+  | `GET /compare` | 640 MiB | 4 |
+  | `GET .../manifest` (the results digest) | 1 GiB | 1,000 |
+  | one budget-guard poll; one background refresh of a cached sweep | 256 MiB | 1 |
+
+  The harness, diff, export, task, library, audit and rollout views have no budget of their
+  own; h2w-core caps each of them, and the response cap applies.
+- **Sweep lists** (`Experiment.sweeps` in every experiment view, and the history behind
+  estimates; `crate::sweeps`): at most 200 sweeps per experiment are listed, the newest by the
+  modification time of their directories (the others stay reachable by id through the results
+  routes; a warning names the experiment once per count). Sweeps are read one at a time with
+  `ExperimentDir::sweep_namespaces()` and `sweep_with()`, so a sweep that cannot be read (for
+  example a judged file over the row cap) is left out with one warning naming the experiment,
+  the sweep and the error, and the other sweeps are still listed. Each sweep's summary is
+  cached under a stamp of the files it is read from (the sweep directory, each task's
+  `summary.json` and the judged files: size, modification time, inode). A changed entry, or
+  one older than 5 minutes, is served as it is while one background task (under a permit that
+  is free at that moment; at most 16 at once) reads the sweep again; a sweep seen for the
+  first time is read in the request, within its budget. When the budget runs out the list
+  shows what was read and caches nothing for the rest (the next request goes on). The cache
+  holds 4,096 sweeps and evicts the least recently used.
 - **Metrics** route labels are matched route templates (`/api/v1/jobs/{id}`), `unmatched` or
   `static`; unknown methods are `OTHER`; at most 50 `experiment` labels, then `other`.
 
@@ -148,9 +175,15 @@ Keys beyond §11 (all optional, defaults shown):
   sessions; logout deletes the session and clears the cookie (`Max-Age=0`).
 - Login is rate-limited per client address (IPv6 per /64): `server.login_attempts_per_minute`
   attempts, successful or not, then 429 with `Retry-After`. End-to-end suites that sign in more
-  often should raise the limit in their configuration. Each limiter tracks up to 10,000 clients;
-  when its table is full, clients whose bucket has refilled are forgotten first and newcomers
-  that still do not fit share one overflow bucket, so the limit never fails open.
+  often should raise the limit in their configuration.
+- **Per-client limiters** (login, failed authentication, records of failures) key each request
+  on its TCP peer and its client: the peer itself, or behind a trusted proxy the
+  `X-Forwarded-For` client, which any process on the proxy's network can invent. Each peer may
+  hold 1,024 client keys (16 for audit records of failures); its further clients share one
+  bucket of that peer, so a peer inventing addresses only limits itself. A limiter tracks up
+  to 10,000 keys; when the table is full, clients whose bucket has refilled are forgotten
+  first, and a newcomer that still does not fit uses its own peer's overflow bucket, so a fresh
+  client behind another peer is not starved (the limit never fails open either).
 - Proxy mode roles: any `admin_groups` member is admin, else any `operator_groups` member is
   operator, else viewer when `viewer_groups` is empty or matches, else 403. Requests carrying the
   user header from an address outside `trusted_proxies`, or with a wrong shared secret, are 401.
@@ -167,11 +200,20 @@ Keys beyond §11 (all optional, defaults shown):
   are counted in `h2w_audit_suppressed_total`, so junk credentials cannot flood the hash-chained
   log. Requests without credentials are never audited. Every refused request is counted once in
   `h2w_auth_failures_total{reason}` (`rate_limited` for the 429s).
+- **Refused requests** (403 `access.denied`, an authenticated caller without the role): at most
+  10 records per principal (a token with its sessions, or one proxy user) and minute; the rest
+  are counted in `h2w_audit_suppressed_total`, so a viewer token (or an agent holding one)
+  cannot flood the audit log either.
 - Audited: `auth.login` (success; denied and rate-limited attempts within the limit above),
   `auth.logout`, `auth.failed` (within the limit above), `access.denied`, `job.create`
   (success and denied, with the reason), `job.cancel`, `experiment.create|update`,
   `profile.put|delete` (with `env::profile_warnings` in the detail), `secret.set|delete|capture`
   (the length, never the value), `token.create|revoke`.
+- Audit actors name their kind: `token:<name>` (API tokens and their browser sessions),
+  `proxy:<user>` (reverse-proxy users), `cli`, `server` (the server itself, e.g. capturing the
+  bridge key), `anonymous` (failed authentication). A proxy user called `initial admin` is
+  `proxy:initial admin`, never the bootstrap token's `token:initial admin`. `GET /auth/me`, job
+  and experiment `created_by` keep the plain name.
 
 ## Jobs
 
@@ -207,9 +249,10 @@ Keys beyond §11 (all optional, defaults shown):
   a pipeline stops at the first step that is neither succeeded nor partial and marks the rest
   cancelled. `Progress.done`/`failed`/`total` as in contract addendum v1.1; the demo reports
   done/failed from its own `[domain] i/n` lines (no total, it has no preview).
-- **Budget guard**: polls `ExperimentDir::spend_usd` every `jobs.budget_poll_secs` while the
-  `run` step runs and counts spend **since that step started** (an earlier run of a resumed
-  sweep does not count); `spent_usd` is that amount.
+- **Budget guard**: polls `ExperimentDir::spend_usd_with` every `jobs.budget_poll_secs` while
+  the `run` step runs (each poll under a read permit and within a budget) and counts spend
+  **since that step started** (an earlier run of a resumed sweep does not count); `spent_usd`
+  is that amount.
 - **Cancellation reasons**: user (cancelled, "cancelled by <name>"), budget (cancelled, "budget
   reached"), wall clock (failed, "timed out after 1h 30m"), shutdown (failed, "server stopped"),
   restart (failed, "server restarted"), disk space (failed, "stopped: less than 256 MiB free on
@@ -239,9 +282,14 @@ Keys beyond §11 (all optional, defaults shown):
   masked the same way. The bridge's `HARNESS2_CODEX_API_KEY=` line is always replaced by the server
   itself, independently of the parser. Logs of jobs older than `jobs.log_retention_days` are
   deleted (the job rows stay).
+- **Log pages** (`GET /jobs/{id}/log`): at most `limit` lines (1..=5,000) and about 1 MiB
+  (`jobs::logs::PAGE_BYTES`) of stored lines, at least one line; `next` says where to go on,
+  and `complete` is set only once a terminal job's log has been read to its end. Paging runs
+  under a read permit.
 - **Event streams** (contract addendum v1.1): unnamed frames, one `JobEvent` JSON per `data:`;
   `log` events carry `id: <line number>`; a reconnect with `Last-Event-ID: N` replays lines
-  `N+1..` up to the snapshot (from the ring buffer or the file); a `heartbeat` event at least every
+  `N+1..` up to the snapshot (from the ring buffer or the file), at most one page of about
+  1 MiB: the client pages the rest; a `heartbeat` event at least every
   15 s; the stream ends after the terminal `status` event, after 10 minutes without events, after
   1 hour, or at shutdown (clients reconnect). A subscriber that falls behind gets a fresh
   `snapshot`. At every heartbeat the caller's credential is checked again: a revoked or expired

@@ -156,6 +156,9 @@ pub struct StepOutput<'a> {
     pub profile: Option<&'a ModelProfile>,
     pub harness2_home: &'a Path,
     pub harness2_managed: bool,
+    /// Measured spend of the experiment's earlier sweeps, for a preview's estimate (the
+    /// engine reads it within its read bounds; `None` when there is none).
+    pub history: Option<h2w_core::estimate::History>,
 }
 
 /// The harness2-specific half of the job engine.
@@ -186,11 +189,12 @@ pub trait JobBackend: Send + Sync + 'static {
     /// One `harness2-bridge` stdout line; `true` when it carried a setting.
     fn bridge_line(&self, line: &str, acc: &mut BridgeSettings) -> bool;
 
-    /// Spend recorded so far in a sweep's summaries (USD), when readable.
+    /// Spend recorded so far in a sweep's summaries (USD), when readable within `budget`.
     fn spend_usd(
         &self,
         experiment_dir: &Path,
         kind: ExperimentKind,
         summary_ns: &str,
+        budget: &mut h2w_core::results::ReadBudget,
     ) -> Option<f64>;
 }

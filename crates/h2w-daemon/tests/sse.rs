@@ -460,3 +460,91 @@ async fn a_huge_last_event_id_replays_nothing() {
     assert_eq!(evs.len(), 1, "only the snapshot");
     t.stop().await;
 }
+
+/// Log pages and event-stream replays stop near 1 MiB whatever the line count: a log of
+/// 200 lines of 64 KiB (12.5 MiB) comes back in pages of about 1 MiB, each with `next`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn log_pages_and_replays_are_bounded_by_bytes() {
+    use std::io::Write;
+    let t = TestServer::start().await;
+    let job: Job = t
+        .create_job(&t.operator, demo_spec("ok-bytes"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    t.wait_terminal(&job.id, 30).await;
+    // Replace the finished job's log with long lines, and its line count.
+    let lines: u64 = 200;
+    let log = t.root.path().join(format!("data/logs/jobs/{}.log", job.id));
+    let mut f = std::io::BufWriter::new(std::fs::File::create(&log).unwrap());
+    for n in 0..lines {
+        let line = h2w_api::LogLine {
+            n,
+            ts: "2026-10-24T00:00:00.000Z".into(),
+            stream: h2w_api::LogStream::Stdout,
+            text: "x".repeat(64 * 1024),
+        };
+        serde_json::to_writer(&mut f, &line).unwrap();
+        f.write_all(b"\n").unwrap();
+    }
+    f.flush().unwrap();
+    drop(f);
+    let db = h2w_daemon::db::open_connection(&t.root.path().join("data/workbench.db")).unwrap();
+    db.execute(
+        "UPDATE jobs SET log_lines = ?2 WHERE id = ?1",
+        rusqlite::params![job.id, i64::try_from(lines).unwrap()],
+    )
+    .unwrap();
+    drop(db);
+    let page_max = usize::try_from(h2w_daemon::jobs::logs::PAGE_BYTES).unwrap() + 128 * 1024;
+
+    let mut from = 0;
+    let mut total = 0;
+    let mut pages = 0;
+    loop {
+        let r = t
+            .get(
+                &format!("/api/v1/jobs/{}/log?from={from}&limit=5000", job.id),
+                Some(&t.viewer),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200);
+        let body = r.bytes().await.unwrap();
+        assert!(body.len() <= page_max, "a page of {} bytes", body.len());
+        let chunk: h2w_api::LogChunk = serde_json::from_slice(&body).unwrap();
+        assert!(!chunk.lines.is_empty());
+        assert_eq!(chunk.lines[0].n, from);
+        total += chunk.lines.len();
+        pages += 1;
+        from = chunk.next;
+        if pages == 1 {
+            assert!(chunk.lines.len() < 20, "{} lines", chunk.lines.len());
+            assert!(!chunk.complete);
+        }
+        if chunk.complete {
+            break;
+        }
+        assert!(pages < 100);
+    }
+    assert_eq!(total, usize::try_from(lines).unwrap());
+    assert!(pages >= 12, "{pages} pages");
+
+    // A reconnecting stream replays at most one page too (the client pages the rest).
+    let resp = t
+        .get(&format!("/api/v1/jobs/{}/events", job.id), Some(&t.viewer))
+        .header("last-event-id", "0")
+        .send()
+        .await
+        .unwrap();
+    let text = read_stream(resp, 30).await;
+    assert!(text.len() <= page_max + 64 * 1024, "{} bytes", text.len());
+    let replayed = events(&text)
+        .into_iter()
+        .filter(|(_, e)| matches!(e, JobEvent::Log { .. }))
+        .count();
+    assert!((1..20).contains(&replayed), "{replayed} lines replayed");
+    t.stop().await;
+}

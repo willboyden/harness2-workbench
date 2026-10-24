@@ -176,28 +176,58 @@ fn count_lines(path: &Path) -> std::io::Result<u64> {
     }
 }
 
-/// Lines `from..from+limit` of a log file (blocking; call from `spawn_blocking`). Returns
-/// the lines and the next line number. A partly written last line is not returned.
+/// Most bytes of stored log lines one page (or one event-stream replay) carries; the JSON
+/// response is about the same size. A page has at least one line (lines are at most
+/// 64 KiB of text).
+pub const PAGE_BYTES: u64 = 1024 * 1024;
+
+/// A page of a job log.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Page {
+    pub lines: Vec<LogLine>,
+    /// The line number to ask for next.
+    pub next: u64,
+    /// The end of the file was reached (nothing complete after `next`).
+    pub eof: bool,
+}
+
+/// Lines `from..from+limit` of a log file, stopping before the stored lines would exceed
+/// `max_bytes` (blocking; call it under a read permit). A partly written last line is not
+/// returned.
 ///
 /// # Errors
 /// I/O errors other than a missing file (which reads as empty).
-pub fn read_page(path: &Path, from: u64, limit: u64) -> std::io::Result<(Vec<LogLine>, u64)> {
+pub fn read_page(path: &Path, from: u64, limit: u64, max_bytes: u64) -> std::io::Result<Page> {
     let f = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), from)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Page {
+                lines: Vec::new(),
+                next: from,
+                eof: true,
+            });
+        }
         Err(e) => return Err(e),
     };
     let mut r = std::io::BufReader::with_capacity(64 * 1024, f);
     let mut buf = Vec::new();
     let mut n = 0u64;
     let mut out = Vec::new();
+    let mut bytes = 0u64;
+    let mut eof = false;
     while out.len() < usize::try_from(limit).unwrap_or(usize::MAX) {
         buf.clear();
         let read = r.read_until(b'\n', &mut buf)?;
         if read == 0 || buf.last() != Some(&b'\n') {
+            eof = true;
             break;
         }
         if n >= from {
+            let size = u64::try_from(buf.len()).unwrap_or(u64::MAX);
+            if !out.is_empty() && bytes.saturating_add(size) > max_bytes {
+                break;
+            }
+            bytes = bytes.saturating_add(size);
             match serde_json::from_slice::<LogLine>(&buf) {
                 Ok(line) => out.push(line),
                 Err(_) => out.push(LogLine {
@@ -211,7 +241,28 @@ pub fn read_page(path: &Path, from: u64, limit: u64) -> std::io::Result<(Vec<Log
         n += 1;
     }
     let next = from + u64::try_from(out.len()).unwrap_or(0);
-    Ok((out, next))
+    Ok(Page {
+        lines: out,
+        next,
+        eof,
+    })
+}
+
+/// The longest prefix of `lines` whose stored size stays within `max_bytes` (at least one
+/// line): what an event stream replays from memory.
+#[must_use]
+pub fn within_bytes(lines: impl IntoIterator<Item = LogLine>, max_bytes: u64) -> Vec<LogLine> {
+    let mut out = Vec::new();
+    let mut bytes = 0u64;
+    for line in lines {
+        let size = encode(&line).map_or(u64::MAX, |j| u64::try_from(j.len()).unwrap_or(u64::MAX));
+        if !out.is_empty() && bytes.saturating_add(size) > max_bytes {
+            break;
+        }
+        bytes = bytes.saturating_add(size);
+        out.push(line);
+    }
+    out
 }
 
 /// `true` when `s` ends with `file://` (any case).
@@ -317,6 +368,16 @@ mod tests {
         assert_eq!(lines[1], "next");
     }
 
+    /// A line as `file_round_trip_and_paging` writes it.
+    fn page_line(n: u64) -> LogLine {
+        LogLine {
+            n,
+            ts: "t".into(),
+            stream: h2w_api::LogStream::Stdout,
+            text: format!("line {n}"),
+        }
+    }
+
     #[tokio::test]
     async fn file_round_trip_and_paging() {
         let dir = tempfile::tempdir().unwrap();
@@ -334,20 +395,28 @@ mod tests {
             .unwrap();
         }
         f.flush().await.unwrap();
-        let (page, next) = read_page(&path, 3, 4).unwrap();
+        let page = read_page(&path, 3, 4, PAGE_BYTES).unwrap();
         assert_eq!(
-            page.iter().map(|l| l.n).collect::<Vec<_>>(),
+            page.lines.iter().map(|l| l.n).collect::<Vec<_>>(),
             vec![3, 4, 5, 6]
         );
-        assert_eq!(next, 7);
-        let (page, next) = read_page(&path, 8, 100).unwrap();
-        assert_eq!(page.len(), 2);
-        assert_eq!(next, 10);
-        let (page, next) = read_page(&path, 50, 10).unwrap();
-        assert!(page.is_empty());
-        assert_eq!(next, 50);
-        let (page, _) = read_page(&dir.path().join("missing.log"), 0, 10).unwrap();
-        assert!(page.is_empty());
+        assert_eq!((page.next, page.eof), (7, false));
+        let page = read_page(&path, 8, 100, PAGE_BYTES).unwrap();
+        assert_eq!(page.lines.len(), 2);
+        assert_eq!((page.next, page.eof), (10, true));
+        let page = read_page(&path, 50, 10, PAGE_BYTES).unwrap();
+        assert!(page.lines.is_empty());
+        assert_eq!((page.next, page.eof), (50, true));
+        let page = read_page(&dir.path().join("missing.log"), 0, 10, PAGE_BYTES).unwrap();
+        assert!(page.lines.is_empty() && page.eof);
+        // A byte budget stops the page early (with at least one line), without eof.
+        let one = u64::try_from(encode(&page_line(0)).unwrap().len()).unwrap();
+        let page = read_page(&path, 0, 100, one * 3 + 1).unwrap();
+        assert_eq!((page.lines.len(), page.next, page.eof), (3, 3, false));
+        let page = read_page(&path, 0, 100, 1).unwrap();
+        assert_eq!((page.lines.len(), page.next), (1, 1));
+        assert_eq!(within_bytes((0..10).map(page_line), one * 2).len(), 2);
+        assert_eq!(within_bytes((0..10).map(page_line), 0).len(), 1);
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
@@ -358,8 +427,8 @@ mod tests {
             .open(&path)
             .unwrap();
         raw.write_all(b"{\"n\":10").unwrap();
-        let (page, _) = read_page(&path, 9, 100).unwrap();
-        assert_eq!(page.len(), 1);
+        let page = read_page(&path, 9, 100, PAGE_BYTES).unwrap();
+        assert_eq!(page.lines.len(), 1);
         let (_f, existing) = LogFile::open(&path).await.unwrap();
         assert_eq!(existing, 10);
     }

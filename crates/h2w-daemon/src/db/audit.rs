@@ -30,6 +30,25 @@ pub struct AuditEntry {
     pub detail: Option<String>,
 }
 
+/// The actor of records the server writes on its own behalf.
+pub const SERVER_ACTOR: &str = "server";
+
+/// How a principal appears as the actor of an audit record: its kind, then its name.
+/// `token:<name>` for API tokens and their browser sessions, `proxy:<user>` for users a
+/// reverse proxy authenticated, so no principal can pose as another kind's name (a proxy
+/// user called `initial admin` is `proxy:initial admin`, not the bootstrap token). The
+/// server's own records use [`SERVER_ACTOR`], the CLI's `cli`, failed authentication
+/// `anonymous`.
+#[must_use]
+pub fn actor_of(p: &h2w_api::Principal) -> String {
+    match p.kind {
+        h2w_api::PrincipalKind::Proxy => format!("proxy:{}", p.name),
+        // Token ids are 8 characters, so only the server's own actor has this id.
+        _ if p.id == SERVER_ACTOR => SERVER_ACTOR.to_owned(),
+        _ => format!("token:{}", p.name),
+    }
+}
+
 impl AuditEntry {
     /// A new entry without request context.
     #[must_use]

@@ -57,14 +57,13 @@ fn name_problem(out: &mut Vec<FieldProblem>, field: &str, r: h2w_core::Result<()
     }
 }
 
-/// Measured spend per (task, mode) from an experiment's earlier sweeps.
+/// Measured spend per (task, mode) from an experiment's earlier sweeps (as the bounded
+/// sweep listing gives them: `Reads::sweeps_of`).
 #[must_use]
-pub fn history(dir: &Path, kind: ExperimentKind) -> Option<h2w_core::estimate::History> {
-    let exp = ExperimentDir::open(dir, kind, &[EXPERIMENT_MOUNT.to_owned()]).ok()?;
-    let sweeps = exp.sweeps().ok()?;
+pub fn history_of(sweeps: &[h2w_api::SweepSummary]) -> Option<h2w_core::estimate::History> {
     let mut usd = 0.0;
     let mut samples: u64 = 0;
-    for s in &sweeps {
+    for s in sweeps {
         let n = u64::from(s.tasks) * u64::try_from(s.modes.len()).unwrap_or(0);
         if n > 0 && s.usd > 0.0 {
             usd += s.usd;
@@ -688,7 +687,7 @@ impl JobBackend for CoreBackend {
                         (d.k, d.modes)
                     }
                 };
-                let hist = out.experiment.and_then(|(d, kind)| history(d, kind));
+                let hist = out.history;
                 let prices = out.profile.and_then(|p| p.prices.as_ref());
                 let estimate =
                     h2w_core::estimate::estimate(pv.total_tasks, k, &modes, prices, hist);
@@ -751,11 +750,12 @@ impl JobBackend for CoreBackend {
         experiment_dir: &Path,
         kind: ExperimentKind,
         summary_ns: &str,
+        budget: &mut h2w_core::results::ReadBudget,
     ) -> Option<f64> {
         let ns = h2w_core::namespace::Namespace::parse(summary_ns)?;
         ExperimentDir::open(experiment_dir, kind, &[EXPERIMENT_MOUNT.to_owned()])
             .ok()?
-            .spend_usd(&ns)
+            .spend_usd_with(&ns, budget)
             .ok()
     }
 }

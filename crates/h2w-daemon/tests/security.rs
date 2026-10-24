@@ -209,6 +209,59 @@ async fn unsafe_methods_need_the_csrf_header_and_a_same_origin() {
     t.stop().await;
 }
 
+/// Behind an https public URL a plain-http origin of the same host is refused, and a request
+/// with two Origin headers is refused whatever they say.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn https_deployments_accept_only_https_origins_and_one_origin_header() {
+    let t = TestServer::start_with(|s| {
+        s.file.server.public_url = "https://workbench.example.com".into();
+    })
+    .await;
+    let port = t.port();
+    let login = |origins: Vec<String>| {
+        let mut headers = String::new();
+        for o in &origins {
+            headers.push_str(&format!("Origin: {o}\r\n"));
+        }
+        let body = format!("{{\"token\":\"{}\"}}", t.viewer);
+        format!(
+            "POST /api/v1/auth/login HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{headers}x-h2w-request: 1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    };
+    let addr = t.srv().addr;
+    let https = format!("https://127.0.0.1:{port}");
+    let http = format!("http://127.0.0.1:{port}");
+    for (origins, status) in [
+        (vec!["https://workbench.example.com".to_owned()], 200),
+        (vec![https.clone()], 200),
+        (vec![http.clone()], 403),
+        (vec![https.clone(), https.clone()], 403),
+        (vec!["https://workbench.example.com".to_owned(), http], 403),
+    ] {
+        let raw = raw_http(addr, login(origins.clone()).as_bytes()).await;
+        assert_eq!(status_of(&raw), status, "{origins:?}: {raw}");
+    }
+    // Over plain http (the default public URL) both schemes of the Host still pass.
+    let t2 = TestServer::start().await;
+    let port2 = t2.port();
+    for origin in [
+        format!("http://127.0.0.1:{port2}"),
+        format!("https://127.0.0.1:{port2}"),
+    ] {
+        let r = t2
+            .post("/api/v1/auth/login", None)
+            .header("origin", &origin)
+            .json(&json!({"token": t2.viewer}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200, "{origin}");
+    }
+    t2.stop().await;
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn no_cors_headers_are_ever_sent() {
     let t = TestServer::start().await;

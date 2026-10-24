@@ -38,15 +38,14 @@ pub async fn login(
     meta: RequestMeta,
     body: Result<ApiJson<LoginRequest>, ApiError>,
 ) -> Result<Response, ApiError> {
-    if let Some(ip) = meta.client_ip
-        && let Err(wait) = state.login_limiter.check(ip)
-    {
+    let (peer, client) = meta.limiter_key();
+    if let Err(wait) = state.login_limiter.check_from(peer, client) {
         state.metrics.auth_failure("rate_limited");
         let secs = wait.as_secs().max(1);
         let entry = meta
             .audit("anonymous", "auth.login", "-", AuditOutcome::Denied)
             .detail("rate limited");
-        state.audit_failure(meta.client_ip, entry).await;
+        state.audit_failure(&meta, entry).await;
         return Err(ApiError::rate_limited(secs));
     }
     let ApiJson(req) = body?;
@@ -58,7 +57,7 @@ pub async fn login(
             let entry = meta
                 .audit("anonymous", "auth.login", target, AuditOutcome::Denied)
                 .detail(why.reason());
-            state.audit_failure(meta.client_ip, entry).await;
+            state.audit_failure(&meta, entry).await;
             return Err(ApiError::unauthorized("invalid token"));
         }
     };
@@ -70,7 +69,12 @@ pub async fn login(
     let ttl = i64::try_from(state.cfg.session_ttl.as_secs()).unwrap_or(43_200);
     let expires = rec.expires_at.map_or(now + ttl, |e| e.min(now + ttl));
     let token_id = rec.id.clone();
-    let entry = meta.audit(&rec.name, "auth.login", &rec.id, AuditOutcome::Success);
+    let entry = meta.audit(
+        &format!("token:{}", rec.name),
+        "auth.login",
+        &rec.id,
+        AuditOutcome::Success,
+    );
     state
         .db
         .call(move |c| {
