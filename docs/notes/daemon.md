@@ -71,6 +71,7 @@ Keys beyond §11 (all optional, defaults shown):
 
 | Key | Default | Meaning |
 |---|---|---|
+| `server.max_connections_per_ip` | `256` | Open connections one client address (IPv6: one /64) may hold, 1 ..= 1024 (the server holds 1024 in total); more are closed at accept. Addresses in `server.trusted_proxies` are exempt: a reverse proxy in front must limit its own clients. Refused connections are counted in `h2s_connections_refused_total{reason="per_client"\|"total"}` and logged at most once a minute. |
 | `server.sse_max_per_principal` | `8` | Event streams one principal may hold (1 ..= 10,000), see "Event streams". |
 | `jobs.max_log_bytes` | `268435456` (256 MiB) | Largest stored log per job (64 KiB ..= 1 TiB). Past it, one marker line, then output is still read (the job never blocks) and parsed for progress, results and the bridge, but not stored; each step's end reports how many lines were not stored. The server's own lines may use 64 KiB more. |
 | `jobs.min_free_disk_mb` | `256` | Running jobs are stopped (failed, "stopped: less than N MiB free on the data directory") when the filesystem of `paths.data_dir` has less free space; checked when a job starts and every 15 s. `0` = never. |

@@ -32,6 +32,81 @@ use crate::secrets::{SecretEnv, SecretStore};
 
 /// Concurrent connections served; more are closed at once.
 pub const MAX_CONNECTIONS: usize = 1024;
+
+/// Open connections per client address (IPv6 per /64), so one client cannot hold every
+/// connection slot (`server.max_connections_per_ip`).
+#[derive(Debug)]
+pub struct ConnectionCounts {
+    open: std::sync::Mutex<std::collections::HashMap<std::net::IpAddr, usize>>,
+    max: usize,
+}
+
+/// One counted connection; released when dropped.
+#[derive(Debug)]
+pub struct ConnectionSlot {
+    counts: Arc<ConnectionCounts>,
+    key: std::net::IpAddr,
+}
+
+impl ConnectionCounts {
+    #[must_use]
+    pub fn new(max: usize) -> ConnectionCounts {
+        ConnectionCounts {
+            open: std::sync::Mutex::new(std::collections::HashMap::new()),
+            max: max.max(1),
+        }
+    }
+
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<std::net::IpAddr, usize>> {
+        match self.open.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        }
+    }
+
+    /// A slot for a connection from `ip`, or `None` when that client is at its limit.
+    #[must_use]
+    pub fn try_acquire(self: &Arc<Self>, ip: std::net::IpAddr) -> Option<ConnectionSlot> {
+        let key = crate::ratelimit::bucket_key(ip);
+        let mut open = self.lock();
+        let n = open.entry(key).or_insert(0);
+        if *n >= self.max {
+            return None;
+        }
+        *n += 1;
+        Some(ConnectionSlot {
+            counts: Arc::clone(self),
+            key,
+        })
+    }
+
+    /// Connections open from `ip`'s client.
+    #[must_use]
+    pub fn open_from(&self, ip: std::net::IpAddr) -> usize {
+        self.lock()
+            .get(&crate::ratelimit::bucket_key(ip))
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        let mut open = self.counts.lock();
+        if let Some(n) = open.get_mut(&self.key) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                open.remove(&self.key);
+            }
+        }
+    }
+}
+
+/// Seconds between two warnings about refused connections (each is also counted in
+/// `h2s_connections_refused_total`), so a flood does not flood the log.
+const REFUSED_WARN_EVERY: i64 = 60;
 /// Time a client has to send its request headers.
 pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long shutdown waits for running jobs to stop.
@@ -210,6 +285,25 @@ impl Server {
         } = self;
         let app = router(state.clone());
         let limit = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+        let per_client = Arc::new(ConnectionCounts::new(
+            usize::try_from(state.cfg.file.server.max_connections_per_ip).unwrap_or(256),
+        ));
+        let mut last_warning = i64::MIN;
+        let mut refused = |reason: &'static str| {
+            state
+                .metrics
+                .connections_refused
+                .get_or_create(&crate::metrics::ReasonLabels { reason })
+                .inc();
+            let now = crate::util::now_unix();
+            if now.saturating_sub(last_warning) >= REFUSED_WARN_EVERY {
+                last_warning = now;
+                tracing::warn!(
+                    reason,
+                    "connection limit reached; closing new connections (counted in h2s_connections_refused_total)"
+                );
+            }
+        };
         let housekeeping = {
             let db = state.db.clone();
             tokio::spawn(async move {
@@ -228,14 +322,28 @@ impl Server {
                 accepted = listener.accept() => match accepted {
                     Ok((stream, peer)) => {
                         let Ok(permit) = Arc::clone(&limit).try_acquire_owned() else {
-                            tracing::warn!("connection limit reached; closing a new connection");
+                            refused("total");
                             drop(stream);
                             continue;
+                        };
+                        // Trusted reverse proxies carry many clients; they limit their own.
+                        let slot = if state.cfg.is_trusted_proxy(peer.ip()) {
+                            None
+                        } else {
+                            match per_client.try_acquire(peer.ip()) {
+                                Some(s) => Some(s),
+                                None => {
+                                    refused("per_client");
+                                    drop(stream);
+                                    continue;
+                                }
+                            }
                         };
                         let app = app.clone();
                         let rx = shutdown_tx.subscribe();
                         tokio::spawn(async move {
                             serve_connection(stream, peer, app, rx).await;
+                            drop(slot);
                             drop(permit);
                         });
                     }

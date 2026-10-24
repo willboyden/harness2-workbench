@@ -66,6 +66,9 @@ pub struct ServerSection {
     /// Event streams one principal (a token and its sessions, or a proxy user) may hold.
     pub sse_max_per_principal: u32,
     pub login_attempts_per_minute: u32,
+    /// Open connections one client address (IPv6: one /64) may hold; trusted proxies are
+    /// exempt (a reverse proxy limits its own clients).
+    pub max_connections_per_ip: u32,
 }
 
 impl Default for ServerSection {
@@ -80,6 +83,7 @@ impl Default for ServerSection {
             sse_max_connections: 64,
             sse_max_per_principal: 8,
             login_attempts_per_minute: 10,
+            max_connections_per_ip: 256,
         }
     }
 }
@@ -1058,6 +1062,13 @@ fn validate(
         s.login_attempts_per_minute,
         1,
         10_000,
+    );
+    range_check(
+        problems,
+        "server.max_connections_per_ip",
+        s.max_connections_per_ip,
+        1,
+        1024,
     );
 
     let a = &file.auth;
