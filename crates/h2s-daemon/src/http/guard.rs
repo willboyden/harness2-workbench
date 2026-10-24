@@ -74,27 +74,38 @@ fn valid_request_id(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b':'))
 }
 
-/// The client behind a trusted proxy: the right-most `X-Forwarded-For` entry that is not
-/// itself a trusted proxy.
+/// The client behind a trusted proxy (see [`forwarded_client_from`]).
 fn forwarded_client(state: &AppState, headers: &http::HeaderMap) -> Option<IpAddr> {
-    let mut chain: Vec<IpAddr> = Vec::new();
-    for v in headers.get_all("x-forwarded-for") {
-        let Ok(s) = v.to_str() else { continue };
-        for part in s.split(',') {
-            let p = part.trim();
-            let ip = p
-                .parse::<IpAddr>()
-                .ok()
-                .or_else(|| p.parse::<SocketAddr>().ok().map(|a| a.ip()));
-            chain.push(ip?);
+    let values: Vec<&[u8]> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .map(HeaderValue::as_bytes)
+        .collect();
+    forwarded_client_from(&values, |ip| state.cfg.is_trusted_proxy(ip))
+}
+
+/// Walk `X-Forwarded-For` from the right, where our proxies appended what they saw, and
+/// return the first address that is not itself a trusted proxy. An entry that is not an
+/// address ends the walk: everything left of it was written by the client, so the left-most
+/// trusted hop seen so far is the answer (one malformed entry must not discard the real
+/// client address and put every client behind the proxy into one rate-limit bucket).
+fn forwarded_client_from(values: &[&[u8]], is_trusted: impl Fn(IpAddr) -> bool) -> Option<IpAddr> {
+    let mut last_trusted = None;
+    for value in values.iter().rev() {
+        for part in value.rsplit(|b| *b == b',') {
+            let ip = std::str::from_utf8(part).ok().map(str::trim).and_then(|p| {
+                p.parse::<IpAddr>()
+                    .ok()
+                    .or_else(|| p.parse::<SocketAddr>().ok().map(|a| a.ip()))
+            });
+            let Some(ip) = ip else { return last_trusted };
+            if !is_trusted(ip) {
+                return Some(ip);
+            }
+            last_trusted = Some(ip);
         }
     }
-    let first = chain.first().copied();
-    chain
-        .into_iter()
-        .rev()
-        .find(|ip| !state.cfg.is_trusted_proxy(*ip))
-        .or(first)
+    last_trusted
 }
 
 pub(crate) fn host_allowed(state: &AppState, req: &Request) -> bool {
@@ -316,6 +327,36 @@ mod tests {
         assert!(!valid_request_id("a b"));
         assert!(!valid_request_id(&"a".repeat(129)));
         assert!(!valid_request_id("a\nb"));
+    }
+
+    #[test]
+    fn forwarded_for_takes_the_right_most_untrusted_address() {
+        let trusted = |ip: IpAddr| matches!(ip, IpAddr::V4(v4) if v4.octets()[0] == 10);
+        let client = |values: &[&str]| {
+            let raw: Vec<&[u8]> = values.iter().map(|v| v.as_bytes()).collect();
+            forwarded_client_from(&raw, trusted).map(|ip| ip.to_string())
+        };
+        let ip = |s: &str| Some(s.to_owned());
+        assert_eq!(client(&["203.0.113.5"]), ip("203.0.113.5"));
+        // Client-supplied junk left of what the proxy appended is ignored.
+        assert_eq!(client(&["garbage, 203.0.113.5"]), ip("203.0.113.5"));
+        assert_eq!(client(&["198.51.100.1, 203.0.113.5"]), ip("203.0.113.5"));
+        assert_eq!(
+            client(&["203.0.113.9, 203.0.113.5, 10.0.0.2"]),
+            ip("203.0.113.5")
+        );
+        assert_eq!(client(&["198.51.100.7", "203.0.113.5"]), ip("203.0.113.5"));
+        assert_eq!(client(&["[2001:db8::1]:443"]), ip("2001:db8::1"));
+        // Junk between trusted hops ends the walk at the last trusted hop.
+        assert_eq!(client(&["203.0.113.5, junk, 10.0.0.2"]), ip("10.0.0.2"));
+        assert_eq!(client(&["10.0.0.3, 10.0.0.2"]), ip("10.0.0.3"));
+        assert_eq!(client(&[]), None);
+        assert_eq!(client(&["junk"]), None);
+        let raw: Vec<&[u8]> = vec![b"\xff\xfe, 203.0.113.5"];
+        assert_eq!(
+            forwarded_client_from(&raw, trusted),
+            Some("203.0.113.5".parse().unwrap())
+        );
     }
 
     #[test]

@@ -248,7 +248,11 @@ impl Default for ContainerSection {
     }
 }
 
-/// One egress allowlist entry: `"host"`, `"*.suffix"` or `{host = "...", allow_private = true}`.
+/// Ports an allowlisted host may be reached on unless its entry lists others.
+pub const DEFAULT_EGRESS_PORTS: [u16; 2] = [443, 80];
+
+/// One egress allowlist entry: `"host"`, `"*.suffix"` or
+/// `{host = "...", allow_private = true, ports = [4000]}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum AllowEntry {
@@ -262,6 +266,9 @@ pub struct AllowEntryDetailed {
     pub host: String,
     #[serde(default)]
     pub allow_private: bool,
+    /// Empty (the default) = [`DEFAULT_EGRESS_PORTS`].
+    #[serde(default)]
+    pub ports: Vec<u16>,
 }
 
 impl AllowEntry {
@@ -278,6 +285,14 @@ impl AllowEntry {
         match self {
             AllowEntry::Host(_) => false,
             AllowEntry::Detailed(d) => d.allow_private,
+        }
+    }
+
+    #[must_use]
+    pub fn ports(&self) -> Vec<u16> {
+        match self {
+            AllowEntry::Detailed(d) if !d.ports.is_empty() => d.ports.clone(),
+            _ => DEFAULT_EGRESS_PORTS.to_vec(),
         }
     }
 }
@@ -459,6 +474,8 @@ pub struct AllowRule {
     pub host: String,
     pub wildcard: bool,
     pub allow_private: bool,
+    /// Ports this host may be reached on (never empty).
+    pub ports: Vec<u16>,
 }
 
 /// The validated configuration the server runs with.
@@ -1170,10 +1187,15 @@ fn validate(
             continue;
         }
         check_hostname(problems, &format!("egress.allow[{i}]"), &host);
+        let ports = entry.ports();
+        if ports.contains(&0) {
+            problems.push(format!("egress.allow[{i}].ports: 0 is not a port"));
+        }
         egress_allow.push(AllowRule {
             host,
             wildcard,
             allow_private: entry.allow_private(),
+            ports,
         });
     }
 
