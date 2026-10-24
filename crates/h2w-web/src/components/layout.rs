@@ -54,7 +54,7 @@ fn Sidebar() -> impl IntoView {
     let s = session();
     let version = move || {
         s.system
-            .with(|i| i.as_ref().map(|i| format!("v{}", i.studio_version)))
+            .with(|i| i.as_ref().map(|i| format!("v{}", i.workbench_version)))
             .unwrap_or_default()
     };
     view! {
