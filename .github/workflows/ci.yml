@@ -86,6 +86,65 @@ jobs:
           path: dist/web
           retention-days: 7
 
+  e2e:
+    name: end-to-end (real harness2 demo, Firefox, MCP)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: wasm-bindgen-cli@0.2.129
+      - name: harness2 at the commit this release is tested against
+        # Ubuntu 24.04's python3 is 3.12, which harness2 requires (>=3.12,<3.14).
+        run: |
+          commit=$(sed -n 's/^pub const TESTED_HARNESS2_COMMIT: &str = "\([0-9a-f]\{40\}\)";/\1/p' crates/h2s-core/src/lib.rs)
+          test -n "$commit"
+          home="$RUNNER_TEMP/harness2"
+          git init -q "$home"
+          git -C "$home" fetch -q --depth 1 https://github.com/google-research/harness2.git "$commit"
+          git -C "$home" checkout -q --detach FETCH_HEAD
+          python3 -m venv "$home/.venv"
+          "$home/.venv/bin/pip" install -q -e "$home[render]"
+      - name: cargo xtask e2e
+        run: |
+          if [ -n "${GECKOWEBDRIVER:-}" ]; then export GECKODRIVER="$GECKOWEBDRIVER/geckodriver"; fi
+          cargo xtask e2e --harness2-home "$RUNNER_TEMP/harness2"
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-artifacts
+          path: target/e2e-artifacts
+          retention-days: 7
+
+  images:
+    name: container images (runner + all-in-one)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The default docker builder: the all-in-one image starts FROM the local runner image.
+      - run: docker build -f deploy/docker/runner.Dockerfile -t harness2-studio-runner:0.1.0 .
+      - run: docker build -f deploy/docker/Dockerfile -t harness2-studio:0.1.0 .
+      - name: Smoke
+        run: |
+          docker run --rm harness2-studio:0.1.0 version
+          docker run --rm --entrypoint sh harness2-studio:0.1.0 -c \
+            'test "$HOME" = /home/node && test "$H2S_CONFIG" = /config/h2studio.toml'
+          # Container jobs on a rootless runtime run as uid 0 with no capabilities; HOME must
+          # still be writable for them (and for a rootful runtime's uid 1000).
+          for user in 0:0 1000:1000; do
+            docker run --rm --user "$user" --cap-drop ALL --security-opt no-new-privileges \
+              harness2-studio-runner:0.1.0 bash -c 'touch "$HOME/probe"'
+          done
+          docker compose -f deploy/compose.yaml config --quiet
+
   supply-chain:
     name: supply chain (cargo-deny + cooldown)
     runs-on: ubuntu-24.04
