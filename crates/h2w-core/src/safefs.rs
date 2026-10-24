@@ -4,16 +4,108 @@
 //! never *follow* a symlink at all (an executor can plant one in its run directory), so every
 //! path is walked one component at a time: `lstat` the entry, refuse symlinks, open it, and
 //! check the opened handle is the same inode that was `lstat`ed (a swap in between is refused).
+//!
+//! Files are opened with `O_NONBLOCK | O_NOFOLLOW` and checked with `fstat` before the first
+//! read ([`open_file`]): a FIFO, device or socket swapped in after the `lstat` is refused at
+//! once instead of blocking the reading thread.
 
 use std::io::Read;
 
-use cap_std::fs::{Dir, File, Metadata, MetadataExt};
+use cap_std::fs::{Dir, File, Metadata, MetadataExt, OpenOptions, OpenOptionsExt};
 
 use crate::{CoreError, Result};
 
 /// Most entries [`list`] returns for one directory; more is [`CoreError::TooLarge`], so a
 /// directory listing never grows without bound.
 pub(crate) const MAX_DIR_ENTRIES: usize = 250_000;
+
+/// The `open(2)` flags and error numbers [`open_file`] needs. `std` exposes no `O_*`
+/// constants and this crate has no libc dependency, so the kernel's values are spelled out
+/// per target (they differ between architectures); `rustix`, under `cap-std`, refuses bits it
+/// does not know. A target missing here does not build.
+mod sys {
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android"),
+        any(
+            target_arch = "x86",
+            target_arch = "x86_64",
+            target_arch = "riscv32",
+            target_arch = "riscv64",
+            target_arch = "loongarch64",
+            target_arch = "s390x"
+        )
+    ))]
+    pub(super) const O_NOFOLLOW: i32 = 0o400_000;
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android"),
+        any(
+            target_arch = "aarch64",
+            target_arch = "arm",
+            target_arch = "powerpc",
+            target_arch = "powerpc64"
+        )
+    ))]
+    pub(super) const O_NOFOLLOW: i32 = 0o100_000;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) const O_NONBLOCK: i32 = 0o4_000;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) const ELOOP: i32 = 40;
+
+    #[cfg(any(
+        target_vendor = "apple",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    pub(super) const O_NOFOLLOW: i32 = 0x100;
+    #[cfg(any(
+        target_vendor = "apple",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    pub(super) const O_NONBLOCK: i32 = 0x4;
+    #[cfg(any(
+        target_vendor = "apple",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    pub(super) const ELOOP: i32 = 62;
+
+    /// The same on every target above.
+    pub(super) const ENXIO: i32 = 6;
+
+    #[cfg(not(any(
+        all(
+            any(target_os = "linux", target_os = "android"),
+            any(
+                target_arch = "x86",
+                target_arch = "x86_64",
+                target_arch = "riscv32",
+                target_arch = "riscv64",
+                target_arch = "loongarch64",
+                target_arch = "s390x",
+                target_arch = "aarch64",
+                target_arch = "arm",
+                target_arch = "powerpc",
+                target_arch = "powerpc64"
+            )
+        ),
+        target_vendor = "apple",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    )))]
+    compile_error!(
+        "safefs::sys has no O_NONBLOCK / O_NOFOLLOW / ELOOP values for this target: add the \
+         kernel's values before building h2w-core here"
+    );
+}
 
 /// Kind of a directory entry, never following symlinks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,7 +211,14 @@ fn split_parent(rel: &str) -> (&str, &str) {
     }
 }
 
-/// Open the regular file at `rel` without following symlinks.
+/// Open the regular file at `rel` without following symlinks and without blocking: the
+/// handle and the file's size.
+///
+/// The entry is `lstat`ed first (a symlink or anything but a regular file is refused), then
+/// opened with `O_NONBLOCK | O_NOFOLLOW`, then the open handle is `fstat`ed: it must still be
+/// a regular file with the device and inode the `lstat` saw. So a FIFO, device, socket,
+/// symlink or other file swapped in between is refused at once, never read and never waited
+/// on. `O_NONBLOCK` stays set; regular files ignore it.
 pub(crate) fn open_file(dir: &Dir, rel: &str, what: &str) -> Result<(File, u64)> {
     let (parent, name) = split_parent(rel);
     let parent = open_dir(dir, parent, what)?;
@@ -128,21 +227,49 @@ pub(crate) fn open_file(dir: &Dir, rel: &str, what: &str) -> Result<(File, u64)>
             "invalid path component in {what}"
         )));
     }
-    let meta = parent.symlink_metadata(name).map_err(|e| map_io(e, what))?;
-    match kind_of(&meta) {
+    let seen = parent.symlink_metadata(name).map_err(|e| map_io(e, what))?;
+    match kind_of(&seen) {
         EntryKind::File => {}
-        EntryKind::Symlink => {
-            return Err(CoreError::Refused(format!(
-                "{what} is a symbolic link, which is never followed"
-            )));
-        }
-        EntryKind::Dir | EntryKind::Other => {
-            return Err(CoreError::Refused(format!("{what} is not a regular file")));
-        }
+        EntryKind::Symlink => return Err(symlink_refused(what)),
+        EntryKind::Dir | EntryKind::Other => return Err(not_regular(what)),
     }
-    let file = parent.open(name).map_err(|e| map_io(e, what))?;
+    open_seen(&parent, name, &seen, what)
+}
+
+fn symlink_refused(what: &str) -> CoreError {
+    CoreError::Refused(format!(
+        "{what} is a symbolic link, which is never followed"
+    ))
+}
+
+fn not_regular(what: &str) -> CoreError {
+    CoreError::Refused(format!("{what} is not a regular file"))
+}
+
+/// The second half of [`open_file`]: open `name` in `parent` without blocking or following a
+/// symlink, and accept the handle only if it is the regular file `seen` describes.
+///
+/// `O_NOFOLLOW` acts where the kernel resolves the name (`openat2`, Linux 5.6+); cap-std's
+/// fallback resolver follows a link that stays inside the root, and then the inode check
+/// refuses what it opened. Either way nothing but `seen` is ever read.
+fn open_seen(parent: &Dir, name: &str, seen: &Metadata, what: &str) -> Result<(File, u64)> {
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(sys::O_NONBLOCK | sys::O_NOFOLLOW);
+    let file = parent
+        .open_with(name, &options)
+        .map_err(|e| match e.raw_os_error() {
+            Some(sys::ELOOP) => symlink_refused(what),
+            // What opening a socket (or a device without a driver) gives.
+            Some(sys::ENXIO) => not_regular(what),
+            _ => map_io(e, what),
+        })?;
     let opened = file.metadata()?;
-    if !same_inode(&meta, &opened) {
+    if !opened.is_file() {
+        return Err(not_regular(what));
+    }
+    if !same_inode(seen, &opened) {
         return Err(CoreError::Refused(format!(
             "{what} changed while it was opened"
         )));
@@ -370,7 +497,7 @@ pub(crate) fn is_dir(dir: &Dir, rel: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn root() -> (tempfile::TempDir, Dir) {
@@ -448,5 +575,94 @@ mod tests {
         assert!(matches!(err, CoreError::TooLarge(_)), "{err}");
         assert!(err.to_string().contains("4-byte limit"));
         assert!(read_whole_opt(&d, "nope", 4, "f").unwrap().is_none());
+    }
+
+    /// Run `f` on its own thread and fail, instead of hanging the test run, when it has not
+    /// returned within five seconds (a regression of the non-blocking open would block).
+    pub(crate) fn within<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the read blocked instead of returning")
+    }
+
+    pub(crate) fn mkfifo(path: &std::path::Path) {
+        let ok = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "mkfifo {} failed", path.display());
+    }
+
+    /// The race the reader must survive, made deterministic: the entry is `lstat`ed as a
+    /// regular file, then something else is renamed over it before the open.
+    fn swap_after_lstat(replace: impl FnOnce(&std::path::Path)) -> Result<(File, u64)> {
+        let (t, d) = root();
+        let path = t.path().join("summary.json");
+        std::fs::write(&path, "{}").unwrap();
+        let seen = d.symlink_metadata("summary.json").unwrap();
+        let other = t.path().join("other");
+        replace(&other);
+        std::fs::rename(&other, &path).unwrap();
+        let out = within(move || open_seen(&d, "summary.json", &seen, "summary.json"));
+        drop(t);
+        out
+    }
+
+    fn refusal(r: Result<(File, u64)>) -> String {
+        match r {
+            Err(CoreError::Refused(why)) => why,
+            Err(e) => panic!("expected a refusal, got {e}"),
+            Ok(_) => panic!("expected a refusal, got an open file"),
+        }
+    }
+
+    #[test]
+    fn a_fifo_swapped_in_after_the_lstat_is_refused_without_blocking() {
+        // A FIFO without a writer: a blocking open would wait forever.
+        let why = refusal(swap_after_lstat(mkfifo));
+        assert_eq!(why, "summary.json is not a regular file");
+    }
+
+    #[test]
+    fn other_swaps_after_the_lstat_are_refused() {
+        let why = refusal(swap_after_lstat(|p| std::fs::write(p, "{}").unwrap()));
+        assert_eq!(why, "summary.json changed while it was opened");
+        // A symlink: O_NOFOLLOW refuses it, or the inode check refuses its target.
+        let why = refusal(swap_after_lstat(|p| {
+            std::fs::write(p.with_extension("target"), "{}").unwrap();
+            std::os::unix::fs::symlink("other.target", p).unwrap();
+        }));
+        assert!(
+            why.contains("symbolic link") || why.contains("changed while it was opened"),
+            "{why}"
+        );
+        // A socket cannot be opened at all (ENXIO).
+        let why = refusal(swap_after_lstat(|p| {
+            std::mem::forget(std::os::unix::net::UnixListener::bind(p).unwrap());
+        }));
+        assert_eq!(why, "summary.json is not a regular file");
+    }
+
+    #[test]
+    fn a_fifo_in_place_of_a_file_is_refused_by_every_reader() {
+        let (t, d) = root();
+        mkfifo(&t.path().join("f"));
+        let d2 = d.try_clone().unwrap();
+        let errs = within(move || {
+            [
+                read_whole(&d2, "f", 64, "f").map(|_| ()),
+                read_capped(&d2, "f", 64, "f").map(|_| ()),
+                read_text_opt(&d2, "f", 64, "f").map(|_| ()),
+            ]
+        });
+        for e in errs {
+            assert!(matches!(e, Err(CoreError::Refused(_))), "{e:?}");
+        }
+        // The non-blocking handle still reads regular files normally.
+        std::fs::write(t.path().join("g"), "x".repeat(100_000)).unwrap();
+        assert_eq!(read_whole(&d, "g", 1 << 20, "g").unwrap().len(), 100_000);
     }
 }

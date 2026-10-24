@@ -2144,6 +2144,54 @@ mod tests {
         rows.iter().find(|r| r.slug == slug).unwrap().status.clone()
     }
 
+    /// A job swapping one task's `summary.json` for a FIFO and back, as fast as it can,
+    /// while the task list is read over and over: every read returns (the FIFO is never
+    /// waited on) and that task is either read or listed as unreadable.
+    #[test]
+    fn task_lists_survive_a_fifo_swapped_in_and_out() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let lab = Lab::new();
+        for i in 0..20 {
+            lab.summary(&format!("t{i:02}"), 0.25);
+        }
+        let task = lab.root.path().join(format!("{}/t00", Lab::SWEEP));
+        let body = std::fs::read(task.join("summary.json")).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let swapper = {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut swaps = 0_u32;
+                while !stop.load(Ordering::Relaxed) {
+                    crate::safefs::tests::mkfifo(&task.join("fifo"));
+                    std::fs::rename(task.join("fifo"), task.join("summary.json")).unwrap();
+                    std::fs::write(task.join("real"), &body).unwrap();
+                    std::fs::rename(task.join("real"), task.join("summary.json")).unwrap();
+                    swaps += 1;
+                }
+                swaps
+            })
+        };
+        let (exp, ns) = lab.open();
+        let seen = crate::safefs::tests::within(move || {
+            let mut seen = std::collections::BTreeSet::new();
+            let started = std::time::Instant::now();
+            while started.elapsed() < std::time::Duration::from_secs(1) {
+                let rows = exp.tasks(&ns).unwrap();
+                assert_eq!(rows.len(), 20);
+                seen.insert(status_of(&rows, "t00"));
+                assert_eq!(status_of(&rows, "t19"), "ok");
+            }
+            seen
+        });
+        stop.store(true, Ordering::Relaxed);
+        assert!(swapper.join().unwrap() > 0);
+        assert!(
+            seen.iter().all(|s| s == "ok" || s == "unreadable"),
+            "{seen:?}"
+        );
+    }
+
     /// An oversized summary is flagged without being parsed (it is valid JSON: parsing it
     /// would give status `ok`), and every other summary of the sweep still reads.
     #[test]
