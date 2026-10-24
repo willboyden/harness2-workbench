@@ -1,0 +1,12 @@
+{
+  "benchmark": "lab",
+  "seed": 42,
+  "train_fraction": 0.5,
+  "train": [
+    "contracts/nda-review"
+  ],
+  "test": [
+    "contracts/msa-redline",
+    "litigation/motion-draft"
+  ]
+}

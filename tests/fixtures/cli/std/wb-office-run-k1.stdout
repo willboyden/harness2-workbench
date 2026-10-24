@@ -1,0 +1,7 @@
+sweep wb-office-oc-agg1: 1 domain(s) in parallel, tasks within a domain in stream order
+  [presentations] 1/1 ok           deck-outline
+  [spreadsheets] 1/1 ok           sheet-merge
+
+sweep wb-office-oc-agg1: 2 tasks ok, 0 failed, 0 domain(s) died
+record: /fixture/std/wb/office/adapt/_sweeps/wb-office-oc-agg1-20261023T213307Z.json
+next:   python3 -m harness2.cli.judge --bench wb --subset office --substrate oc --k 1 --modes sequential

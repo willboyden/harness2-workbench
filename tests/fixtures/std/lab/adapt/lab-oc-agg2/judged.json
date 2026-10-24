@@ -1,0 +1,40 @@
+[
+  {
+    "task_id": "contracts/msa-redline",
+    "mode": "agg",
+    "k": 2,
+    "label": "agg2",
+    "run_id": "lab-oc-agg2/contracts/msa-redline/agg2",
+    "chosen_is_base": false,
+    "n_passed": 4,
+    "n_criteria": 4,
+    "all_pass": true,
+    "raw": {
+      "n_passed": 4,
+      "n_criteria": 4,
+      "all_pass": true
+    },
+    "error": "",
+    "frac": 1.0,
+    "graded": true
+  },
+  {
+    "task_id": "contracts/nda-review",
+    "mode": "agg",
+    "k": 2,
+    "label": "agg1",
+    "run_id": "lab-oc-agg2/contracts/nda-review/agg1",
+    "chosen_is_base": false,
+    "n_passed": 4,
+    "n_criteria": 4,
+    "all_pass": true,
+    "raw": {
+      "n_passed": 4,
+      "n_criteria": 4,
+      "all_pass": true
+    },
+    "error": "",
+    "frac": 1.0,
+    "graded": true
+  }
+]

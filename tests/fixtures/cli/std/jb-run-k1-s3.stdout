@@ -1,0 +1,8 @@
+sweep jb-oc-agg1-s3: 1 domain(s) in parallel, tasks within a domain in stream order
+  [auditor] 1/1 ok           auditor/task1
+  [accountant] 1/2 ok           accountant/task2
+  [accountant] 2/2 ok           accountant/task1
+
+sweep jb-oc-agg1-s3: 3 tasks ok, 0 failed, 0 domain(s) died
+record: /fixture/std/jb/adapt/_sweeps/jb-oc-agg1-s3-20261023T213307Z.json
+next:   python3 -m harness2.cli.judge --bench jb --substrate oc --k 1 --seed 3 --modes parallel

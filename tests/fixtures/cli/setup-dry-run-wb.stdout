@@ -1,0 +1,21 @@
+git init -q /fixture/harness2/dependencies/opencode
+git -C /fixture/harness2/dependencies/opencode remote add origin https://github.com/anomalyco/opencode.git
+git -C /fixture/harness2/dependencies/opencode fetch --depth 1 origin 23fb5e0516c99ac04a1aa46c193efda2e1b9bb24
+git -C /fixture/harness2/dependencies/opencode checkout --detach FETCH_HEAD
+git -C /fixture/harness2/dependencies/opencode apply --check /fixture/harness2/third_party/patches/opencode-compat.diff
+git -C /fixture/harness2/dependencies/opencode apply /fixture/harness2/third_party/patches/opencode-compat.diff
+npm install --prefix /fixture/harness2/dependencies/tools bun@1.3.11
+[/fixture/harness2/dependencies/opencode] /fixture/harness2/dependencies/tools/node_modules/.bin/bun install --frozen-lockfile --ignore-scripts
+git init -q /fixture/harness2/dependencies/workbuddy-bench
+git -C /fixture/harness2/dependencies/workbuddy-bench remote add origin https://github.com/Tencent/workbuddy-bench.git
+git -C /fixture/harness2/dependencies/workbuddy-bench fetch --depth 1 origin b516950be5b56eb3be406c2f76ee1c5111dcb57f
+git -C /fixture/harness2/dependencies/workbuddy-bench checkout --detach FETCH_HEAD
+git -C /fixture/harness2/dependencies/workbuddy-bench apply --check /fixture/harness2/third_party/patches/workbuddy-bench-runtime.diff
+git -C /fixture/harness2/dependencies/workbuddy-bench apply /fixture/harness2/third_party/patches/workbuddy-bench-runtime.diff
+Copy runner assets: /fixture/harness2/third_party/wb_runner/agents -> /fixture/harness2/dependencies/workbuddy-bench/src/workbuddy_bench/agents
+Copy runner assets: /fixture/harness2/third_party/wb_runner/configs/harnesses -> /fixture/harness2/dependencies/workbuddy-bench/configs/harnesses
+[/fixture/harness2/dependencies/workbuddy-bench] uv sync --locked --python 3.12
+Configure WorkBuddy solver and judge routes -- WorkBuddy setup requires a google-vertex/gemini... executor and a gemini... judge; choose IDs available in your project
+[/fixture/harness2/dependencies/workbuddy-bench] bash scripts/dataset/fetch-dataset.sh office web code
+[/fixture/harness2/dependencies/workbuddy-bench] uv run --no-sync bash scripts/harness/build-harness-mounts.sh --harness opencode/1.14.18
+Setup plan complete.

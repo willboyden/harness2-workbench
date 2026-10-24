@@ -19,7 +19,9 @@ pub struct Health {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Readiness {
+    /// Everything needed is in place.
     pub ready: bool,
+    /// Names of the parts that are not ready.
     pub failing: Vec<String>,
 }
 
@@ -54,17 +56,22 @@ pub struct SystemInfo {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Harness2Status {
+    /// Installed on the server.
     pub installed: bool,
     /// Installed and kept up to date by this server (vs an existing checkout it points at).
     pub managed: bool,
+    /// 40-hex git commit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
     /// The commit this Studio release was tested against.
     pub tested_commit: String,
+    /// Version string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// Python version of the virtual environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub python: Option<String>,
+    /// Optional package extras installed.
     #[serde(default)]
     pub extras: Vec<InstallExtra>,
     /// Admin only: the checkout directory.
@@ -94,9 +101,13 @@ pub struct DoctorCheck {
     /// Stable id, e.g. `uv`, `python312`, `node20`, `git`, `docker`, `pandoc`, `pdftoppm`,
     /// `gcloud`, `adc`, `harness2`, `container_runtime`, `runner_image`, `disk`.
     pub id: String,
+    /// Harness label (`base`, `inv1`, `dom1`, `agg1`, `c1`, ...).
     pub label: String,
+    /// Severity.
     pub level: CheckLevel,
+    /// What was found.
     pub detail: String,
+    /// How to fix it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remedy: Option<String>,
     /// Which features need this (`demo`, `lab`, `jb`, `wb`, `codex`, `vertex`, ...).
@@ -108,9 +119,11 @@ pub struct DoctorCheck {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DoctorReport {
+    /// One entry per check.
     pub checks: Vec<DoctorCheck>,
     /// No check is `fail`.
     pub ok: bool,
+    /// When this was generated (RFC 3339, UTC).
     pub generated_at: String,
 }
 
@@ -120,8 +133,10 @@ pub struct DoctorReport {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BenchmarkStatus {
     pub bench: Bench,
+    /// WorkBuddy-Bench subset (wb only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subset: Option<WbSubset>,
+    /// Human-readable name.
     pub display_name: String,
     /// The upstream checkout exists under harness2's `dependencies/`.
     pub installed: bool,
@@ -135,6 +150,7 @@ pub struct BenchmarkStatus {
     pub domains: Vec<DomainCount>,
     /// Host tools this benchmark needs beyond harness2 itself.
     pub requirements: Vec<String>,
+    /// Upstream repository.
     pub upstream_url: String,
     /// Licence summary; WorkBuddy's custom Tencent licence has a territorial limitation.
     pub license_note: String,

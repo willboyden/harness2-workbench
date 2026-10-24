@@ -1,0 +1,68 @@
+[
+  {
+    "task_id": "accountant/task1",
+    "mode": "agg",
+    "k": 1,
+    "label": "agg1",
+    "run_id": "jb-oc-agg1-s3/accountant/task1/agg1",
+    "chosen_is_base": false,
+    "n_passed": 7.5,
+    "n_criteria": 10.0,
+    "all_pass": false,
+    "raw": {
+      "n_passed": 7.5,
+      "n_criteria": 10.0,
+      "all_pass": false,
+      "metric": "weighted",
+      "criteria_passed": 3,
+      "criteria_count": 4,
+      "judge_model": "local-judge"
+    },
+    "error": "",
+    "frac": 0.75,
+    "graded": true
+  },
+  {
+    "task_id": "accountant/task2",
+    "mode": "agg",
+    "k": 1,
+    "label": "agg1",
+    "run_id": "jb-oc-agg1-s3/accountant/task2/agg1",
+    "chosen_is_base": false,
+    "n_passed": 7.5,
+    "n_criteria": 10.0,
+    "all_pass": false,
+    "raw": {
+      "n_passed": 7.5,
+      "n_criteria": 10.0,
+      "all_pass": false,
+      "metric": "weighted",
+      "criteria_passed": 3,
+      "criteria_count": 4,
+      "judge_model": "local-judge"
+    },
+    "error": "",
+    "frac": 0.75,
+    "graded": true
+  },
+  {
+    "task_id": "auditor/task1",
+    "mode": "agg",
+    "k": 1,
+    "label": "agg1",
+    "run_id": "jb-oc-agg1-s3/auditor/task1/agg1",
+    "chosen_is_base": false,
+    "n_passed": 3,
+    "n_criteria": 5,
+    "all_pass": false,
+    "raw": {
+      "n_passed": 3,
+      "n_criteria": 5,
+      "all_pass": false,
+      "metric": "unweighted-fallback"
+    },
+    "error": "",
+    "frac": 0.6,
+    "graded": true
+  }
+]

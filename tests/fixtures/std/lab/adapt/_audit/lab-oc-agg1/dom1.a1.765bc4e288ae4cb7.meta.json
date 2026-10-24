@@ -1,0 +1,11 @@
+{
+  "label": "dom1.a1",
+  "ok": true,
+  "channel": "opencode",
+  "model": "local/improver",
+  "effort": "high",
+  "attempts": 1,
+  "wall_s": 1.5,
+  "cost_usd": 0.0125,
+  "error": ""
+}

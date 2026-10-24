@@ -1,0 +1,126 @@
+{
+  "task_id": "ledger-1",
+  "domain": "accounting",
+  "k": 1,
+  "seed": null,
+  "status": "ok",
+  "base": [
+    {
+      "label": "base1",
+      "run_id": "demo-oc-agg1/ledger-1/base1",
+      "run_dir": "/fixture/demo-k1-parallel/executions/demo-oc-agg1/ledger-1/base1"
+    }
+  ],
+  "modes": {
+    "agg": {
+      "mode": "agg",
+      "task_id": "ledger-1",
+      "k": 1,
+      "finals": [
+        "agg1"
+      ],
+      "ok": true,
+      "fell_back": [],
+      "kept_base": [],
+      "stages": [
+        {
+          "label": "inv1",
+          "dim": "INV",
+          "fell_back": false,
+          "kept_base": false,
+          "attempts": 1,
+          "usd": 0.0,
+          "cached": false,
+          "notes": "Keep signed amounts: the base total omitted credits in the source ledger.",
+          "error": ""
+        },
+        {
+          "label": "dom1",
+          "dim": "DOM",
+          "fell_back": false,
+          "kept_base": false,
+          "attempts": 1,
+          "usd": 0.0,
+          "cached": false,
+          "notes": "Keep signed amounts: the base total omitted credits in the source ledger.",
+          "error": ""
+        },
+        {
+          "label": "agg1",
+          "dim": "AGG",
+          "fell_back": false,
+          "kept_base": false,
+          "attempts": 1,
+          "usd": 0.0,
+          "cached": false,
+          "notes": "Keep signed amounts: the base total omitted credits in the source ledger.",
+          "error": ""
+        }
+      ],
+      "similarity": {
+        "n": 1,
+        "n_distinct": 1,
+        "mean_line_jaccard": 1.0
+      },
+      "ledger": {
+        "mode": "agg",
+        "task_id": "ledger-1",
+        "k": 1,
+        "R": 4,
+        "expected_R": 4,
+        "P": 3,
+        "session_attempts": 3,
+        "expected_P": 3,
+        "usd": 0.0,
+        "rollout_usd": 0.0,
+        "session_usd": 0.0,
+        "rollouts": [
+          "base1",
+          "inv1",
+          "dom1",
+          "agg1"
+        ],
+        "sessions": [
+          "inv1",
+          "dom1",
+          "agg1"
+        ]
+      },
+      "errors": []
+    }
+  },
+  "selections": {
+    "agg": {
+      "task_id": "ledger-1",
+      "mode": "agg",
+      "k": 1,
+      "chosen_id": "A",
+      "chosen_label": "agg1",
+      "chosen_run_id": "demo-oc-agg1/ledger-1/agg1",
+      "chosen_is_base": false,
+      "why": "trivial pool: single final at k=1; delivered without a selector session",
+      "id_map": {
+        "A": "agg1"
+      },
+      "dropped": [],
+      "n_candidates": 1,
+      "ok": true,
+      "fallback": false,
+      "error": "",
+      "usd": 0.0,
+      "experience": {
+        "cue": "When a ledger includes credits and debits",
+        "lesson": "Include both signs when summing in scripts/summarize.py.",
+        "evidence": "The scripts/summarize.py row -- removing the positive-only filter changed the probe total to include the credits omitted by the base trajectory.",
+        "confidence": "high for this observed arithmetic contrast",
+        "edits": "component: scripts/summarize.py\ncandidates: inv1\nchange: dropped the positive-only filter from the amount sum\nobserved: the probe total included the credits the base run omitted\nverdict: helped"
+      },
+      "trivial": true,
+      "evidence": "deliverable",
+      "chosen_run_dir": "/fixture/demo-k1-parallel/executions/demo-oc-agg1/ledger-1/agg1",
+      "chosen_tree_is_base": false,
+      "harness_fingerprint": "851f1352f3589138"
+    }
+  },
+  "errors": []
+}

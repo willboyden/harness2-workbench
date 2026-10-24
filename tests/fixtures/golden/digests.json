@@ -1,0 +1,17 @@
+{
+ "demo-k2": {
+  "results_digest": "72753a8d4a497ffe3eca820b8f09f8646e1a1789fa15d2c53aae2e37d8b2fa36",
+  "size_bytes": 56842,
+  "files": 2
+ },
+ "demo-k1-parallel": {
+  "results_digest": "0677005573b60f1cd130e4ddb7577e2f680a1f76d81600bf57ccf8c937908197",
+  "size_bytes": 20975,
+  "files": 2
+ },
+ "std": {
+  "results_digest": "7baa6c28ffb01df3fef0b1c8e0db3d2764e33d45c3ef8a848531163e7ba6fd41",
+  "size_bytes": 728616,
+  "files": 16
+ }
+}

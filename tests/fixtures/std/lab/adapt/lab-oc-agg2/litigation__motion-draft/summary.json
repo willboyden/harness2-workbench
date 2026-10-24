@@ -1,0 +1,24 @@
+{
+  "task_id": "litigation/motion-draft",
+  "domain": "litigation",
+  "k": 2,
+  "seed": null,
+  "status": "base-failed",
+  "base": [
+    {
+      "label": "base1",
+      "run_id": "lab-oc-agg2/litigation/motion-draft/base1",
+      "run_dir": "/fixture/std/lab/adapt/lab-oc-agg2/litigation__motion-draft/missing"
+    },
+    {
+      "label": "base2",
+      "run_id": "lab-oc-agg2/litigation/motion-draft/base2",
+      "run_dir": "/fixture/std/lab/adapt/lab-oc-agg2/litigation__motion-draft/missing"
+    }
+  ],
+  "modes": {},
+  "selections": {},
+  "errors": [
+    "no base rollout produced anything"
+  ]
+}

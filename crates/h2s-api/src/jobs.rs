@@ -162,6 +162,7 @@ pub struct InstallParams {
     /// release was tested against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
+    /// Optional extras: `render` (always installed) and `bridge` (the LiteLLM proxy `harness2-bridge` needs).
     #[serde(default)]
     pub extras: Vec<InstallExtra>,
     /// Re-create the virtual environment even if harness2 is already installed.
@@ -175,9 +176,10 @@ pub struct InstallParams {
 pub struct DemoParams {
     /// Experiment that receives the demo output (created as a demo experiment if missing).
     pub experiment: String,
-    /// Recursion budget for the demo (1..=8).
+    /// Recursion budget for the demo (1 to 8).
     #[serde(default = "default_demo_k")]
     pub k: u32,
+    /// Which recursion modes the demo runs.
     #[serde(default)]
     pub mode: DemoMode,
 }
@@ -197,6 +199,7 @@ pub struct SetupParams {
     /// wb only. `None` for wb installs all three subsets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subset: Option<WbSubset>,
+    /// Executor framework (`oc` OpenCode or `cx` Codex).
     #[serde(default = "default_substrate")]
     pub substrate: Substrate,
     /// Print the setup plan without changing anything.
@@ -215,6 +218,7 @@ fn default_substrate() -> Substrate {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CheckParams {
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
     /// Profile whose model settings are checked. `None` = the default profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -225,9 +229,13 @@ pub struct CheckParams {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PreviewParams {
+    /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
+    /// Run identity and run control options of the sweep.
     pub options: RunOptions,
+    /// Model profile for model settings and price assumptions; absent = the experiment's profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
 }
@@ -236,8 +244,11 @@ pub struct PreviewParams {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RunParams {
+    /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
+    /// Run identity and run control options of the sweep.
     pub options: RunOptions,
     /// Model profile (executor, improver, judge). Must match the experiment's profile.
     pub profile: String,
@@ -255,15 +266,21 @@ pub struct RunParams {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct JudgeParams {
+    /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
+    /// The sweep's recursion budget k (part of its run identity: use the k the run used).
     pub k: u32,
+    /// The sweep's stream-order seed, if the run used one (part of its run identity; absent when the run had no seed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+    /// Recursion modes to judge: the same ones the run used.
     pub modes: Vec<Mode>,
     /// Score the reference (base) executions into `base_judged.json` instead.
     #[serde(default)]
     pub bases: bool,
+    /// Model profile name; must be the profile the experiment is pinned to.
     pub profile: String,
 }
 
@@ -271,12 +288,16 @@ pub struct JudgeParams {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ReportParams {
+    /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
     /// Recursion budgets to report together (`--k 1,2,3`).
     pub ks: Vec<u32>,
+    /// The sweep's stream-order seed, if the run used one (part of its run identity; absent when the run had no seed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+    /// Recursion modes to report: the same ones the run used.
     pub modes: Vec<Mode>,
 }
 
@@ -285,8 +306,10 @@ pub struct ReportParams {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SplitParams {
     pub bench: Bench,
+    /// WorkBuddy-Bench subset (wb only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subset: Option<WbSubset>,
+    /// Seed of the stratified shuffle (default 42).
     #[serde(default = "default_split_seed")]
     pub seed: u64,
     /// Fraction of each domain's tasks that go to `train` (exclusive 0..1; default 0.5).
@@ -315,8 +338,10 @@ pub struct BridgeParams {
     /// `--host 0.0.0.0`). Off = loopback only.
     #[serde(default)]
     pub expose_to_containers: bool,
+    /// TCP port for the bridge; absent = reuse the saved port or pick a free one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    /// Profile supplying the Vertex project and the Codex model.
     pub profile: String,
 }
 
@@ -324,15 +349,21 @@ pub struct BridgeParams {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PipelineParams {
+    /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
+    /// Benchmark, WorkBuddy subset and executor: the "cell" every harness2 command takes.
     pub cell: Cell,
+    /// Run identity and run control options of the sweep.
     pub options: RunOptions,
+    /// Model profile name; must be the profile the experiment is pinned to.
     pub profile: String,
     /// Also score the reference executions, so the report can compare against the base.
     #[serde(default)]
     pub judge_bases: bool,
+    /// Stop the job once recorded spend reaches this many USD (improver spend; harness2 does not record executor rollout spend). Absent = no cap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_usd: Option<f64>,
+    /// Must be `true` when the server runs jobs without container isolation (the executor then has the server user's files and network). Set it only with the user's informed consent.
     #[serde(default)]
     pub acknowledge_risks: bool,
 }
@@ -388,25 +419,36 @@ impl JobStatus {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Job {
+    /// Job id (UUIDv7).
     pub id: String,
+    /// Which harness2 operation the job runs.
     pub kind: JobKind,
+    /// What the job runs, as submitted.
     pub spec: JobSpec,
+    /// Lifecycle state.
     pub status: JobStatus,
     /// Display name of the principal that created it.
     pub created_by: String,
+    /// Creation time (RFC 3339, UTC).
     pub created_at: String,
+    /// Start time (RFC 3339, UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
+    /// End time (RFC 3339, UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
+    /// Process exit code, when the process has exited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+    /// Where the job's processes run.
     pub isolation: Isolation,
     /// One entry per process the job runs (a pipeline has several).
     #[serde(default)]
     pub steps: Vec<JobStep>,
+    /// Task progress, when the job reports it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<Progress>,
+    /// Parsed outcome, once the job has finished.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<JobResult>,
     /// One-line failure reason, safe to display.
@@ -425,11 +467,15 @@ pub struct Job {
 pub struct JobStep {
     /// e.g. `check`, `run`, `judge`, `judge-bases`, `report`, `fetch`, `venv`, `install`.
     pub name: String,
+    /// Lifecycle state of this step.
     pub status: JobStatus,
+    /// Process exit code, when the process has exited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+    /// Start time (RFC 3339, UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
+    /// End time (RFC 3339, UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
 }
@@ -439,7 +485,9 @@ pub struct JobStep {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Progress {
+    /// Tasks finished `ok` or `skipped`.
     pub done: u32,
+    /// Tasks finished with any other status (disjoint from `done`).
     pub failed: u32,
     /// Total tasks in the stream when known (from a preview or the sweep header).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -478,6 +526,7 @@ pub struct InstallResult {
     pub version: String,
     /// Python version of the venv, e.g. `3.12.14`.
     pub python: String,
+    /// Optional package extras installed.
     pub extras: Vec<InstallExtra>,
 }
 
@@ -485,9 +534,13 @@ pub struct InstallResult {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DemoResult {
+    /// Demo tasks completed.
     pub done: u32,
+    /// Demo tasks that failed.
     pub failed: u32,
+    /// Local executions the demo ran.
     pub execution_count: u32,
+    /// Deterministic editor calls the demo made.
     pub editor_calls: u32,
 }
 
@@ -495,6 +548,7 @@ pub struct DemoResult {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SetupResult {
+    /// Nothing was changed; `plan` lists what setup would do.
     pub dry_run: bool,
     /// The commands setup ran (or, for a dry run, would run), one per line.
     pub plan: Vec<String>,
@@ -507,6 +561,7 @@ pub struct SetupResult {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CheckResult {
+    /// harness2-check found nothing missing.
     pub ready: bool,
     /// Installed task count, from `Ready: ...; N tasks.`
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -522,7 +577,9 @@ pub struct CheckResult {
 pub struct StreamEntry {
     /// 1-based position in the stream.
     pub index: u32,
+    /// Domain (practice area, occupation or category) the task belongs to.
     pub domain: String,
+    /// Task id.
     pub task: String,
 }
 
@@ -530,7 +587,9 @@ pub struct StreamEntry {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DomainCount {
+    /// Domain (practice area, occupation or category) the task belongs to.
     pub domain: String,
+    /// Number of tasks.
     pub tasks: u32,
 }
 
@@ -538,6 +597,7 @@ pub struct DomainCount {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ModeNamespace {
+    /// Recursion mode.
     pub mode: Mode,
     /// e.g. `lab-oc-agg1-s7`.
     pub namespace: String,
@@ -550,14 +610,21 @@ pub struct ModeNamespace {
 pub struct PreviewResult {
     /// The `# <bench>-<sub> split=... seed=... k=... modes=...` header line.
     pub header: String,
+    /// The namespace each requested mode writes.
     pub namespaces: Vec<ModeNamespace>,
     /// Namespace whose task dirs hold `summary.json` for both modes (the parallel one).
     pub summary_namespace: String,
+    /// Domains run concurrently.
     pub workers: u32,
+    /// Every selected task in stream order.
     pub stream: Vec<StreamEntry>,
+    /// Domains in the selection with their task counts.
     pub domains: Vec<DomainCount>,
+    /// Tasks in the selection.
     pub total_tasks: u32,
+    /// Domains in the selection.
     pub total_domains: u32,
+    /// The server's size and cost estimate for this selection.
     pub estimate: CostEstimate,
 }
 
@@ -567,8 +634,11 @@ pub struct PreviewResult {
 pub struct RunResult {
     /// Summary namespace of the sweep, e.g. `lab-oc-agg1`.
     pub namespace: String,
+    /// Tasks completed (`ok` or resumed).
     pub done: u32,
+    /// Tasks that did not complete.
     pub failed: u32,
+    /// Domains whose worker died; their remaining tasks did not run.
     pub dead_domains: Vec<String>,
     /// File name of the sweep record under `adapt/_sweeps/`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -582,8 +652,11 @@ pub struct RunResult {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct JudgeResult {
+    /// The reference executions were scored (`base_judged.json`).
     pub bases: bool,
+    /// Rows in the judge cache after this run.
     pub rows: u32,
+    /// Rows the judge graded.
     pub graded: u32,
     /// Judge failures or no pick: NOT zeros, excluded from denominators.
     pub ungraded: u32,
@@ -601,8 +674,11 @@ pub struct ReportResult {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SplitResult {
+    /// Split file name.
     pub name: String,
+    /// Tasks in the train partition.
     pub train: u32,
+    /// Tasks in the test partition.
     pub test: u32,
 }
 
@@ -613,7 +689,9 @@ pub struct BridgeInfo {
     /// `HARNESS2_CODEX_BASE_URL` the bridge serves. Its key is stored as the secret
     /// `HARNESS2_CODEX_API_KEY` and never returned.
     pub base_url: String,
+    /// Vertex model id the bridge serves.
     pub model: String,
+    /// URL containers use to reach the bridge (`HARNESS2_CODEX_CONTAINER_URL`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_url: Option<String>,
 }
@@ -623,6 +701,9 @@ pub struct BridgeInfo {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PipelineResult {
     /// Results of the steps that finished, in order.
+    // Recursive (JobResult -> PipelineResult -> Vec<JobResult>): stop utoipa's schema
+    // collection from recursing forever. Wire format unchanged.
+    #[cfg_attr(feature = "openapi", schema(no_recursion))]
     pub steps: Vec<JobResult>,
 }
 
@@ -631,8 +712,11 @@ pub struct PipelineResult {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CostEstimate {
+    /// Tasks in the selection.
     pub tasks: u32,
+    /// Recursion modes counted.
     pub modes: u32,
+    /// Recursion budget.
     pub k: u32,
     /// Executor rollouts: k shared base runs + per mode 3k (2k candidates + k finals).
     pub rollouts: u64,
@@ -642,6 +726,7 @@ pub struct CostEstimate {
     /// USD range when prices are known (from the profile or past runs in this experiment).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usd_low: Option<f64>,
+    /// High end of the USD range.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usd_high: Option<f64>,
     /// `heuristic` (profile prices) or `history` (measured from earlier runs).
@@ -655,9 +740,13 @@ pub struct CostEstimate {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct EstimateRequest {
+    /// Number of tasks in the sweep (for example `total_tasks` of a preview).
     pub tasks: u32,
+    /// Recursion budget k (1 to 32).
     pub k: u32,
+    /// Recursion modes to run.
     pub modes: Vec<Mode>,
+    /// Model profile whose price assumptions to use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     /// Use measured spend from this experiment's earlier runs when available.
@@ -683,8 +772,11 @@ pub enum LogStream {
 pub struct LogLine {
     /// 0-based line number within the job log.
     pub n: u64,
+    /// Time of the event (RFC 3339, UTC).
     pub ts: String,
+    /// Which output stream the line came from.
     pub stream: LogStream,
+    /// Line text with secret values redacted.
     pub text: String,
 }
 
@@ -693,6 +785,7 @@ pub struct LogLine {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LogChunk {
+    /// Log lines in order.
     pub lines: Vec<LogLine>,
     /// Pass as `from` to continue.
     pub next: u64,
@@ -798,5 +891,24 @@ mod tests {
         let p: DemoParams = serde_json::from_str(r#"{"experiment":"demo"}"#).unwrap();
         assert_eq!(p.k, 2);
         assert_eq!(p.mode, DemoMode::Both);
+    }
+}
+
+#[cfg(all(test, feature = "openapi"))]
+mod openapi_tests {
+    use super::*;
+    use utoipa::ToSchema;
+
+    /// JobResult -> PipelineResult -> Vec<JobResult> is recursive; collecting the schemas of
+    /// anything that contains a Job must terminate (utoipa overflowed the stack without
+    /// `no_recursion` on `PipelineResult::steps`).
+    #[test]
+    fn recursive_job_schemas_terminate() {
+        let mut schemas = Vec::new();
+        <Job as ToSchema>::schemas(&mut schemas);
+        <JobEvent as ToSchema>::schemas(&mut schemas);
+        <crate::Page<Job> as ToSchema>::schemas(&mut schemas);
+        assert!(schemas.iter().any(|(name, _)| name == "JobResult"));
+        assert!(schemas.iter().any(|(name, _)| name == "PipelineResult"));
     }
 }

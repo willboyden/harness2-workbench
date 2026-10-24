@@ -41,6 +41,15 @@ enum Cmd {
     Check,
     /// Point git at the repository's hooks in .githooks/.
     Hooks,
+    /// End-to-end suites: real server + real harness2 demo + headless Firefox + MCP client.
+    E2e {
+        /// harness2 checkout with its .venv (default: $H2S_E2E_HARNESS2_HOME).
+        #[arg(long)]
+        harness2_home: Option<String>,
+        /// Run only test names containing this filter.
+        #[arg(long)]
+        filter: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -59,6 +68,10 @@ fn main() -> Result<()> {
         Cmd::Cooldown { days } => cooldown::check(&root, days),
         Cmd::Check => check(&root),
         Cmd::Hooks => run(&root, "git", &["config", "core.hooksPath", ".githooks"]),
+        Cmd::E2e {
+            harness2_home,
+            filter,
+        } => e2e(&root, harness2_home, filter.as_deref()),
     }
 }
 
@@ -189,5 +202,41 @@ fn check(root: &Path) -> Result<()> {
     run(root, "cargo", &["deny", "check"])?;
     cooldown::check(root, 14)?;
     eprintln!("all gates passed");
+    Ok(())
+}
+
+/// Build the UI (embedded by the server at compile time), then the binaries, then run the
+/// ignored end-to-end tests against them.
+fn e2e(root: &Path, harness2_home: Option<String>, filter: Option<&str>) -> Result<()> {
+    let home = harness2_home
+        .or_else(|| std::env::var("H2S_E2E_HARNESS2_HOME").ok())
+        .context("pass --harness2-home <checkout with .venv> or set H2S_E2E_HARNESS2_HOME")?;
+    if !Path::new(&home).join(".venv/bin/harness2-demo").is_file() {
+        bail!("{home} has no .venv/bin/harness2-demo; see crates/h2s-e2e/README.md");
+    }
+    build_web(root, true)?;
+    run(
+        root,
+        "cargo",
+        &["build", "--locked", "-p", "h2s-daemon", "-p", "h2s-mcp"],
+    )?;
+    let bin_dir = root.join("target/debug");
+    let mut args = vec!["test", "--locked", "-p", "h2s-e2e", "--"];
+    if let Some(f) = filter {
+        args.push(f);
+    }
+    args.extend(["--ignored", "--test-threads=2"]);
+    eprintln!("$ cargo {}", args.join(" "));
+    let status = Command::new("cargo")
+        .args(&args)
+        .current_dir(root)
+        .env("H2S_E2E_BIN_DIR", &bin_dir)
+        .env("H2S_E2E_HARNESS2_HOME", &home)
+        .status()
+        .context("could not start cargo test")?;
+    if !status.success() {
+        bail!("end-to-end tests failed ({status}); screenshots are in target/e2e-artifacts/");
+    }
+    eprintln!("end-to-end tests passed; screenshots in target/e2e-artifacts/");
     Ok(())
 }

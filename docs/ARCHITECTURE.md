@@ -405,4 +405,69 @@ spans carry method, matched route, status, request id (never headers or bodies).
 
 ## 16. Contract addenda
 
-(none yet)
+**v1.1 (2026-10-23) — SSE framing.** `GET /api/v1/jobs/{id}/events` frames are UNNAMED: no
+`event:` line, so browsers deliver them to `EventSource.onmessage`. Each frame carries exactly one
+`JobEvent` JSON object in its `data:` field (axum `Event::default().json_data(..)`). The server
+MAY set `id:` to the job-log line number of `log` events; clients may ignore it. Comment frames
+(`: keep-alive`) are allowed in addition to `heartbeat` events.
+
+**v1.1 (2026-10-23) — units.** `Comparison.tasks[].{a,b,delta}` and
+`Comparison.{mean_a,mean_b,mean_delta}` are FRACTIONS in 0..1 (partial credit, the same unit as
+`JudgedRow.frac` and `TaskModeOutcome.score`); `delta = b - a` in fraction units (show ×100 as
+percentage points). Percent (0..100) is used only by `ModeScore`, `ModeSummary` and
+`ScoreReport.base_score`, matching upstream's report.
+
+**v1.1 (2026-10-23) — UI test hooks.** The end-to-end suite selects elements only by
+`data-testid`: `login-token`, `login-submit`, `login-error`; `nav-dashboard`, `nav-experiments`,
+`nav-jobs`, `nav-new-run`, `nav-compare`, `nav-benchmarks`, `nav-settings`, `nav-help`,
+`current-user`, `theme-toggle`; `dashboard`, `harness2-status`; `experiment-row` (+`data-name`),
+`experiment-create`; `sweep-row` (+`data-sweep`); `tab-tasks`, `tab-report`, `tab-library`,
+`tab-audit`, `task-row` (+`data-task`), `report-view`, `library-view`; `mode-section`
+(+`data-mode`), `harness-label` (+`data-label`), `diff-from`, `diff-to`, `diff-view`,
+`export-button`; `job-row` (+`data-job-id`), `job-status` (text = the `JobStatus` string),
+`job-log`, `job-cancel`; `toast`.
+
+**v1.1 (2026-10-23) — server CLI for automation.** `h2studio serve` accepts port 0 and prints one
+STDOUT line `h2studio listening on http://<ip>:<port>` once bound. `init` and `token create`
+accept `--config` and print the new token as the only STDOUT line (explanations on stderr);
+`init` refuses to overwrite an existing configuration unless `--force`.
+
+**v1.1 (2026-10-23) — MCP argument names.** Tool arguments mirror the REST names:
+`experiment`, `sweep` (summary namespace id), `task` (slug), `mode`, `label`, `from`/`to`, `path`,
+`session` + `part`, `job_id`; `run_demo` takes the `DemoParams` fields flat; `wait_for_job` takes
+`job_id` and `timeout_secs` (≤ 600) and returns the `Job`. Results are JSON (structured content or
+the first text block); refusals set `is_error` and name the server's error code. Stdio
+configuration: `H2S_SERVER_URL`, `H2S_TOKEN`.
+
+**v1.1 (2026-10-23) — MCP tools.** Added `list_splits` (GET `/splits`, viewer) and
+`update_experiment` (PATCH `/experiments/{exp}`, operator). Rule: MCP never exposes writes to
+profiles, secrets or tokens, nor the audit log — a prompt-injected agent could repoint a profile's
+endpoint at a hostile URL and exfiltrate the referenced API key on the next job. Job-starting tools
+take an optional `wait_secs`; the HTTP transport is stateless at `/mcp`.
+
+**v1.1 (2026-10-23) — request details.** `{mode}` path segments and `/compare` references use
+`parallel`/`sequential`; servers also accept the on-disk tokens `agg`/`seq`. `POST
+/jobs/{id}/cancel` takes no body. `Progress.done` counts tasks finished `ok`/`skipped`,
+`Progress.failed` those finished with any other status (disjoint; finished = done + failed);
+`Progress.total` comes from the job's internal preview step.
+
+**v1.1 (2026-10-23) — dependencies.** `tools/h2s-mock-api` may use `tokio-stream` (already in the
+lockfile) to stream SSE.
+
+**v1.2 (2026-10-23) — job egress.** Host-mode jobs also receive the server's own proxy and CA
+variables when set (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` and their lowercase
+forms; `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`), so the
+compose deployment, where the Studio sits on an internal network, reaches the allowlisted hosts
+through `h2studio egress-proxy`. Profiles cannot set the uppercase proxy names (`RESERVED_ENV`).
+Container jobs get none of the server's variables; `[isolation.container] proxy =
+"http://host:port"` (no credentials, needs a network other than `none`) sets
+`HTTPS_PROXY`/`HTTP_PROXY`/`https_proxy`/`http_proxy` and `NO_PROXY`/`no_proxy` =
+`localhost,127.0.0.1,::1` inside the container as fixed `-e NAME=VALUE` arguments
+(`ContainerSpec::env_values`; never secrets), not by name, so the runtime CLI never sees a proxy
+that exists only on the jobs network.
+
+**v1.2 (2026-10-23) — container HOME.** On a rootless runtime jobs run as container uid 0 with
+every capability dropped, which cannot write `/home/node`. The runner image therefore sets
+`HOME=/h2s/home`, a sticky world-writable directory in the throwaway container layer; the
+all-in-one image sets `HOME=/home/node` back for the server user. Custom runner images must give
+the job user a writable `HOME`.

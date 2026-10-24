@@ -1,0 +1,1 @@
+<notes>Keep signed amounts: the base total omitted credits in the source ledger.</notes>
