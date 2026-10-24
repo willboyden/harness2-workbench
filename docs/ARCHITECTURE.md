@@ -295,6 +295,8 @@ trusted_proxies = []
 max_body_bytes = 1048576
 request_timeout_secs = 60
 sse_max_connections = 64
+sse_max_per_principal = 8            # a token and its sessions together (v1.3)
+max_connections_per_ip = 256         # IPv6 per /64; trusted proxies exempt (v1.3)
 login_attempts_per_minute = 10
 
 [auth]
@@ -314,6 +316,7 @@ data_dir = "~/.local/share/harness2-studio"   # studio.db, logs/, jobs/, splits/
 experiments_dir = ""                 # default <data_dir>/experiments
 harness2_home = ""                   # default <data_dir>/harness2
 harness2_managed = true              # false = point at an existing checkout (never modified)
+allow_untested_harness2_rev = false  # install_harness2 rev other than the tested commit (v1.3)
 
 [jobs]
 max_concurrent = 2
@@ -321,6 +324,8 @@ max_queued = 100
 timeout_hours = 48
 budget_poll_secs = 30
 log_retention_days = 90
+max_log_bytes = 268435456            # per job: one marker line, then output is counted, not stored (v1.3)
+min_free_disk_mb = 256               # stop jobs when the data directory's filesystem is lower; 0 = off (v1.3)
 
 [isolation]
 mode = "host"                        # host | container
@@ -393,7 +398,8 @@ spans carry method, matched route, status, request id (never headers or bodies).
 `/metrics`: `h2s_http_requests_total{method,route,status}`, `h2s_http_request_duration_seconds`,
 `h2s_jobs_total{kind,status}`, `h2s_jobs_running`, `h2s_job_duration_seconds{kind}`,
 `h2s_spend_usd_total{experiment}` (bounded label set), `h2s_auth_failures_total{reason}`,
-`h2s_sse_connections`.
+`h2s_sse_connections`, and since v1.3 `h2s_audit_suppressed_total` (failed-auth audit rows over the
+per-client cap) and `h2s_connections_refused_total{reason}` (per-IP connection cap).
 
 ## 15. Quality bar (every agent, every merge)
 
@@ -487,3 +493,29 @@ as with JobBench's weighted judging; `frac` is computed from the raw values.
 `ProfileCheck { warnings, missing_secrets }`: `h2s_core::env::profile_warnings` and the referenced
 secrets with no value (stored or `H2S_SECRET_<NAME>`), which job creation refuses with 422.
 404 for an unknown profile. MCP tool `check_profile` (`profile`; read-only, viewer).
+
+**v1.3 (2026-10-24) — security audit fixes.** Additive contract changes from the first
+independent audit (findings F1–F16):
+- `CoreError::TooLarge(String)` → 413 `payload_too_large`. The results reader caps what it reads
+  from harness2's output (summary.json 4 MiB; per call 10,000 tasks and 256 MiB of summaries;
+  judged files 32 MiB / 100,000 rows; harness trees 2,000 files / 64 MiB / 4 MiB per file;
+  docs/notes/core.md has the table). `TaskRow.status` may be `too-large` or `unreadable`, and the
+  `?status=` filter accepts both. Core adds `ExperimentDir::sweep_namespaces()` and `sweep()`; the
+  experiment list reads sweeps one at a time (a failing sweep is left out and logged) through a
+  per-sweep cache and at most 4 concurrent blocking reads.
+- `ContainerSpec::env_file`: container jobs receive their variables through a 0600 `--env-file`
+  in the job directory; the runtime CLI process gets only the server pass-through and the runtime
+  variables. Values with a newline, CR or NUL are refused. Every step process carries
+  `H2S_JOB_ID=<job id>`; `jobs.pid_boot` (database migration 2) stores the boot id, and restart
+  recovery signals only groups of this boot with a member that carries the marker.
+- `SystemInfo.host_risks_preacknowledged: bool` (every role). More reserved env names and
+  prefixes for profiles (`h2s_core::env`); stored profiles that use them are refused at job time.
+- Auth: per client, 60 failed authentications a minute, then 429; at most 10 failed-auth audit rows
+  a minute (the rest counted in `h2s_audit_suppressed_total`). Repeated proxy identity headers →
+  401; a repeated `Host` header → 400. The session cookie is `__Host-h2s_session` when
+  `public_url` is https. `install_harness2.rev` other than `TESTED_HARNESS2_COMMIT` → 422 unless
+  `paths.allow_untested_harness2_rev`; the MCP tool has no `rev`, and `h2studio-mcp` refuses a
+  model's `acknowledge_risks=true` unless started with `--allow-risk-acknowledgement`.
+- The server and the egress proxy are non-dumpable; the egress proxy listens on 127.0.0.1:3128 by
+  default. Doctor adds `runner_image` and `container_network` (container mode).
+

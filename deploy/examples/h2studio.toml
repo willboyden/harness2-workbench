@@ -10,11 +10,16 @@ listen = "127.0.0.1:8722"
 public_url = "http://127.0.0.1:8722"
 # Extra Host values to accept (e.g. a DNS name behind your proxy).
 allowed_hosts = []
-# Proxies whose X-Forwarded-For / X-Forwarded-Proto are trusted (CIDRs). Empty = none.
+# Proxies whose X-Forwarded-For (and x-request-id, and in proxy mode the identity headers) are
+# trusted (CIDRs). Empty = none. Behind a proxy, set it: rate limits are keyed by client address.
 trusted_proxies = []
 max_body_bytes = 1048576
 request_timeout_secs = 60
 sse_max_connections = 64
+# Live job streams per signed-in principal (a token and its browser sessions together).
+sse_max_per_principal = 8
+# Open connections per client address (IPv6 per /64); trusted proxies are exempt.
+max_connections_per_ip = 256
 login_attempts_per_minute = 10
 
 [auth]
@@ -42,6 +47,8 @@ experiments_dir = ""
 harness2_home = ""
 # false = use an existing checkout you manage yourself; the Studio never modifies it.
 harness2_managed = true
+# install_harness2 jobs may name a commit other than the one this release was tested against.
+allow_untested_harness2_rev = false
 
 [jobs]
 max_concurrent = 2
@@ -49,6 +56,10 @@ max_queued = 100
 timeout_hours = 48
 budget_poll_secs = 30
 log_retention_days = 90
+# Stored log per job (256 MiB); past it one marker line, then output is counted, not stored.
+max_log_bytes = 268435456
+# Stop jobs when the data directory's filesystem has less free space (MiB); 0 = off.
+min_free_disk_mb = 256
 
 [isolation]
 # "host": jobs run as this server's user, like harness2 itself (executors get your files and
@@ -83,7 +94,9 @@ user = ""
 # and 80 unless the entry lists others. Private, loopback, link-local and metadata addresses
 # are always refused unless an entry allows them, e.g.
 #   allow = ["aiplatform.googleapis.com", { host = "litellm", allow_private = true, ports = [4000] }]
-listen = "0.0.0.0:3128"
+# Loopback by default; anyone who can reach the proxy can use the allowlist. In a container
+# (deploy/compose.yaml) listen on 0.0.0.0 inside the internal jobs network.
+listen = "127.0.0.1:3128"
 allow = ["aiplatform.googleapis.com", "oauth2.googleapis.com"]
 
 [telemetry]
