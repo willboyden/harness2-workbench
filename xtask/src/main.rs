@@ -13,6 +13,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 mod cooldown;
+mod docs;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Harness² Studio build tasks")]
@@ -37,7 +38,9 @@ enum Cmd {
         #[arg(long, default_value_t = 14)]
         days: i64,
     },
-    /// Run every quality gate: fmt, clippy (native + wasm), tests, cargo-deny, cooldown.
+    /// Check every relative link and #anchor in the Markdown files (fails on a broken one).
+    Docs,
+    /// Run every quality gate: fmt, docs links, clippy (native + wasm), tests, cargo-deny, cooldown.
     Check,
     /// Point git at the repository's hooks in .githooks/.
     Hooks,
@@ -72,6 +75,7 @@ fn main() -> Result<()> {
             )
         }
         Cmd::Cooldown { days } => cooldown::check(&root, days),
+        Cmd::Docs => docs::check(&root),
         Cmd::Check => check(&root),
         Cmd::Hooks => run(&root, "git", &["config", "core.hooksPath", ".githooks"]),
         Cmd::E2e {
@@ -177,6 +181,7 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
 
 fn check(root: &Path) -> Result<()> {
     run(root, "cargo", &["fmt", "--all", "--", "--check"])?;
+    docs::check(root)?;
     run(
         root,
         "cargo",
