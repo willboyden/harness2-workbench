@@ -50,6 +50,17 @@ The mock sends the exact CSP and security headers of §9, enforces the CSRF head
 - Downloads (manifest, `.tar.gz` export, judged rows) are plain same-origin links with
   `download`; report text and export JSON are offered as Blob downloads.
 
+## Sign-in return path (`?next=`)
+
+After sign-in the UI returns to `next` only when it stays on this origin
+(`nav::follow_next`): the pure check `route::clean_next` refuses control characters and
+whitespace (the URL parser deletes tabs and newlines, so `/\t/host` would become `//host`),
+backslashes, a leading `//`, dot segments (also `%2e`) and empty segments; then the browser's
+own parser (`Url::new_with_base` against `location.origin`) must keep the origin, and the
+parsed path is checked again. Anything else goes to `/`. Note that leptos_router 0.8 decodes
+query values twice (`UrlSearchParams`, then `decodeURIComponent`), so `%2509` arrives as a
+tab; the check runs on the decoded value.
+
 ## Test hooks (addendum v1.1)
 
 `login-token`, `login-submit`, `login-error`; `nav-dashboard`, `nav-experiments`, `nav-jobs`,

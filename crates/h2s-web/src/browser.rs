@@ -26,6 +26,14 @@ pub(crate) fn now_secs() -> i64 {
     secs
 }
 
+/// `pathname + search + hash` of `candidate` resolved by the browser's own (WHATWG) URL parser
+/// against this page's origin; `None` unless the result is on this same origin.
+pub(crate) fn same_origin_path(candidate: &str) -> Option<String> {
+    let origin = web_sys::window()?.location().origin().ok()?;
+    let url = Url::new_with_base(candidate, &origin).ok()?;
+    (url.origin() == origin).then(|| format!("{}{}{}", url.pathname(), url.search(), url.hash()))
+}
+
 /// Read a `localStorage` key. `None` when storage is unavailable, blocked or empty.
 pub(crate) fn storage_get(key: &str) -> Option<String> {
     let storage = window().local_storage().ok()??;

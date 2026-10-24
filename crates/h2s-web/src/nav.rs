@@ -5,7 +5,7 @@ use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_location, use_navigate, use_params_map, use_query_map};
 
-use crate::logic::urls::query;
+use crate::logic::urls::{query, route};
 
 /// A path parameter of the current route (`:exp`), decoded.
 pub(crate) fn param(name: &'static str) -> Memo<String> {
@@ -72,5 +72,17 @@ pub(crate) fn row_navigator() -> impl Fn(&leptos::ev::MouseEvent, &str) + Clone 
         if !on_control && !ev.default_prevented() {
             navigate(href, NavigateOptions::default());
         }
+    }
+}
+
+/// The page to open after sign-in: `next` when it is a clean path on this origin, else "/".
+/// The pure check runs first, then the browser's URL parser must keep the result on this
+/// origin, and the parsed path is checked again (normalisation must not produce a
+/// protocol-relative "//host" path).
+pub(crate) fn follow_next(next: Option<&str>) -> String {
+    let candidate = route::safe_next(next);
+    match crate::browser::same_origin_path(&candidate) {
+        Some(parsed) => route::safe_next(Some(&parsed)),
+        None => "/".to_owned(),
     }
 }

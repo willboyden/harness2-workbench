@@ -10,7 +10,7 @@ use leptos_router::hooks::use_navigate;
 use crate::api;
 use crate::app::load_system;
 use crate::browser;
-use crate::logic::urls::{api as paths, route};
+use crate::logic::urls::api as paths;
 use crate::nav::query_param;
 use crate::state::session;
 
@@ -30,7 +30,7 @@ pub(crate) fn Login() -> impl IntoView {
         let navigate = navigate.clone();
         Effect::new(move |_| {
             if s.principal.with(Option::is_some) {
-                let to = route::safe_next(
+                let to = crate::nav::follow_next(
                     Some(&next.get())
                         .filter(|n| !n.is_empty())
                         .map(String::as_str),

@@ -308,23 +308,49 @@ pub(crate) mod route {
     pub(crate) fn help_term(id: &str) -> String {
         format!("/help#term-{}", enc(id))
     }
+    /// `/login?next=<path>`; a path that fails [`clean_next`] is dropped, not carried along.
     pub(crate) fn login_next(next: &str) -> String {
-        let next =
-            if next.starts_with('/') && !next.starts_with("//") && !next.starts_with("/login") {
-                next
-            } else {
-                ""
-            };
-        format!("/login{}", query(&[("next", next)]))
+        format!(
+            "/login{}",
+            query(&[("next", clean_next(next).unwrap_or(""))])
+        )
     }
-    /// Only same-app absolute paths are followed after login (no open redirects).
-    pub(crate) fn safe_next(next: Option<&str>) -> String {
-        match next {
-            Some(n) if n.starts_with('/') && !n.starts_with("//") && !n.contains('\\') => {
-                n.to_owned()
-            }
-            _ => "/".to_owned(),
+
+    /// The pure half of the `next` check after sign-in (no open redirects): an absolute path
+    /// inside this app, and never the sign-in page itself. Refused:
+    /// - control characters and whitespace anywhere: the URL parser deletes tabs and newlines,
+    ///   so "/\t/evil.example" would become the protocol-relative "//evil.example";
+    /// - backslashes (the parser reads them as "/") and a leading "//";
+    /// - dot segments, also percent-encoded ("%2e"), and empty segments other than a trailing
+    ///   slash: normalising "/..//evil" also yields "//evil".
+    ///
+    /// The browser's own URL parser has the last word (`nav::follow_next`).
+    pub(crate) fn clean_next(next: &str) -> Option<&str> {
+        if !next.starts_with('/')
+            || next.starts_with("//")
+            || next.starts_with("/login")
+            || next.contains('\\')
+            || next.chars().any(|c| c.is_control() || c.is_whitespace())
+        {
+            return None;
         }
+        let path = next.split(['?', '#']).next().unwrap_or_default();
+        let segments: Vec<&str> = path.get(1..).unwrap_or_default().split('/').collect();
+        let last = segments.len().saturating_sub(1);
+        let bad = segments.iter().enumerate().any(|(i, seg)| {
+            let seg = seg.to_ascii_lowercase();
+            (seg.is_empty() && i != last)
+                || matches!(
+                    seg.as_str(),
+                    "." | "%2e" | ".." | ".%2e" | "%2e." | "%2e%2e"
+                )
+        });
+        (!bad).then_some(next)
+    }
+
+    /// `next` when it passes [`clean_next`], else "/".
+    pub(crate) fn safe_next(next: Option<&str>) -> String {
+        next.and_then(clean_next).unwrap_or("/").to_owned()
     }
 }
 
@@ -425,5 +451,45 @@ mod tests {
         assert_eq!(route::safe_next(Some("https://evil.example")), "/");
         assert_eq!(route::safe_next(Some("/\\evil")), "/");
         assert_eq!(route::safe_next(None), "/");
+        assert_eq!(
+            route::safe_next(Some("/experiments/e?tab=report#top")),
+            "/experiments/e?tab=report#top"
+        );
+        assert_eq!(route::safe_next(Some("/jobs/")), "/jobs/");
+        assert_eq!(route::safe_next(Some("/login")), "/");
+    }
+
+    #[test]
+    fn next_cannot_leave_the_origin() {
+        // The URL parser deletes tabs and newlines, so these would become "//evil...".
+        for bad in [
+            "/\t/evil.example",
+            "/\n/evil.example",
+            "/\r//evil",
+            " //evil",
+            "/\u{0}x",
+            "/\u{7f}x",
+            "/\u{2028}/evil",
+            "/ /evil",
+            // Dot segments collapse: "/..//evil" and "/.//evil" both normalise to "//evil".
+            "/..//evil.example",
+            "/.//evil.example",
+            "/%2e%2e//evil.example",
+            "/%2E//evil.example",
+            "/.%2e//evil.example",
+            "/a//b",
+            "\\/evil.example",
+            "/\\/evil.example",
+            "",
+            "evil.example",
+            "javascript:alert(1)",
+        ] {
+            assert_eq!(route::safe_next(Some(bad)), "/", "{bad:?}");
+            assert_eq!(route::login_next(bad), "/login", "{bad:?}");
+        }
+        // A literal "%09" stays a same-origin path segment: nothing decodes it into a tab.
+        let kept = route::safe_next(Some("/%09/evil"));
+        assert_eq!(kept, "/%09/evil");
+        assert!(!kept.starts_with("//"));
     }
 }
