@@ -70,11 +70,48 @@ Python semantics the ports reproduce (`src/pyfmt.rs`, `src/pyjson.rs`):
   returns an empty report whose text is upstream's `nothing to report`.
 - Judged rows are rebuilt like upstream `_load_rows`: `graded`/`frac` are recomputed from
   `n_passed`/`n_criteria`. JobBench's weighted judging writes float points (7.5 of 10.0),
-  which the `u32` wire fields cannot hold: those become `None` while `frac` stays exact. The
-  raw floats are kept in `results::Points`, so optional `points_*` wire fields (planned by
-  the coordinator) are a one-line change in `judged_row`/`base_row`.
+  which the `u32` wire fields cannot hold: those become `None` while `frac` stays exact, and
+  the raw floats travel as `points_passed`/`points_max` (contract v1.2).
 - `Comparison` values are fractions 0..1 (contract v1.1); the sign test is the exact
   two-sided binomial test over wins and losses, ties dropped.
+
+## Memory bounds
+
+harness2's files can be rewritten by the jobs that produce them, so nothing in `results`,
+`tree` or `export` holds an unbounded amount of them. Past a limit a view fails with
+`CoreError::TooLarge` (the server answers 413) and returns nothing partial, except where the
+table says otherwise.
+
+| What | Limit | Past the limit |
+|---|---|---|
+| `summary.json` | 4 MiB | list views: status `too-large`, never parsed, the other tasks still read; task detail and rollout views: `TooLarge` |
+| task directories in one sweep | 10,000 | `TooLarge` |
+| summaries read by one list view | 256 MiB in total | `TooLarge` |
+| `judged.json`, `base_judged.json` | 32 MiB, 100,000 rows | `TooLarge` in every view that needs the rows |
+| sweep record, `demo.json` | 4 MiB | ignored: tasks are listed by id |
+| library `INDEX.md` | first 4 KiB read | (the title is its first line) |
+| library `EXPERIENCE.md` | 256 KiB each, 32 MiB per view | entry listed without details / `TooLarge` |
+| audit `.meta.json` | 64 KiB each, 32 MiB per view, 50,000 sessions | session listed without metadata / `TooLarge` |
+| `config.json` (manifest) | 256 KiB each, 16 MiB in total | `TooLarge` |
+| rollout directory listing | 20,000 entries | `TooLarge` |
+| any directory listing | 250,000 entries | `TooLarge` |
+| harness tree | 2,000 on-surface files, 64 MiB, 4 MiB per file, 20,000 entries walked | `TooLarge`, decided from the listing before any file is read |
+| `export`, `tar_gz` input | one harness: 2,000 files, 64 MiB (`tar_gz` allows the joined `AGENTS.md` on top) | `TooLarge` |
+
+The list views (tasks, sweeps, spend, report, scores) parse each file into a typed view
+(`src/lite.rs`) that names only the fields they use. Everything else is skipped while
+parsing, stage spend is summed while it is read, judged rows are converted one at a time,
+and the strings kept are bounded: an identifier over 1 KiB is treated as absent, an error
+message is cut at 4 KiB. What one call keeps therefore grows with the rows it returns and is
+bounded by the caps above; a file's bytes are held only while it is parsed. The single-task
+views (task detail, rollout browsing) still parse their one summary whole, within its 4 MiB
+cap. Two consequences for odd input: a key repeated inside one object (harness2's
+`json.dump` never writes one) makes a summary `unreadable` in the list views, where
+`json.loads` would keep the last value (repeated mode keys do follow `json.loads`); and a
+summary that is a symlink or not a regular file is listed as `unreadable`, and such a
+library file is skipped, instead of failing the whole view.
+
+How many of these views run at once is the server's to limit.
 
 ## Job environments (`env`)
 
@@ -105,11 +142,27 @@ Verified by the coordinator in the pinned sources:
 - `install::plan` verifies the checkout with `git merge-base --is-ancestor <commit> HEAD`
   (exit status only); in the depth-1 clone that means HEAD is the commit. A reinstall
   recreates the venv with `uv venv --clear` (uv 0.8 or newer).
-- `isolation::run_argv` refuses the `latest` tag, the `host` network, uid 0 and a writable
-  job-files mount, on top of the documented checks.
+- harness2 has no lock file, so `install::plan` resolves its dependencies with
+  `uv pip install --exclude-newer <TESTED_HARNESS2_DEPS_CUTOFF>`: the committer time of the
+  tested commit in UTC (`git show -s --format=%cI 1cfe254` gives 2026-10-13T21:22:49-05:00,
+  so 2026-10-14T02:22:49Z). The cutoff applies to every commit, so a commit that needs newer
+  packages fails to install rather than pulling untested releases. uv 0.11.25 documents the
+  flag, and an offline resolution applied it (it set aside a pillow released after the
+  cutoff); a full resolution needs the network and was not run here. The checkout used to
+  generate the fixtures was installed later, with newer office-rendering packages than the
+  cutoff allows; the results logic does not use them.
+- `isolation::run_argv` refuses the `latest` tag, the `host` network, a non-numeric user and
+  a writable job-files mount, on top of the documented checks; a numeric uid 0 is accepted
+  for rootless runtimes (see `ContainerSpec::user`).
 - `redact::Redactor` also redacts a secret's JSON-escaped form, each line of a multi-line
-  value and each long string inside a JSON value (log lines are split, and a service-account
-  key's `private_key` can appear on its own).
+  value, each long string inside a JSON value (log lines are split, and a service-account
+  key's `private_key` can appear on its own), and the standard and URL-safe base64 encodings
+  of the whole value, padded and unpadded. This is best effort, as the module docs say: a
+  value reversed, split, spaced, hex- or percent-encoded, or base64-encoded together with
+  other text (an HTTP Basic `user:password` header) is not caught.
+- `names::relative_path` refuses every control character (Unicode `Cc`: C0, DEL, C1), so an
+  exported file name cannot carry a terminal escape sequence. A rollout file whose name has
+  one is still listed, but cannot be opened by path.
 - serde_json parses floats with `float_roundtrip` (enabled workspace-wide by the
   coordinator), so values read from harness2's JSON equal Python's.
 
