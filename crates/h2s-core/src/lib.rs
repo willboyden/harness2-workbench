@@ -36,6 +36,7 @@ pub mod report;
 pub mod results;
 pub mod tree;
 
+mod lite;
 mod pyfmt;
 mod pyjson;
 mod safefs;
