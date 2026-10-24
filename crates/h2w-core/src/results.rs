@@ -69,6 +69,8 @@ const MAX_AUDIT_META_BYTES: u64 = 32 * 1024 * 1024;
 pub(crate) const MAX_AUDIT_SESSIONS: usize = 50_000;
 /// Most entries listed from one rollout directory.
 pub(crate) const MAX_ROLLOUT_ENTRIES: usize = 20_000;
+/// Most bytes [`ExperimentDir::results_digest`] reads in all.
+pub(crate) const MAX_DIGEST_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// Bytes read so far by one view, refused past `limit`.
 struct Budget {
@@ -1660,7 +1662,17 @@ impl ExperimentDir {
     ///
     /// Paths are relative to the experiment root (`lab/adapt/lab-oc-agg1/judged.json`),
     /// sorted as byte strings; every namespace directory of every benchmark is included.
+    ///
+    /// Bounded like the views that read these files. A file over its cap (4 MiB for a
+    /// summary, 32 MiB for a judged file), which every view refuses, is not read: its
+    /// contents are recorded as `<too large: N bytes>`. A file that is no longer a regular
+    /// file, or is gone, when it is opened is recorded as `<unreadable>`. More than 1 GiB in
+    /// all, or more than 10,000 summaries in one namespace, is [`CoreError::TooLarge`].
     pub fn results_digest(&self) -> Result<String> {
+        self.results_digest_capped(MAX_DIGEST_BYTES)
+    }
+
+    fn results_digest_capped(&self, max_total: u64) -> Result<String> {
         let mut paths: Vec<String> = Vec::new();
         for (bench, root) in self.bench_roots() {
             for e in safefs::list_opt(&self.dir, &root, "namespaces")? {
@@ -1670,6 +1682,7 @@ impl ExperimentDir {
                     continue;
                 }
                 let ns_rel = format!("{root}/{}", e.name);
+                let mut summaries = 0_usize;
                 for t in safefs::list_opt(&self.dir, &ns_rel, "namespace")? {
                     match t.kind {
                         EntryKind::File
@@ -1680,6 +1693,13 @@ impl ExperimentDir {
                         EntryKind::Dir => {
                             let rel = format!("{ns_rel}/{}/summary.json", t.name);
                             if safefs::mtime(&self.dir, &rel, "summary.json")?.is_some() {
+                                summaries += 1;
+                                if summaries > MAX_SWEEP_TASKS {
+                                    return Err(CoreError::TooLarge(format!(
+                                        "namespace {} has more than {MAX_SWEEP_TASKS} summaries",
+                                        e.name
+                                    )));
+                                }
                                 paths.push(rel);
                             }
                         }
@@ -1690,17 +1710,28 @@ impl ExperimentDir {
         }
         paths.sort();
         let mut h = Sha256::new();
-        let mut buf = vec![0_u8; 64 * 1024];
+        let mut total = 0_u64;
         for p in paths {
-            let (mut file, _) = safefs::open_file(&self.dir, &p, "results file")?;
+            let cap = if p.ends_with("/summary.json") {
+                MAX_SUMMARY_BYTES
+            } else {
+                MAX_JUDGED_BYTES
+            };
             h.update(p.as_bytes());
             h.update(b"\0");
-            loop {
-                let n = std::io::Read::read(&mut file, &mut buf)?;
-                if n == 0 {
-                    break;
+            match safefs::open_file(&self.dir, &p, "results file") {
+                Ok((_, len)) if len > cap => h.update(safefs::too_large_marker(len).as_bytes()),
+                Ok((file, len)) => {
+                    if total.saturating_add(len) > max_total {
+                        return Err(CoreError::TooLarge(format!(
+                            "the results files total more than {max_total} bytes"
+                        )));
+                    }
+                    let n = safefs::stream(file, cap, |b| h.update(b))?;
+                    total = total.saturating_add(n);
                 }
-                h.update(buf.get(..n).unwrap_or_default());
+                Err(CoreError::Refused(_) | CoreError::NotFound(_)) => h.update(b"<unreadable>"),
+                Err(e) => return Err(e),
             }
             h.update(b"\0");
         }
@@ -2142,6 +2173,71 @@ mod tests {
 
     fn status_of(rows: &[TaskRow], slug: &str) -> String {
         rows.iter().find(|r| r.slug == slug).unwrap().status.clone()
+    }
+
+    fn sha256_hex(parts: &[(&str, &[u8])]) -> String {
+        let mut h = Sha256::new();
+        for (path, body) in parts {
+            h.update(path.as_bytes());
+            h.update(b"\0");
+            h.update(body);
+            h.update(b"\0");
+        }
+        hex::encode(h.finalize())
+    }
+
+    /// Sparse files far over the caps (32 GiB) are recorded in the manifest digest by their
+    /// size, never read: the digest returns at once and is the same every time.
+    #[test]
+    fn the_digest_records_oversized_files_by_size() {
+        let lab = Lab::new();
+        lab.summary("t1", 0.5);
+        lab.sparse(&format!("{}/t2/summary.json", Lab::SWEEP), 1 << 35);
+        lab.sparse(&format!("{}/judged.json", Lab::SWEEP), MAX_JUDGED_BYTES + 1);
+        let t1 = std::fs::read(
+            lab.root
+                .path()
+                .join(format!("{}/t1/summary.json", Lab::SWEEP)),
+        )
+        .unwrap();
+        let (exp, _) = lab.open();
+        let digest = crate::safefs::tests::within(move || exp.results_digest().unwrap());
+        assert_eq!(
+            digest,
+            sha256_hex(&[
+                (
+                    "lab/adapt/lab-oc-agg1/judged.json",
+                    b"<too large: 33554433 bytes>"
+                ),
+                ("lab/adapt/lab-oc-agg1/t1/summary.json", &t1),
+                (
+                    "lab/adapt/lab-oc-agg1/t2/summary.json",
+                    b"<too large: 34359738368 bytes>"
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn the_digest_has_a_total_and_a_summary_count() {
+        let lab = Lab::new();
+        lab.write(&format!("{}/t1/summary.json", Lab::SWEEP), b"0123456789");
+        lab.write(&format!("{}/t2/summary.json", Lab::SWEEP), b"0123456789");
+        let (exp, _) = lab.open();
+        assert!(exp.results_digest_capped(20).is_ok());
+        let err = exp.results_digest_capped(19).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "too large: the results files total more than 19 bytes"
+        );
+        for i in 0..MAX_SWEEP_TASKS {
+            lab.write(&format!("{}/n{i}/summary.json", Lab::SWEEP), b"{}");
+        }
+        let err = exp.results_digest().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "too large: namespace lab-oc-agg1 has more than 10000 summaries"
+        );
     }
 
     /// A job swapping one task's `summary.json` for a FIFO and back, as fast as it can,

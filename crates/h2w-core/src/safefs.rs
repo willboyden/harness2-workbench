@@ -296,6 +296,32 @@ pub(crate) fn read_capped(
     Ok((buf, len.max(got.min(cap)), truncated))
 }
 
+/// Feed at most `max` bytes of an open file to `sink`, 64 KiB at a time, so the file is never
+/// held whole. Returns the number of bytes fed.
+pub(crate) fn stream(mut file: File, max: u64, mut sink: impl FnMut(&[u8])) -> Result<u64> {
+    const CHUNK: usize = 64 * 1024;
+    let mut buf = vec![0_u8; CHUNK];
+    let mut fed = 0_u64;
+    while fed < max {
+        let want = usize::try_from(max - fed).map_or(CHUNK, |w| w.min(CHUNK));
+        let n = match file.read(buf.get_mut(..want).unwrap_or_default()) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(CoreError::Io(e)),
+        };
+        sink(buf.get(..n).unwrap_or_default());
+        fed = fed.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+    }
+    Ok(fed)
+}
+
+/// What a digest records instead of the contents of a file over its size cap: the size, so
+/// the digest stays deterministic and still changes when the file does, without reading it.
+pub(crate) fn too_large_marker(len: u64) -> String {
+    format!("<too large: {len} bytes>")
+}
+
 fn over_cap(what: &str, len: u64, cap: u64) -> CoreError {
     CoreError::TooLarge(format!("{what} is {len} bytes, over the {cap}-byte limit"))
 }

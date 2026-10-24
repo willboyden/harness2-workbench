@@ -12,7 +12,6 @@
 //! interpreter and is reported by harness2 itself when it matters.)
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -849,27 +848,38 @@ fn fingerprint_ignored(rel: &str) -> bool {
 /// of nothing); only a directory that does not exist is `absent`, and a handle always
 /// refers to one that does. Symbolic links are skipped (upstream would hash a linked file's
 /// target); trees harness2 writes never contain them.
+///
+/// Bounded like [`read_tree`], since off-surface files are digested too: a file over
+/// 4 MiB is not read, and its contents are recorded as `<too large: N bytes>` (deterministic,
+/// and still sensitive to its size; the fingerprint of such a tree differs from upstream's);
+/// more than 64 MiB of file contents in all is [`CoreError::TooLarge`]. A file that cannot be
+/// opened or read is recorded as `<unreadable>`, as before.
 pub fn fingerprint(dir: &cap_std::fs::Dir) -> Result<String> {
+    fingerprint_capped(dir, MAX_HARNESS_FILE, MAX_TREE_BYTES)
+}
+
+fn fingerprint_capped(dir: &cap_std::fs::Dir, max_file: u64, max_total: u64) -> Result<String> {
     let (mut files, _symlinks) = safefs::walk_files(dir, &[], MAX_TREE_ENTRIES * 5)?;
     files.retain(|(rel, _)| !fingerprint_ignored(rel));
     files.sort_by(|a, b| pyfmt::cmp_paths(&a.0, &b.0));
     let mut h = Sha1::new();
-    let mut buf = vec![0_u8; 64 * 1024];
+    let mut hashed = 0_u64;
     for (rel, _) in files {
         h.update(rel.as_bytes());
         h.update(b"\0");
         match safefs::open_file(dir, &rel, "harness file") {
-            Ok((mut file, _)) => loop {
-                match file.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => h.update(buf.get(..n).unwrap_or_default()),
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                    Err(_) => {
-                        h.update(b"<unreadable>");
-                        break;
-                    }
+            Ok((_, len)) if len > max_file => h.update(safefs::too_large_marker(len).as_bytes()),
+            Ok((file, len)) => {
+                if hashed.saturating_add(len) > max_total {
+                    return Err(CoreError::TooLarge(format!(
+                        "the harness files total more than {max_total} bytes"
+                    )));
                 }
-            },
+                match safefs::stream(file, max_file, |b| h.update(b)) {
+                    Ok(n) => hashed = hashed.saturating_add(n),
+                    Err(_) => h.update(b"<unreadable>"),
+                }
+            }
             Err(CoreError::Refused(_) | CoreError::NotFound(_) | CoreError::Io(_)) => {
                 h.update(b"<unreadable>");
             }
@@ -1190,6 +1200,70 @@ mod tests {
             err.to_string(),
             "too large: harness file systemprompt.md is 4194305 bytes, over the 4194304-byte \
              limit"
+        );
+    }
+
+    /// `path\0contents\0` for each file, as `runmark.fingerprint` digests them.
+    fn sha1_16(parts: &[(&str, &[u8])]) -> String {
+        let mut h = Sha1::new();
+        for (path, body) in parts {
+            h.update(path.as_bytes());
+            h.update(b"\0");
+            h.update(body);
+            h.update(b"\0");
+        }
+        hex::encode(h.finalize())[..16].to_owned()
+    }
+
+    /// A 1 TiB sparse file in a harness directory (off-surface, so `read_tree` never reads
+    /// it) is recorded by its size: the fingerprint returns at once instead of hashing for
+    /// hours.
+    #[test]
+    fn a_terabyte_file_is_fingerprinted_by_its_size() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("systemprompt.md"), "hello").unwrap();
+        sparse(&t.path().join("blob.bin"), 1 << 40);
+        let d = open(t.path());
+        let fp = crate::safefs::tests::within(move || fingerprint(&d).unwrap());
+        assert_eq!(
+            fp,
+            sha1_16(&[
+                ("blob.bin", b"<too large: 1099511627776 bytes>"),
+                ("systemprompt.md", b"hello"),
+            ])
+        );
+    }
+
+    #[test]
+    fn fingerprint_caps_are_exact() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("a"), "0123456789").unwrap();
+        std::fs::write(t.path().join("b"), "0123456789").unwrap();
+        std::fs::write(t.path().join("c"), "0123456789x").unwrap();
+        let d = open(t.path());
+        // Under every cap it is upstream's digest.
+        assert_eq!(
+            fingerprint(&d).unwrap(),
+            sha1_16(&[
+                ("a", b"0123456789"),
+                ("b", b"0123456789"),
+                ("c", b"0123456789x"),
+            ])
+        );
+        // A file one byte over the per-file cap is recorded by its size and not counted.
+        assert_eq!(
+            fingerprint_capped(&d, 10, 20).unwrap(),
+            sha1_16(&[
+                ("a", b"0123456789"),
+                ("b", b"0123456789"),
+                ("c", b"<too large: 11 bytes>"),
+            ])
+        );
+        // The total counts what is read: 20 bytes fit a 20-byte total, not a 19-byte one.
+        let err = fingerprint_capped(&d, 10, 19).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "too large: the harness files total more than 19 bytes"
         );
     }
 }
