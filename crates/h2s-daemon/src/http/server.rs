@@ -170,6 +170,8 @@ impl Server {
             secrets,
             metrics,
             login_limiter: RateLimiter::new(per_minute),
+            auth_failures: RateLimiter::new(super::extract::AUTH_FAILURES_PER_MINUTE),
+            failure_audits: RateLimiter::new(super::extract::AUDITED_FAILURES_PER_MINUTE),
             doctor: DoctorService::default(),
             hosts,
             sse_open: AtomicUsize::new(0),

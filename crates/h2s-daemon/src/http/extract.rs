@@ -174,6 +174,13 @@ mod serde_urlencoded_lite {
 // Authentication
 // ---------------------------------------------------------------------------------------
 
+/// Failed authentications with credentials (malformed, unknown or wrong tokens, bad proxy
+/// headers) per client address and minute; further failures are answered 429.
+pub const AUTH_FAILURES_PER_MINUTE: u32 = 60;
+/// Audit records of failed authentication (`auth.failed`, denied `auth.login`) per client
+/// address and minute; further failures are only counted in `h2s_auth_failures_total`.
+pub const AUDITED_FAILURES_PER_MINUTE: u32 = 10;
+
 /// Why a request was not authenticated (also the metric label).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthFailure {
@@ -431,8 +438,9 @@ fn proxy_principal(
 /// Authenticate the request (cached per request).
 ///
 /// # Errors
-/// 401 (or 403 for a proxy user without a role); every failure is counted, and audited
-/// when credentials were presented.
+/// 401 (or 403 for a proxy user without a role); every failure is counted. Failures with
+/// credentials are audited up to [`AUDITED_FAILURES_PER_MINUTE`] per client, and past
+/// [`AUTH_FAILURES_PER_MINUTE`] per client they are answered 429.
 pub async fn authenticate(parts: &mut Parts, state: &AppState) -> Result<Principal, ApiError> {
     if let Some(p) = parts.extensions.get::<Principal>() {
         return Ok(p.clone());
@@ -444,18 +452,27 @@ pub async fn authenticate(parts: &mut Parts, state: &AppState) -> Result<Princip
             Ok(p)
         }
         Err(Failed { why, target }) => {
-            state.metrics.auth_failure(why.reason());
-            if why.presented() {
-                let entry = meta
-                    .audit(
-                        "anonymous",
-                        "auth.failed",
-                        target.as_deref().unwrap_or("-"),
-                        AuditOutcome::Denied,
-                    )
-                    .detail(format!("{} on {}", why.reason(), parts.uri.path()));
-                state.audit(entry).await;
+            if !why.presented() {
+                state.metrics.auth_failure(why.reason());
+                return Err(why.into_error());
             }
+            let key = meta
+                .client_ip
+                .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+            if let Err(wait) = state.auth_failures.check(key) {
+                state.metrics.auth_failure("rate_limited");
+                return Err(ApiError::rate_limited(wait.as_secs().max(1)));
+            }
+            state.metrics.auth_failure(why.reason());
+            let entry = meta
+                .audit(
+                    "anonymous",
+                    "auth.failed",
+                    target.as_deref().unwrap_or("-"),
+                    AuditOutcome::Denied,
+                )
+                .detail(format!("{} on {}", why.reason(), parts.uri.path()));
+            state.audit_failure(meta.client_ip, entry).await;
             Err(why.into_error())
         }
     }

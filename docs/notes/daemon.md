@@ -113,9 +113,15 @@ Keys beyond §11 (all optional, defaults shown):
   needs the role that could start it (operator for most kinds, admin for install, setup and the
   bridge).
 - `DELETE /tokens/{id}` refuses (409) to revoke the last active admin token; the CLI can.
-- Audited: `auth.login` (success and denied, also rate-limited attempts), `auth.logout`,
-  `auth.failed` (only when credentials were presented, so anonymous probes cannot flood the
-  log; they are counted in `h2s_auth_failures_total{reason}`), `access.denied`, `job.create`
+- **Failed authentication** with credentials (malformed, unknown or wrong tokens, rejected proxy
+  headers): per client address (IPv6 per /64), 60 a minute are answered 401 and the rest 429
+  with `Retry-After`; valid credentials from the same address keep working. Of those failures
+  and of denied logins, at most 10 per client and minute are written to the audit log; the rest
+  are counted in `h2s_audit_suppressed_total`, so junk credentials cannot flood the hash-chained
+  log. Requests without credentials are never audited. Every refused request is counted once in
+  `h2s_auth_failures_total{reason}` (`rate_limited` for the 429s).
+- Audited: `auth.login` (success; denied and rate-limited attempts within the limit above),
+  `auth.logout`, `auth.failed` (within the limit above), `access.denied`, `job.create`
   (success and denied, with the reason), `job.cancel`, `experiment.create|update`,
   `profile.put|delete` (with `env::profile_warnings` in the detail), `secret.set|delete|capture`
   (the length, never the value), `token.create|revoke`.

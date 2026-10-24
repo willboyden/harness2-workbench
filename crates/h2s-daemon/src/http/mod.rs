@@ -45,6 +45,12 @@ pub struct AppInner {
     pub secrets: SecretStore,
     pub metrics: Arc<Metrics>,
     pub login_limiter: RateLimiter,
+    /// Failed authentications (credentials presented) per client; past
+    /// [`extract::AUTH_FAILURES_PER_MINUTE`] they are answered 429.
+    pub auth_failures: RateLimiter,
+    /// Audit records of failed authentication per client
+    /// ([`extract::AUDITED_FAILURES_PER_MINUTE`]); further failures are only counted.
+    pub failure_audits: RateLimiter,
     pub doctor: DoctorService,
     /// `Host` values this server answers to (configured + loopback forms of the bound port).
     pub hosts: Vec<HostEntry>,
@@ -74,6 +80,18 @@ impl AppState {
     #[must_use]
     pub fn new(inner: AppInner) -> AppState {
         AppState(Arc::new(inner))
+    }
+
+    /// Append a record of a failed authentication, unless this client already used its
+    /// share of such records this minute (then it is only counted in the metrics), so
+    /// unauthenticated clients cannot flood the hash-chained audit log.
+    pub async fn audit_failure(&self, client: Option<std::net::IpAddr>, entry: AuditEntry) {
+        let key = client.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+        if self.failure_audits.check(key).is_ok() {
+            self.audit(entry).await;
+        } else {
+            self.metrics.audit_suppressed.inc();
+        }
     }
 
     /// Append to the audit log; failures are logged (the request itself proceeds).

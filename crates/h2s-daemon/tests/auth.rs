@@ -374,6 +374,90 @@ async fn login_attempts_are_rate_limited_per_client() {
     t.stop().await;
 }
 
+async fn audit_rows(t: &TestServer) -> u64 {
+    t.srv()
+        .state
+        .db
+        .call(|c| h2s_daemon::db::audit::head(c))
+        .await
+        .unwrap()
+        .map_or(0, |(seq, _)| seq)
+}
+
+/// Junk credentials cannot flood the hash-chained audit log: per client, a few failures a
+/// minute are recorded, the rest only counted, and past a limit failures are 429.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_authentication_cannot_flood_the_audit_log() {
+    let t = TestServer::start().await;
+    let before = audit_rows(&t).await;
+    let mut statuses = std::collections::BTreeMap::new();
+    for i in 0..500 {
+        // Malformed, unknown-id and wrong-secret tokens, in turn.
+        let junk = match i % 3 {
+            0 => format!("junk-{i}"),
+            1 => format!("h2s_{:08}_{}", i, "A".repeat(43)),
+            _ => format!("{}{}", &t.viewer[..13], "B".repeat(43)),
+        };
+        let r = me(&t, &junk).await;
+        *statuses.entry(r.status().as_u16()).or_insert(0) += 1;
+        if r.status() == 429 {
+            assert!(r.headers().contains_key("retry-after"));
+        }
+    }
+    let audited = audit_rows(&t).await - before;
+    assert!(
+        (1..=u64::from(h2s_daemon::http::extract::AUDITED_FAILURES_PER_MINUTE)).contains(&audited),
+        "{audited} audit rows for 500 failures"
+    );
+    let limit = h2s_daemon::http::extract::AUTH_FAILURES_PER_MINUTE;
+    assert_eq!(statuses.get(&401).copied(), Some(limit), "{statuses:?}");
+    assert_eq!(
+        statuses.get(&429).copied(),
+        Some(500 - limit),
+        "{statuses:?}"
+    );
+    // Failed logins share the record budget: no new rows for this client.
+    for _ in 0..5 {
+        let r = t
+            .post("/api/v1/auth/login", None)
+            .json(&json!({"token": "h2s_junk"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401);
+    }
+    assert_eq!(audit_rows(&t).await - before, audited);
+    // Valid credentials from the same client still work, and every failure was counted.
+    assert_eq!(me(&t, &t.admin).await.status(), 200);
+    let m = t
+        .get("/metrics", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let count = |reason: &str| -> u64 {
+        let key = format!("h2s_auth_failures_total{{reason=\"{reason}\"}} ");
+        m.lines()
+            .find_map(|l| l.strip_prefix(key.as_str()))
+            .map_or(0, |v| v.trim().parse().unwrap())
+    };
+    // One reason per refused request: the 60 answered 401 plus the 5 logins, then 429s.
+    assert_eq!(
+        count("malformed") + count("unknown_token") + count("bad_secret"),
+        u64::from(limit) + 5,
+        "{m}"
+    );
+    assert_eq!(count("rate_limited"), u64::from(500 - limit), "{m}");
+    let suppressed = m
+        .lines()
+        .find_map(|l| l.strip_prefix("h2s_audit_suppressed_total "))
+        .map_or(0, |v| v.trim().parse::<u64>().unwrap());
+    assert_eq!(suppressed, u64::from(limit) + 5 - audited, "{m}");
+    t.stop().await;
+}
+
 /// A token-length string whose multi-byte character straddles the id/secret split once
 /// panicked the login handler (the connection was dropped instead of answered).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
