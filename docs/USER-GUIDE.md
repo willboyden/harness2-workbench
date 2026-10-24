@@ -368,7 +368,9 @@ progress bar and the current task update, and log lines arrive as they are writt
 *Mock data.* The log can be filtered with **Search the log** (case-insensitive) and the **stdout**,
 **stderr** and **server** switches (server lines are the Workbench's own: step boundaries, isolation
 notes); **Follow new lines** keeps the newest line in view; **Download** saves what the page holds.
-If the event stream drops, the page is designed to reconnect with a back-off and, after repeated
+The page holds the newest 20,000 lines, fewer when they are long (about 16 MiB of text); on a longer
+log it fetches only those and says how many older lines it does not keep (the REST API's
+`GET /api/v1/jobs/{id}/log` pages through all of them). If the event stream drops, the page is designed to reconnect with a back-off and, after repeated
 failures, to poll (from the UI notes; the author did not break a stream to see it). **Cancel** (operators;
 the role that could have started the job) asks you to confirm: harness2 gets
 `SIGTERM` to its process group and `SIGKILL` after 10 seconds, finished tasks are kept, and the task
@@ -473,9 +475,9 @@ evidence of accidental or casual edits, **not as a tamper-proof record**: anyone
 server's data directory, host-mode jobs included, can rewrite the whole chain and the check will
 still pass. Keep the head hash somewhere the server's user cannot write
 ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#13-audit-log)). Refused credentials are recorded too, but at most
-10 a minute per client address, and calls refused for a role that is too low at most 10 a minute per
-token or proxy user (the rest are only counted), so junk requests and a viewer's refused calls cannot
-flood the log.
+10 a minute per client address, and refused calls (a role that is too low, a job start or cancel the
+server turns down) at most 10 a minute per token or proxy user (the rest are only counted), so junk
+requests and refused calls cannot flood the log.
 
 ### 11.5 System
 

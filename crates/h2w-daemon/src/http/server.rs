@@ -242,6 +242,9 @@ impl Server {
             settings.kill_grace = g;
         }
         let reads = crate::reads::Reads::new();
+        let denial_audits = Arc::new(crate::ratelimit::PrincipalLimiter::per_principal(
+            super::extract::AUDITED_FAILURES_PER_MINUTE,
+        ));
         let jobs = JobManager::new(
             db.clone(),
             settings,
@@ -249,6 +252,7 @@ impl Server {
             secrets.clone(),
             Arc::clone(&metrics),
             Arc::clone(&reads),
+            Arc::clone(&denial_audits),
         );
         jobs.start().await?;
         jobs.probe_container_runtime();
@@ -269,9 +273,7 @@ impl Server {
                 crate::ratelimit::MAX_ENTRIES,
                 FAILURE_AUDIT_KEYS_PER_PEER,
             ),
-            denial_audits: crate::ratelimit::PrincipalLimiter::per_principal(
-                super::extract::AUDITED_FAILURES_PER_MINUTE,
-            ),
+            denial_audits,
             doctor: DoctorService::default(),
             reads: Arc::clone(&reads),
             hosts,

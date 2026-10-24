@@ -1175,20 +1175,37 @@ impl H2sMcp {
             Ok(token) => token,
             Err(e) => return output::error(e),
         };
-        let (from, limit) = match input.tail {
-            Some(tail) => {
-                let tail = tail.clamp(1, 5000);
-                match self
-                    .api
-                    .get::<Job>(&token, &["jobs", &input.job_id], &[])
-                    .await
-                {
-                    Ok(job) => (job.log_lines.saturating_sub(u64::from(tail)), tail),
-                    Err(e) => return output::error(errors::render(&e, Role::Viewer)),
-                }
-            }
-            None => (input.from, input.limit.unwrap_or(200).clamp(1, 5000)),
-        };
+        if let Some(tail) = input.tail {
+            let tail = tail.clamp(1, 5000);
+            let job = match self
+                .api
+                .get::<Job>(&token, &["jobs", &input.job_id], &[])
+                .await
+            {
+                Ok(job) => job,
+                Err(e) => return output::error(errors::render(&e, Role::Viewer)),
+            };
+            // Line text gets two thirds of the output cap; the JSON around it needs the rest.
+            let budget = output::MAX_TEXT_BYTES * 2 / 3;
+            return match crate::logtail::tail(
+                &self.api,
+                &token,
+                &input.job_id,
+                job.log_lines,
+                tail,
+                budget,
+            )
+            .await
+            {
+                Ok(chunk) => output::json(
+                    &chunk,
+                    None,
+                    "Older lines were dropped to fit; page with from/limit for the rest.",
+                ),
+                Err(e) => output::error(errors::render(&e, Role::Viewer)),
+            };
+        }
+        let (from, limit) = (input.from, input.limit.unwrap_or(200).clamp(1, 5000));
         let query = [("from", from.to_string()), ("limit", limit.to_string())];
         match self
             .api

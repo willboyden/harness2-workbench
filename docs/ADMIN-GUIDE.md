@@ -1232,16 +1232,19 @@ had measured about 33 MB of audit rows for 140,000 junk requests; with it a clie
 rows an hour. Distinct client addresses each have their own allowance, so limit who can reach the
 listener, and let the reverse proxy limit request rates.
 
-**Refused requests** (`access.denied`: an authenticated caller without the role a route needs) are
-limited the same way, per principal (a token with its sessions, or one proxy user): at most 10
-records a minute, the rest counted in `h2w_audit_suppressed_total`. Verified: 500 refused requests
-from a viewer token left 10 records and raised the counter by 490, and a second principal's refusal
-was still recorded. **Not limited:** the records of job starts and cancels (`job.create` and
-`job.cancel`, successful or refused), which the job engine writes for operators and admins. An
-operator token, and any MCP agent holding one, can add one record per refused job start (a spec that
-fails validation, a kind above its role) or per cancel of a finished job; verified: 300 such
-requests added 300 records. Give operator tokens only to people and tools you trust with that, and
-let the reverse proxy limit request rates.
+**Refused requests** are limited the same way, per principal (a token with its sessions, or one proxy
+user): at most 10 records a minute, the rest counted in `h2w_audit_suppressed_total`. That covers
+`access.denied` (an authenticated caller without the role a route needs) and the job engine's
+refusals, `job.create` and `job.cancel` with outcome `denied` (a spec that fails validation, a kind
+above the caller's role, a cancel of a finished or unknown job); they share one allowance per
+principal. Verified: 500 refused requests from a viewer token left 10 records and raised the counter
+by 490; from an operator token, 300 refused `install_harness2` starts left 10 records, and 300
+refused cancels and 5 refused requests after them added none (counter 590), while an administrator's
+refusal was still recorded. Before this limit, 300 refused job requests added 300 records.
+
+Successful actions are always recorded: a principal allowed to start jobs or change experiments adds
+one record per change, as fast as the server accepts them. Give operator and admin tokens only to
+people and tools you trust, and let the reverse proxy limit request rates.
 
 ```console
 $ h2workbench audit verify
@@ -1381,7 +1384,7 @@ guide describes the new behaviour. The exact messages are in
 | Results of hostile experiments | per-file read caps | bounded per request, 4 reads at once, `413 too large` ([API.md](API.md#6-paging-filters-and-limits)); *second review*: every results file is opened without blocking (a FIFO swapped in is refused, not waited on), a request has a read budget of bytes and sweeps, an abandoned request cancels its reads, a response is capped at 64 MiB, at most 200 sweeps are listed per experiment and a changed sweep may be shown as it was for one refresh |
 | Harness fingerprint and manifest digest (*second review*) | read every file whatever its size | a file over its cap (4 MiB in the fingerprint; 4 MiB for a summary and 32 MiB for a judged file in the digest) is recorded as `<too large: N bytes>` and never read; more than 64 MiB (fingerprint) or 1 GiB (digest) in all is `413` |
 | Job log pages and event-stream replay (*second review*) | up to 5,000 lines whatever their size | about 1 MiB (at least one line), with `next`; a reconnecting stream replays at most one page |
-| Refused requests in the audit log (*second review*) | one record each | at most 10 a minute per principal, the rest counted in `h2w_audit_suppressed_total` ([13](#13-audit-log)); job starts and cancels are not limited |
+| Refused requests in the audit log (*second review*) | one record each | at most 10 a minute per principal, refused job starts and cancels included, the rest counted in `h2w_audit_suppressed_total` ([13](#13-audit-log)) |
 | Audit actors (*second review*) | the plain name | `token:<name>`, `proxy:<user>`, `cli`, `server`, `anonymous` ([13](#13-audit-log)) |
 | Limiter keys behind a trusted proxy (*second review*) | one table, 10,000 clients, one shared overflow bucket | per peer: 1,024 clients each, then that peer's own bucket ([6.5](#65-failed-authentication-is-throttled)) |
 | Origin rule behind an `https` `public_url` (*second review*) | `http://<Host>` also passed; only the first `Origin` was read | only https origins; a repeated `Origin` header is `403` ([7](#7-reverse-proxy-and-tls)) |

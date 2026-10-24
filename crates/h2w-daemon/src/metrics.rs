@@ -70,7 +70,8 @@ pub struct Metrics {
     pub job_duration: HistogramFamily<KindLabels>,
     pub spend_usd: Family<ExperimentLabels, Counter<f64, AtomicU64>>,
     pub auth_failures: Family<ReasonLabels, Counter>,
-    /// Records of failed authentication not written (a client's per-minute share is used).
+    /// Audit records not written because a client's share of failed-authentication records,
+    /// or a principal's share of refusal records, was used up this minute.
     pub audit_suppressed: Counter,
     /// Connections closed at accept: `total` (the server's cap) or `per_client`.
     pub connections_refused: Family<ReasonLabels, Counter>,
@@ -155,7 +156,7 @@ impl Metrics {
         );
         registry.register(
             "h2w_audit_suppressed",
-            "Audit records of failed authentication not written (per-client limit)",
+            "Audit records of failed authentication or refused requests not written (per-client and per-principal limits)",
             audit_suppressed.clone(),
         );
         registry.register(

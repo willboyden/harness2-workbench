@@ -318,6 +318,8 @@ pub struct JobManager {
     metrics: Arc<Metrics>,
     /// Read permits and the sweep cache, shared with the HTTP layer.
     reads: Arc<crate::reads::Reads>,
+    /// Per-principal share of refusal records, shared with the HTTP layer's `access.denied`.
+    denial_audits: Arc<crate::ratelimit::PrincipalLimiter>,
     live: Mutex<HashMap<String, Arc<LiveJob>>>,
     sched: tokio::sync::Mutex<()>,
     wake: Notify,
@@ -344,6 +346,7 @@ impl JobManager {
         secrets: SecretStore,
         metrics: Arc<Metrics>,
         reads: Arc<crate::reads::Reads>,
+        denial_audits: Arc<crate::ratelimit::PrincipalLimiter>,
     ) -> Arc<JobManager> {
         Arc::new(JobManager {
             db,
@@ -352,6 +355,7 @@ impl JobManager {
             secrets,
             metrics,
             reads,
+            denial_audits,
             live: Mutex::new(HashMap::new()),
             sched: tokio::sync::Mutex::new(()),
             wake: Notify::new(),
@@ -425,6 +429,18 @@ impl JobManager {
         }
     }
 
+    /// Record a refused job request within the caller's per-principal share of refusal
+    /// records (the rest are only counted), so a principal cannot flood the audit log with
+    /// requests it is not allowed to make.
+    async fn audit_refusal(&self, actor: &Actor, entry: AuditEntry) {
+        let key = crate::http::extract::principal_key(&actor.principal);
+        if self.denial_audits.check_principal(&key).is_ok() {
+            self.audit(entry).await;
+        } else {
+            self.metrics.audit_suppressed.inc();
+        }
+    }
+
     pub(crate) async fn audit(&self, entry: AuditEntry) {
         if let Err(e) = self
             .db
@@ -477,9 +493,13 @@ impl JobManager {
             Ok(job) => actor
                 .audit("job.create", &job.id, h2w_api::AuditOutcome::Success)
                 .detail(target),
-            Err(e) => actor
-                .audit("job.create", &target, h2w_api::AuditOutcome::Denied)
-                .detail(e.message.clone()),
+            Err(e) => {
+                let entry = actor
+                    .audit("job.create", &target, h2w_api::AuditOutcome::Denied)
+                    .detail(e.message.clone());
+                self.audit_refusal(actor, entry).await;
+                return result;
+            }
         };
         self.audit(entry).await;
         result
@@ -907,9 +927,13 @@ impl JobManager {
         let result = self.cancel_inner(id, actor).await;
         let entry = match &result {
             Ok(_) => actor.audit("job.cancel", id, h2w_api::AuditOutcome::Success),
-            Err(e) => actor
-                .audit("job.cancel", id, h2w_api::AuditOutcome::Denied)
-                .detail(e.message.clone()),
+            Err(e) => {
+                let entry = actor
+                    .audit("job.cancel", id, h2w_api::AuditOutcome::Denied)
+                    .detail(e.message.clone());
+                self.audit_refusal(actor, entry).await;
+                return result;
+            }
         };
         self.audit(entry).await;
         result

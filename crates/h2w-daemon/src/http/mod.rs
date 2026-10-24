@@ -52,7 +52,7 @@ pub struct AppInner {
     /// ([`extract::AUDITED_FAILURES_PER_MINUTE`]); further failures are only counted.
     pub failure_audits: RateLimiter,
     /// Audit records of refused requests (`access.denied`) per principal, at the same rate.
-    pub denial_audits: crate::ratelimit::PrincipalLimiter,
+    pub denial_audits: Arc<crate::ratelimit::PrincipalLimiter>,
     pub doctor: DoctorService,
     /// Permits and the sweep cache for blocking reads of results and logs (see
     /// [`crate::reads`]).
