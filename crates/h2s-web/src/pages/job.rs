@@ -713,8 +713,12 @@ pub(crate) fn JobPage() -> impl IntoView {
                             <p class="small muted">{jobs::status_help(status)}</p>
                             {(status == h2s_api::JobStatus::Running || progress.is_some())
                                 .then(|| {
+                                    // A finished job shows no "busy" bar and no current task.
+                                    let finished = status.is_terminal();
+                                    let current = current.filter(|_| !finished);
                                     view! {
-                                        <ProgressBar fraction=fraction label=ptext.clone() />
+                                        {(!finished || fraction.is_some())
+                                            .then(|| view! { <ProgressBar fraction=fraction label=ptext.clone() /> })}
                                         <p class="small">{ptext.clone()}{current.map(|c| format!(" · now: {c}"))}</p>
                                     }
                                 })}

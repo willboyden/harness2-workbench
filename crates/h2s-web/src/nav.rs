@@ -52,3 +52,25 @@ pub(crate) fn query_setter() -> impl Fn(&[(&str, &str)]) + Clone + 'static {
         );
     }
 }
+
+/// Click handling for table rows that lead somewhere: a click anywhere on the row opens
+/// `href`, except on the row's own links and controls (keyboard users use the link in the
+/// first cell). Call inside a component (it needs the router).
+pub(crate) fn row_navigator() -> impl Fn(&leptos::ev::MouseEvent, &str) + Clone + 'static {
+    use wasm_bindgen::JsCast;
+    let navigate = use_navigate();
+    move |ev: &leptos::ev::MouseEvent, href: &str| {
+        let on_control = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .and_then(|el| {
+                el.closest("a, button, input, select, textarea, label, summary")
+                    .ok()
+                    .flatten()
+            })
+            .is_some();
+        if !on_control && !ev.default_prevented() {
+            navigate(href, NavigateOptions::default());
+        }
+    }
+}

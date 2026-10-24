@@ -63,10 +63,17 @@ The mock sends the exact CSP and security headers of §9, enforces the CSRF head
 `confirm-dialog`, `confirm-accept`, `command-palette`, `create-experiment-dialog`,
 `experiment-create-submit`, `token-created`, `run-start`.
 
+The four row hooks (`experiment-row`, `sweep-row`, `task-row`, `job-row`) and their
+`data-*` attributes sit on each row's header cell (`<th scope="row">`), not on the `<tr>`.
+Firefox's WebDriver cannot click a `<tr>` whose centre point lies outside its first cell
+(its workaround for Firefox bug 1413493 only checks `cells[0]`), so a test that clicks the
+hook needs the cell. Clicking anywhere in the row still opens it for mouse users.
+
 ## Known gaps
 
 - Task tables at phone width scroll horizontally inside their container rather than
   reflowing into cards.
 - Glossary tooltips open on hover and focus; on touch screens the term links to Help.
 - There are no browser (`wasm-bindgen-test`) tests; behaviour that needs a browser was
-  checked with scripted headless Firefox runs against the mock.
+  checked with scripted headless Firefox runs against the mock and against a real
+  `h2studio` after the real harness2 demo (plus the `h2s-e2e` browser suite).

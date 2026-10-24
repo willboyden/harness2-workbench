@@ -1236,12 +1236,17 @@ fieldset legend {
   white-space: nowrap;
 }
 
-.table tbody tr:last-child td {
+.table tbody tr:last-child > * {
   border-bottom: 0;
 }
 
-.table tbody tr:hover td {
+.table tbody tr:hover > * {
   background: var(--surface-2);
+}
+
+/* Row header cells (<th scope="row">) look like ordinary cells. */
+.table tbody th {
+  font-weight: 400;
 }
 
 .table .num {
@@ -1264,6 +1269,10 @@ fieldset legend {
 
 .cell-title {
   font-weight: 600;
+}
+
+.row-link {
+  cursor: pointer;
 }
 
 .cell-sub {
@@ -2133,6 +2142,11 @@ fieldset legend {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-btn span + span {
+  flex: none;
   white-space: nowrap;
 }
 

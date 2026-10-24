@@ -201,7 +201,7 @@ pub(crate) fn DoctorSummary(
         <div class="doctor-summary">
             <div class="doctor-counts">
                 <Badge tone=Tone::Success text=format!("{ok} ok") />
-                <Badge tone=Tone::Warning text=format!("{warn} warnings") />
+                <Badge tone=Tone::Warning text=format::plural(warn as u64, "warning", "warnings") />
                 <Badge tone=Tone::Danger text=format!("{fail} failed") />
                 <span class="muted small">"checked " <Ago ts=report.generated_at.clone() /></span>
             </div>

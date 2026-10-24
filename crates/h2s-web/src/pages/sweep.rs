@@ -101,6 +101,7 @@ fn TasksTab(exp: Memo<String>, sweep: Memo<String>, modes: Vec<Mode>) -> impl In
     let status = query_param("status");
     let set_query = query_setter();
     let cursor = Cursor::new();
+    let open_row = crate::nav::row_navigator();
     Effect::new(move |_| {
         domain.track();
         status.track();
@@ -197,12 +198,14 @@ fn TasksTab(exp: Memo<String>, sweep: Memo<String>, modes: Vec<Mode>) -> impl In
                                         .into_iter()
                                         .map(|row| {
                                             let spend: f64 = row.modes.iter().map(|m| m.usd).sum();
+                                            let href = route::task(&e, &s, &row.slug);
+                                            let open_row = open_row.clone();
                                             view! {
-                                                <tr data-testid="task-row" data-task=row.slug.clone()>
-                                                    <td>
+                                                <tr class="row-link" on:click=move |ev| open_row(&ev, &href)>
+                                                    <th scope="row" data-testid="task-row" data-task=row.slug.clone()>
                                                         <a class="cell-title mono" href=route::task(&e, &s, &row.slug)>{row.task_id.clone()}</a>
                                                         <span class="cell-sub">{row.domain.clone()}</span>
-                                                    </td>
+                                                    </th>
                                                     <td>
                                                         <Badge tone=status_tone(&row.status) text=row.status.clone() />
                                                         {(row.errors > 0).then(|| view! { <span class="cell-sub">{format::plural(u64::from(row.errors), "error", "errors")}</span> })}

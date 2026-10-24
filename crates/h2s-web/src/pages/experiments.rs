@@ -197,6 +197,7 @@ pub(crate) fn Experiments() -> impl IntoView {
         let archived = show_archived.get();
         async move { api::get::<Vec<Experiment>>(&paths::experiments(archived)).await }
     });
+    let open_row = crate::nav::row_navigator();
     let demo_busy = RwSignal::new(false);
     let run_demo = {
         let navigate = navigate.clone();
@@ -308,9 +309,11 @@ pub(crate) fn Experiments() -> impl IntoView {
                                         .map(|e| {
                                             let spend: f64 = e.sweeps.iter().map(|s| s.usd).sum();
                                             let best = e.sweeps.iter().find(|s| s.headline.is_some()).and_then(|s| s.headline.clone());
+                                            let href = route::experiment(&e.name);
+                                            let open_row = open_row.clone();
                                             view! {
-                                                <tr data-testid="experiment-row" data-name=e.name.clone()>
-                                                    <td>
+                                                <tr class="row-link" on:click=move |ev| open_row(&ev, &href)>
+                                                    <th scope="row" data-testid="experiment-row" data-name=e.name.clone()>
                                                         <a class="cell-title" href=route::experiment(&e.name)>
                                                             {e.name.clone()}
                                                         </a>
@@ -324,7 +327,7 @@ pub(crate) fn Experiments() -> impl IntoView {
                                                                     </span>
                                                                 }
                                                             })}
-                                                    </td>
+                                                    </th>
                                                     <td>{kind_badge(e.kind)}</td>
                                                     <td class="nowrap">
                                                         {e.profile.clone().map_or_else(

@@ -84,6 +84,7 @@ pub(crate) fn ExperimentPage() -> impl IntoView {
         let e = exp.get();
         async move { api::get::<Page<Job>>(&paths::jobs("", "", &e, 8, None)).await }
     });
+    let open_row = crate::nav::row_navigator();
     let edit_open = RwSignal::new(false);
     let saved = Callback::new(move |_e: Experiment| data.refetch());
     let toggle_archive = move |archived: bool| {
@@ -168,6 +169,7 @@ pub(crate) fn ExperimentPage() -> impl IntoView {
                 data,
                 5,
                 move |e| {
+                    let open_row = open_row.clone();
                     let name = e.name.clone();
                     let total_tasks: u32 = e.sweeps.iter().map(|s| s.tasks).sum();
                     let spend: f64 = e.sweeps.iter().map(|s| s.usd).sum();
@@ -247,12 +249,14 @@ pub(crate) fn ExperimentPage() -> impl IntoView {
                                                     .iter()
                                                     .map(|sw| {
                                                         let modes = sw.modes.iter().map(|m| mode_label(*m)).collect::<Vec<_>>().join(" + ");
+                                                        let href = route::sweep(&name, &sw.id);
+                                                        let open_row = open_row.clone();
                                                         view! {
-                                                            <tr data-testid="sweep-row" data-sweep=sw.id.clone()>
-                                                                <td class="nowrap">
+                                                            <tr class="row-link" on:click=move |ev| open_row(&ev, &href)>
+                                                                <th scope="row" class="nowrap" data-testid="sweep-row" data-sweep=sw.id.clone()>
                                                                     <a class="cell-title mono" href=route::sweep(&name, &sw.id)>{sw.id.clone()}</a>
                                                                     <span class="cell-sub">{sw.bench_name.clone()}</span>
-                                                                </td>
+                                                                </th>
                                                                 <td>{sw.substrate.display_name()}</td>
                                                                 <td class="num">{sw.k}</td>
                                                                 <td class="num">{sw.seed.map_or_else(|| format::DASH.to_owned(), |s| s.to_string())}</td>

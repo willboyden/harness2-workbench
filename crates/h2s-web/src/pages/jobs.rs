@@ -40,6 +40,7 @@ pub(crate) fn Jobs() -> impl IntoView {
     let experiment = query_param("experiment");
     let set_query = query_setter();
     let cursor = Cursor::new();
+    let open_row = crate::nav::row_navigator();
     let status_sel = RwSignal::new(status.get_untracked());
     let kind_sel = RwSignal::new(kind.get_untracked());
     let exp_sel = RwSignal::new(experiment.get_untracked());
@@ -153,12 +154,14 @@ pub(crate) fn Jobs() -> impl IntoView {
                                             format!("{} {}", progress_text(pr), if frac.is_empty() { String::new() } else { format!("({frac})") })
                                         });
                                         let exp = j.spec.experiment().map(str::to_owned);
+                                        let href = route::job(&j.id);
+                                        let open_row = open_row.clone();
                                         view! {
-                                            <tr data-testid="job-row" data-job-id=j.id.clone()>
-                                                <td>
+                                            <tr class="row-link" on:click=move |ev| open_row(&ev, &href)>
+                                                <th scope="row" data-testid="job-row" data-job-id=j.id.clone()>
                                                     <a class="cell-title" href=route::job(&j.id)>{spec_title(&j.spec)}</a>
                                                     <span class="cell-sub">{format!("{} · …{}", kind_label(j.kind), short_id(&j.id))}</span>
-                                                </td>
+                                                </th>
                                                 <td><StatusBadge status=j.status /></td>
                                                 <td class="small">{progress.unwrap_or_else(|| format::DASH.to_owned())}</td>
                                                 <td>
