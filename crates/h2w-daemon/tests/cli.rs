@@ -683,18 +683,22 @@ async fn container_jobs_get_their_environment_through_an_env_file() {
     let read = |n: &str| std::fs::read_to_string(out.join(n)).unwrap_or_default();
     let cli_env = read("cli-env.txt");
     assert!(!cli_env.is_empty(), "the fake runtime did not run");
+    // Name what leaked, never print a value (or the environment that holds it).
     for absent in [
         "PROFILE_CANARY",
         "profile-only-value",
         "X_TOKEN",
-        secret,
         "HARNESS2_RUNS_DIR",
     ] {
         assert!(
             !cli_env.contains(absent),
-            "{absent} reached the runtime CLI's environment:\n{cli_env}"
+            "{absent} reached the runtime CLI's environment"
         );
     }
+    assert!(
+        !cli_env.contains(secret),
+        "the secret's value reached the runtime CLI's environment"
+    );
     assert!(
         cli_env.contains(&format!("H2W_JOB_ID={}", job.id)),
         "{cli_env}"

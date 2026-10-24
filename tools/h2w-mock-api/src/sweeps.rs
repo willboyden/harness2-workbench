@@ -81,8 +81,9 @@ impl SweepSpec {
         self.tasks.iter().find(|t| t.slug() == slug)
     }
 
-    fn rng(&self, task: &TaskSpec, salt: &str) -> Rng {
-        Rng::new(seed_of(&format!("{}|{}|{salt}", self.id, task.id)))
+    /// A deterministic, non-cryptographic generator for one stream of mock values of a task.
+    fn rng(&self, task: &TaskSpec, stream: &str) -> Rng {
+        Rng::new(seed_of(&format!("{}|{}|{stream}", self.id, task.id)))
     }
 
     /// Namespace of one mode (`lab-oc-agg1` / `lab-oc-seq1`).

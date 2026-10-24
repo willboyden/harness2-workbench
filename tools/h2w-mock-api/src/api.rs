@@ -1755,7 +1755,8 @@ async fn readyz() -> Json<Readiness> {
 async fn csp_report(body: String) -> StatusCode {
     #[allow(clippy::print_stderr)]
     {
-        eprintln!("CSP VIOLATION REPORT: {body}");
+        // Debug-escaped: the report is browser input and must not forge log lines.
+        eprintln!("CSP VIOLATION REPORT: {body:?}");
     }
     StatusCode::NO_CONTENT
 }
