@@ -98,9 +98,9 @@ pub(crate) fn AuditLog() -> impl IntoView {
                                             <td class="nowrap">{format::timestamp(&e.ts)}</td>
                                             <td>{e.actor.clone()}{e.ip.clone().map(|ip| view! { <span class="cell-sub">{ip}</span> })}</td>
                                             <td class="mono">{e.action.clone()}</td>
-                                            <td class="mono small">{e.target.clone()}</td>
+                                            <td class="mono small cell-wrap">{e.target.clone()}</td>
                                             <td>{outcome_badge(e.outcome)}</td>
-                                            <td class="small">
+                                            <td class="small cell-wrap">
                                                 {e.detail.clone().unwrap_or_default()}
                                                 {e.request_id.map(|r| view! { <span class="cell-sub mono">{format!("request {r}")}</span> })}
                                             </td>

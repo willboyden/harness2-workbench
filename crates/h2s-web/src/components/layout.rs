@@ -1,5 +1,6 @@
 //! The app shell: skip link, sidebar navigation, top bar and the page outlet.
 
+use h2s_api::Role;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_location, use_navigate};
 
@@ -66,7 +67,11 @@ fn Sidebar() -> impl IntoView {
                 <NavLink href="/" label="Dashboard" glyph=Icon::Dashboard testid="nav-dashboard" />
                 <NavLink href="/experiments" label="Experiments" glyph=Icon::Flask testid="nav-experiments" />
                 <NavLink href="/jobs" label="Jobs" glyph=Icon::Jobs testid="nav-jobs" />
-                <NavLink href="/new" label="New run" glyph=Icon::Plus testid="nav-new-run" />
+                // Starting anything (even a preview) needs the operator role.
+                {move || {
+                    s.can(Role::Operator)
+                        .then(|| view! { <NavLink href="/new" label="New run" glyph=Icon::Plus testid="nav-new-run" /> })
+                }}
                 <NavLink href="/compare" label="Compare" glyph=Icon::Compare testid="nav-compare" />
                 <NavLink href="/benchmarks" label="Benchmarks" glyph=Icon::Box testid="nav-benchmarks" />
                 <NavLink

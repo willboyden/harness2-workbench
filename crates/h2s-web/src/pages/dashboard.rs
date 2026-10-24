@@ -124,10 +124,18 @@ pub(crate) fn Dashboard() -> impl IntoView {
                             }
                         })
                 }}
-                <a class="btn btn-secondary" href="/benchmarks">
-                    {icon(Icon::Box)}
-                    " Set up a benchmark"
-                </a>
+                {move || {
+                    // Benchmark setup is an administrator's job.
+                    s.can(Role::Admin)
+                        .then(|| {
+                            view! {
+                                <a class="btn btn-secondary" href="/benchmarks">
+                                    {icon(Icon::Box)}
+                                    " Set up a benchmark"
+                                </a>
+                            }
+                        })
+                }}
             </PageHeader>
 
             {move || {
@@ -213,12 +221,14 @@ pub(crate) fn Dashboard() -> impl IntoView {
                     {loaded(
                         active,
                         2,
-                        |jobs| {
+                        move |jobs| {
                             if jobs.is_empty() {
-                                view! {
-                                    <p class="muted">"Nothing is running. Start the demo or a new run to see live progress here."</p>
-                                }
-                                    .into_any()
+                                let hint = if s.can(Role::Operator) {
+                                    "Nothing is running. Start the demo or a new run to see live progress here."
+                                } else {
+                                    "Nothing is running right now."
+                                };
+                                view! { <p class="muted">{hint}</p> }.into_any()
                             } else {
                                 view! {
                                     <ul class="job-mini-list">

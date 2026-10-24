@@ -1275,6 +1275,12 @@ fieldset legend {
   cursor: pointer;
 }
 
+/* Long ids (request ids, job ids) may break anywhere so a table fits its column. */
+.cell-wrap {
+  min-width: 12ch;
+  overflow-wrap: anywhere;
+}
+
 .cell-sub {
   display: block;
   font-size: 0.82rem;
