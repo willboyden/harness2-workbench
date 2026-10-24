@@ -52,7 +52,7 @@ fn InstallForm() -> impl IntoView {
         u.ask(ConfirmRequest {
             title: "Install harness2?".to_owned(),
             body: if other {
-                "This installs a commit this Studio release was not tested with. Output formats the Studio reads may differ.".to_owned()
+                "This installs a commit this Studio release was not tested with. The server refuses it unless paths.allow_untested_harness2_rev = true, and output formats the Studio reads may differ.".to_owned()
             } else {
                 "This installs the commit this Studio release was tested with.".to_owned()
             },
@@ -70,7 +70,7 @@ fn InstallForm() -> impl IntoView {
                     value=rev
                     error=rev_error
                     placeholder="40-character commit id"
-                    help="Empty = the commit this Studio release was tested with."
+                    help="Empty = the commit this Studio release was tested with. Another commit needs paths.allow_untested_harness2_rev = true in the server configuration."
                 />
                 <Checkbox id="install-reinstall" label="Re-create the virtual environment" checked=reinstall help="Use when the environment is damaged or after a Python upgrade." />
                 <Checkbox id="install-bridge" label="Include the bridge extra" checked=bridge help="Installs the LiteLLM proxy harness2-bridge needs to serve Codex on Vertex AI." />

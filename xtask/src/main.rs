@@ -157,6 +157,15 @@ fn build_web(root: &Path, dev: bool) -> Result<()> {
         bail!("missing static assets directory {}", assets.display());
     }
     copy_dir(&assets, &dist)?;
+    // rust-embed decides when the server is compiled whether `dist/web` exists, so a server
+    // compiled without it keeps the "UI not built" page. Marking the embedding module changed
+    // makes the next server build, debug or release, embed the UI just built.
+    let embed = root.join("crates/h2s-daemon/src/http/static_ui.rs");
+    std::fs::File::options()
+        .write(true)
+        .open(&embed)
+        .and_then(|f| f.set_modified(std::time::SystemTime::now()))
+        .with_context(|| format!("marking {} changed", embed.display()))?;
     eprintln!("web UI built into {}", dist.display());
     Ok(())
 }

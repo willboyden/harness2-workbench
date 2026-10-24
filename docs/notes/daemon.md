@@ -107,7 +107,9 @@ Keys beyond §11 (all optional, defaults shown):
   `acknowledge_risks` and the UI does not ask for it.
 - **Static UI**: `/`, `/app.js`, `/styles.css`, `/favicon.svg`, `/pkg/**` from `dist/web`,
   embedded at build time in builds without debug assertions (release) and read from disk at run
-  time in debug builds (rust-embed's behaviour). The crate's `build.rs` watches `dist/web` in
+  time in debug builds (rust-embed's behaviour; only when `dist/web` existed as the crate was
+  compiled, so `cargo xtask web` marks `http/static_ui.rs` changed and the next build of either
+  kind picks the UI up). The crate's `build.rs` watches `dist/web` in
   release builds, so `cargo xtask web` followed by `cargo build --release` embeds the current
   UI without touching anything (checked by hand: a release build without `dist/web` served the
   "not built" page; after `cargo xtask web` the next build reran and served the UI; the one
@@ -193,7 +195,8 @@ Keys beyond §11 (all optional, defaults shown):
   `GIT_*`, `OPENCODE_*`, `NODE_PATH`, `JAVA_TOOL_OPTIONS`, `RUBYOPT`/`RUBYLIB`,
   `PERL5OPT`/`PERL5LIB` and the CA variables (`SSL_CERT_FILE`, `SSL_CERT_DIR`,
   `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`). A stored profile that uses one
-  is refused (422) when a job would use it; save it again without that variable.
+  is refused (422, `params.profile`) when a job is created with it; save it again without that
+  variable.
 - **Processes**: argv only; `env_clear()` + `BASE_ENV_PASSTHROUGH` and the `UV_`/`PIP_`/`NPM_CONFIG_`
   prefixes (`h2s_core::env::is_passed_through`) + the job environment (runtime
   CLIs also get `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `XDG_RUNTIME_DIR`,

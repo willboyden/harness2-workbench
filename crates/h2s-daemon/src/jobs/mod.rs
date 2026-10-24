@@ -600,6 +600,16 @@ impl JobManager {
                 .ok_or_else(|| {
                     ApiError::invalid("params.profile", format!("no profile named {pn}"))
                 })?;
+            // A profile stored before a rule tightened (a newly reserved environment name,
+            // for example) is refused here, not accepted and failed while the job prepares.
+            if let Err(e) = h2s_core::env::validate_profile(&p) {
+                return Err(ApiError::invalid(
+                    "params.profile",
+                    format!(
+                        "profile {pn} no longer passes validation ({e}); an administrator must update it"
+                    ),
+                ));
+            }
             let mut missing = Vec::new();
             for s in crate::db::profiles::referenced_secrets(&p) {
                 if self.secrets.get(&s).await?.is_none() {

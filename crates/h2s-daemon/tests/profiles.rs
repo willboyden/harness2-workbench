@@ -56,3 +56,36 @@ async fn profile_check_reports_warnings_and_missing_secrets() {
     assert_eq!(r.status(), 422);
     t.stop().await;
 }
+
+/// A profile stored before a rule tightened (here: an environment name reserved later) is
+/// refused when a job is created (422), not accepted and failed while the job prepares.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stored_profile_that_breaks_current_rules_is_refused_at_job_creation() {
+    let t = TestServer::start().await;
+    t.put_profile(json!({"name": "old", "kind": "custom", "solver_model": "m/x"}))
+        .await;
+    // Rewrite it as an earlier release could have stored it.
+    let db = h2s_daemon::db::open_connection(&t.root.path().join("data/studio.db")).unwrap();
+    let mut p = h2s_daemon::db::profiles::get(&db, "old").unwrap().unwrap();
+    p.extra_env.push(h2s_api::EnvVar {
+        name: "GIT_SSH_COMMAND".into(),
+        value: Some("ssh -o ProxyCommand=evil".into()),
+        secret: None,
+    });
+    h2s_daemon::db::profiles::put(&db, &p, 0).unwrap();
+    drop(db);
+    t.put_experiment("e-old", None).await;
+    let r = t
+        .create_job(&t.operator, run_spec("e-old", "old", None))
+        .await;
+    assert_eq!(r.status(), 422);
+    let e: ErrorBody = r.json().await.unwrap();
+    let problem = &e.error.details[0];
+    assert_eq!(problem.field, "params.profile");
+    assert!(
+        problem.problem.contains("no longer passes validation") && problem.problem.contains("GIT_"),
+        "{}",
+        problem.problem
+    );
+    t.stop().await;
+}
