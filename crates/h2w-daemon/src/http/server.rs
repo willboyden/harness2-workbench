@@ -33,6 +33,10 @@ use crate::secrets::{SecretEnv, SecretStore};
 /// Concurrent connections served; more are closed at once.
 pub const MAX_CONNECTIONS: usize = 1024;
 
+/// Clients per TCP peer with their own share of failed-authentication audit records; behind
+/// a trusted proxy the further clients of that peer share one (they are still counted).
+pub const FAILURE_AUDIT_KEYS_PER_PEER: usize = 16;
+
 /// Open connections per client address (IPv6 per /64), so one client cannot hold every
 /// connection slot (`server.max_connections_per_ip`).
 #[derive(Debug)]
@@ -257,7 +261,15 @@ impl Server {
             metrics,
             login_limiter: RateLimiter::new(per_minute),
             auth_failures: RateLimiter::new(super::extract::AUTH_FAILURES_PER_MINUTE),
-            failure_audits: RateLimiter::new(super::extract::AUDITED_FAILURES_PER_MINUTE),
+            // A peer inventing X-Forwarded-For clients gets few records of its own.
+            failure_audits: RateLimiter::with_limits(
+                super::extract::AUDITED_FAILURES_PER_MINUTE,
+                crate::ratelimit::MAX_ENTRIES,
+                FAILURE_AUDIT_KEYS_PER_PEER,
+            ),
+            denial_audits: crate::ratelimit::PrincipalLimiter::per_principal(
+                super::extract::AUDITED_FAILURES_PER_MINUTE,
+            ),
             doctor: DoctorService::default(),
             results_reads: Arc::new(tokio::sync::Semaphore::new(super::routes::RESULTS_READS)),
             sweep_cache: Arc::new(super::sweeps::SweepCache::default()),

@@ -52,6 +52,8 @@ pub struct AppInner {
     /// Audit records of failed authentication per client
     /// ([`extract::AUDITED_FAILURES_PER_MINUTE`]); further failures are only counted.
     pub failure_audits: RateLimiter,
+    /// Audit records of refused requests (`access.denied`) per principal, at the same rate.
+    pub denial_audits: crate::ratelimit::PrincipalLimiter,
     pub doctor: DoctorService,
     /// Bounds the blocking reads of experiment results running at once
     /// ([`routes::RESULTS_READS`]); more wait for a permit.
@@ -95,9 +97,24 @@ impl AppState {
     /// Append a record of a failed authentication, unless this client already used its
     /// share of such records this minute (then it is only counted in the metrics), so
     /// unauthenticated clients cannot flood the hash-chained audit log.
-    pub async fn audit_failure(&self, client: Option<std::net::IpAddr>, entry: AuditEntry) {
-        let key = client.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
-        if self.failure_audits.check(key).is_ok() {
+    pub async fn audit_failure(&self, meta: &extract::RequestMeta, entry: AuditEntry) {
+        let (peer, client) = meta.limiter_key();
+        if self.failure_audits.check_from(peer, client).is_ok() {
+            self.audit(entry).await;
+        } else {
+            self.metrics.audit_suppressed.inc();
+        }
+    }
+
+    /// Append a record of a refused request, unless this principal already used its share
+    /// of such records this minute (then it is only counted), so an authenticated caller
+    /// cannot flood the audit log with requests it is not allowed to make.
+    pub async fn audit_denial(&self, principal: &h2w_api::Principal, entry: AuditEntry) {
+        if self
+            .denial_audits
+            .check_principal(&extract::principal_key(principal))
+            .is_ok()
+        {
             self.audit(entry).await;
         } else {
             self.metrics.audit_suppressed.inc();

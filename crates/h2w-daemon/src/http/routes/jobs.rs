@@ -26,7 +26,9 @@ use super::clamp_limit;
 use crate::db::jobs::{JobFilter, parse_enum};
 use crate::error::ApiError;
 use crate::http::AppState;
-use crate::http::extract::{ApiJson, ApiQuery, Auth, OperatorRole, ViewerRole, credential_valid};
+use crate::http::extract::{
+    ApiJson, ApiQuery, Auth, OperatorRole, ViewerRole, credential_valid, principal_key,
+};
 
 /// Heartbeat interval of event streams.
 pub const HEARTBEAT: Duration = Duration::from_secs(15);
@@ -170,15 +172,6 @@ pub async fn log(
 struct SseSlot {
     state: AppState,
     principal: String,
-}
-
-/// The key streams are counted under: a token and its browser sessions together, or one
-/// proxy user.
-fn principal_key(p: &h2w_api::Principal) -> String {
-    match p.kind {
-        h2w_api::PrincipalKind::Proxy => format!("proxy:{}", p.id),
-        _ => format!("token:{}", p.id),
-    }
 }
 
 impl SseSlot {

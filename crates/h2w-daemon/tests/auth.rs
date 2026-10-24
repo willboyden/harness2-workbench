@@ -515,6 +515,100 @@ async fn failed_authentication_cannot_flood_the_audit_log() {
     t.stop().await;
 }
 
+/// An authenticated caller cannot flood the audit log with requests it may not make: a
+/// principal's refusals are recorded a few a minute, the rest only counted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refused_requests_cannot_flood_the_audit_log() {
+    let t = TestServer::start().await;
+    let before = audit_rows(&t).await;
+    for _ in 0..500 {
+        let r = t
+            .get("/api/v1/tokens", Some(&t.viewer))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 403);
+    }
+    let audited = audit_rows(&t).await - before;
+    assert!(
+        (1..=u64::from(h2w_daemon::http::extract::AUDITED_FAILURES_PER_MINUTE)).contains(&audited),
+        "{audited} audit rows for 500 refusals"
+    );
+    // Another principal's refusals are recorded on their own share.
+    let r = t
+        .get("/api/v1/tokens", Some(&t.operator))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    assert_eq!(audit_rows(&t).await - before, audited + 1);
+    let m = t.srv().state.metrics.encode();
+    let suppressed = m
+        .lines()
+        .find_map(|l| l.strip_prefix("h2w_audit_suppressed_total "))
+        .map_or(0, |v| v.trim().parse::<u64>().unwrap());
+    assert_eq!(suppressed, 500 - audited, "{m}");
+    t.stop().await;
+}
+
+/// Behind trusted proxies the client comes from X-Forwarded-For, which any process on the
+/// proxy's network can invent. One peer cannot fill the limiter table that way: past its
+/// quota of clients it only limits itself, and a fresh client behind another peer still
+/// signs in.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_peer_inventing_forwarded_clients_only_limits_itself() {
+    let t = TestServer::start_with(|s| {
+        s.file.server.trusted_proxies = vec!["127.0.0.0/8".into()];
+    })
+    .await;
+    let from = |source: &str| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .local_address(Some(source.parse().unwrap()))
+            .build()
+            .unwrap()
+    };
+    let flooder = from("127.0.0.2");
+    let login = |c: &reqwest::Client, xff: String, token: String| {
+        c.post(t.url("/api/v1/auth/login"))
+            .header("x-h2w-request", "1")
+            .header("x-forwarded-for", xff)
+            .json(&json!({ "token": token }))
+            .send()
+    };
+    let per_peer = u32::try_from(h2w_daemon::ratelimit::MAX_PER_PEER).unwrap();
+    let mut statuses = std::collections::BTreeMap::new();
+    for i in 0..(per_peer + 100) {
+        let xff = format!("198.18.{}.{}", i / 250, i % 250 + 1);
+        let r = login(&flooder, xff, "h2w_junk".into()).await.unwrap();
+        *statuses.entry(r.status().as_u16()).or_insert(0_u32) += 1;
+    }
+    // Every invented client up to the quota had a bucket; the rest shared one of this peer.
+    let limit = t.srv().state.cfg.file.server.login_attempts_per_minute;
+    assert_eq!(
+        statuses.get(&401).copied(),
+        Some(per_peer + limit),
+        "{statuses:?}"
+    );
+    assert_eq!(
+        statuses.get(&429).copied(),
+        Some(100 - limit),
+        "{statuses:?}"
+    );
+    // The flooding peer limited itself, also for a valid token from a new address...
+    let r = login(&flooder, "203.0.113.7".into(), t.admin.clone())
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 429);
+    // ...while a fresh client behind another peer signs in.
+    let honest = from("127.0.0.3");
+    let r = login(&honest, "203.0.113.8".into(), t.admin.clone())
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    t.stop().await;
+}
+
 /// A token-length string whose multi-byte character straddles the id/secret split once
 /// panicked the login handler (the connection was dropped instead of answered).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

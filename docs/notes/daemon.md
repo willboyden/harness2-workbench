@@ -151,9 +151,15 @@ Keys beyond §11 (all optional, defaults shown):
   sessions; logout deletes the session and clears the cookie (`Max-Age=0`).
 - Login is rate-limited per client address (IPv6 per /64): `server.login_attempts_per_minute`
   attempts, successful or not, then 429 with `Retry-After`. End-to-end suites that sign in more
-  often should raise the limit in their configuration. Each limiter tracks up to 10,000 clients;
-  when its table is full, clients whose bucket has refilled are forgotten first and newcomers
-  that still do not fit share one overflow bucket, so the limit never fails open.
+  often should raise the limit in their configuration.
+- **Per-client limiters** (login, failed authentication, records of failures) key each request
+  on its TCP peer and its client: the peer itself, or behind a trusted proxy the
+  `X-Forwarded-For` client, which any process on the proxy's network can invent. Each peer may
+  hold 1,024 client keys (16 for audit records of failures); its further clients share one
+  bucket of that peer, so a peer inventing addresses only limits itself. A limiter tracks up
+  to 10,000 keys; when the table is full, clients whose bucket has refilled are forgotten
+  first, and a newcomer that still does not fit uses its own peer's overflow bucket, so a fresh
+  client behind another peer is not starved (the limit never fails open either).
 - Proxy mode roles: any `admin_groups` member is admin, else any `operator_groups` member is
   operator, else viewer when `viewer_groups` is empty or matches, else 403. Requests carrying the
   user header from an address outside `trusted_proxies`, or with a wrong shared secret, are 401.
@@ -170,6 +176,10 @@ Keys beyond §11 (all optional, defaults shown):
   are counted in `h2w_audit_suppressed_total`, so junk credentials cannot flood the hash-chained
   log. Requests without credentials are never audited. Every refused request is counted once in
   `h2w_auth_failures_total{reason}` (`rate_limited` for the 429s).
+- **Refused requests** (403 `access.denied`, an authenticated caller without the role): at most
+  10 records per principal (a token with its sessions, or one proxy user) and minute; the rest
+  are counted in `h2w_audit_suppressed_total`, so a viewer token (or an agent holding one)
+  cannot flood the audit log either.
 - Audited: `auth.login` (success; denied and rate-limited attempts within the limit above),
   `auth.logout`, `auth.failed` (within the limit above), `access.denied`, `job.create`
   (success and denied, with the reason), `job.cancel`, `experiment.create|update`,
