@@ -37,7 +37,9 @@ fn status_tone(status: &str) -> Tone {
     match status {
         "ok" | "skipped" => Tone::Success,
         "partial" => Tone::Warning,
-        "base-failed" => Tone::Danger,
+        // The task could not be read: its summary is over the server's size cap, malformed,
+        // or harness2 recorded an exception.
+        "base-failed" | "exception" | "too-large" | "unreadable" => Tone::Danger,
         "running" => Tone::Info,
         _ => Tone::Neutral,
     }
@@ -156,6 +158,9 @@ fn TasksTab(exp: Memo<String>, sweep: Memo<String>, modes: Vec<Mode>) -> impl In
             ("partial", "partial"),
             ("base-failed", "base failed"),
             ("running", "running"),
+            ("exception", "exception"),
+            ("too-large", "too large to read"),
+            ("unreadable", "unreadable"),
         ]
         .iter()
         .map(|(v, l)| ((*v).to_owned(), (*l).to_owned()))
