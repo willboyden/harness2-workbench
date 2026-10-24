@@ -71,6 +71,8 @@ Keys beyond §11 (all optional, defaults shown):
 
 | Key | Default | Meaning |
 |---|---|---|
+| `jobs.max_log_bytes` | `268435456` (256 MiB) | Largest stored log per job (64 KiB ..= 1 TiB). Past it, one marker line, then output is still read (the job never blocks) and parsed for progress, results and the bridge, but not stored; each step's end reports how many lines were not stored. The server's own lines may use 64 KiB more. |
+| `jobs.min_free_disk_mb` | `256` | Running jobs are stopped (failed, "stopped: less than N MiB free on the data directory") when the filesystem of `paths.data_dir` has less free space; checked when a job starts and every 15 s. `0` = never. |
 | `paths.allow_untested_harness2_rev` | `false` | `install_harness2` with a `rev` other than the tested commit (`h2s_core::TESTED_HARNESS2_COMMIT`) is 422 on `params.rev` unless `true`: a fork can make any commit fetchable from the upstream repository, and installing runs its build code. |
 
 ## HTTP
@@ -172,7 +174,8 @@ Keys beyond §11 (all optional, defaults shown):
   sweep does not count); `spent_usd` is that amount.
 - **Cancellation reasons**: user (cancelled, "cancelled by <name>"), budget (cancelled, "budget
   reached"), wall clock (failed, "timed out after 1h 30m"), shutdown (failed, "server stopped"),
-  restart (failed, "server restarted").
+  restart (failed, "server restarted"), disk space (failed, "stopped: less than 256 MiB free on
+  the data directory").
 - A runner that panics (a bug) fails its job ("internal error in the job runner"), terminates
   its recorded process group and frees its slot.
 - **Restart recovery** signals a recorded process group only after positive identification:
@@ -185,7 +188,8 @@ Keys beyond §11 (all optional, defaults shown):
   the log says nothing was signalled). The same rule applies when a runner panics. Container
   jobs are also stopped through the label-verified stop.
 - **Logs**: one JSON `LogLine` per line in `<data>/logs/jobs/<id>.log` (0600), lines cut at
-  64 KiB with ` … [line truncated]`, every line through the job's redactor (built from all
+  64 KiB with ` … [line truncated]`, at most `jobs.max_log_bytes` per job (see the table above),
+  every line through the job's redactor (built from all
   stored and environment secrets plus the job's own), then path-masked: `<job>`, `<experiment>`,
   `<experiments>`, `<harness2>`, `<data>`, `~` replace the server's absolute paths (failure
   reasons too). The bridge's `HARNESS2_CODEX_API_KEY=` line is always replaced by the server

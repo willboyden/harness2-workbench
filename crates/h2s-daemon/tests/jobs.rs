@@ -583,6 +583,62 @@ async fn creation_is_validated_before_anything_runs() {
     t.stop().await;
 }
 
+/// A job printing far more than `jobs.max_log_bytes` keeps running to the end (its output
+/// is still read and parsed, so it never blocks on a full pipe) while the stored log stops at
+/// the limit with one marker line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn output_beyond_the_log_limit_is_read_but_not_stored() {
+    let cap: u64 = 1024 * 1024;
+    let t = TestServer::start_with(|s| s.file.jobs.max_log_bytes = cap).await;
+    let job: Job = t
+        .create_job(&t.operator, demo_spec("flood-x"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 60).await;
+    assert_terminal(&done, JobStatus::Succeeded);
+    // The demo's progress lines came after the flood: parsed although not stored.
+    assert_eq!(done.progress.as_ref().map(|p| p.done), Some(2), "{done:?}");
+    let file = t.root.path().join(format!("data/logs/jobs/{}.log", job.id));
+    let size = std::fs::metadata(&file).unwrap().len();
+    assert!(size <= cap + 64 * 1024, "the log is {size} bytes");
+    assert!(size > cap / 2, "the log is {size} bytes");
+    let log = full_log(&t, &job.id).await;
+    let markers = log
+        .iter()
+        .filter(|l| l.text.contains("log limit of 1 MiB reached"))
+        .count();
+    assert_eq!(markers, 1);
+    assert!(
+        log.iter()
+            .any(|l| l.stream == LogStream::System && l.text.contains("of output were not stored")),
+        "{:?}",
+        log.iter().rev().take(5).collect::<Vec<_>>()
+    );
+    assert!(log.last().unwrap().text.contains("job succeeded"));
+    assert_eq!(done.log_lines, u64::try_from(log.len()).unwrap());
+    t.stop().await;
+}
+
+/// The data directory's filesystem running out of space stops jobs instead of filling it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn jobs_stop_when_the_data_directory_is_almost_full() {
+    // A floor above any real disk's free space.
+    let t = TestServer::start_with(|s| s.file.jobs.min_free_disk_mb = 1 << 40).await;
+    let job: Job = t
+        .create_job(&t.operator, demo_spec("chatty-disk"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 60).await;
+    assert_terminal(&done, JobStatus::Failed);
+    let error = done.error.unwrap_or_default();
+    assert!(error.contains("MiB free on the data directory"), "{error}");
+    t.stop().await;
+}
+
 /// `install_harness2` checks out only the tested commit unless the configuration allows
 /// others (a fork can make any commit fetchable from the upstream repository).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

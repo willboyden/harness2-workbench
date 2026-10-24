@@ -114,14 +114,28 @@ impl LogFile {
         ))
     }
 
+    /// The file's size on disk (flushed bytes).
+    ///
+    /// # Errors
+    /// I/O errors.
+    pub async fn size(&self) -> std::io::Result<u64> {
+        Ok(self.file.get_ref().metadata().await?.len())
+    }
+
     /// Append one line (buffered; call [`LogFile::flush`] to make it visible to readers).
     ///
     /// # Errors
     /// I/O or serialization errors.
     pub async fn append(&mut self, line: &LogLine) -> std::io::Result<()> {
-        let mut json = serde_json::to_vec(line).map_err(std::io::Error::other)?;
-        json.push(b'\n');
-        self.file.write_all(&json).await
+        self.append_encoded(&encode(line)?).await
+    }
+
+    /// Append a line already encoded with [`encode`].
+    ///
+    /// # Errors
+    /// I/O errors.
+    pub async fn append_encoded(&mut self, json: &[u8]) -> std::io::Result<()> {
+        self.file.write_all(json).await
     }
 
     /// Flush buffered lines to the file.
@@ -131,6 +145,16 @@ impl LogFile {
     pub async fn flush(&mut self) -> std::io::Result<()> {
         self.file.flush().await
     }
+}
+
+/// A log line as stored: its JSON and a newline.
+///
+/// # Errors
+/// Serialization errors (not expected).
+pub fn encode(line: &LogLine) -> std::io::Result<Vec<u8>> {
+    let mut json = serde_json::to_vec(line).map_err(std::io::Error::other)?;
+    json.push(b'\n');
+    Ok(json)
 }
 
 fn count_lines(path: &Path) -> std::io::Result<u64> {

@@ -62,6 +62,10 @@ pub struct JobSettings {
     /// SIGTERM -> SIGKILL grace on cancellation (10 s in production).
     pub kill_grace: Duration,
     pub log_retention: Duration,
+    /// `jobs.max_log_bytes`.
+    pub max_log_bytes: u64,
+    /// `jobs.min_free_disk_mb` in bytes (0 = no floor).
+    pub min_free_disk: u64,
     pub isolation: Isolation,
     pub preacknowledged: bool,
     /// `paths.allow_untested_harness2_rev`.
@@ -81,6 +85,8 @@ impl JobSettings {
             budget_poll: cfg.budget_poll,
             kill_grace: Duration::from_secs(10),
             log_retention: Duration::from_secs(u64::from(j.log_retention_days) * 86_400),
+            max_log_bytes: j.max_log_bytes,
+            min_free_disk: j.min_free_disk_mb.saturating_mul(1024 * 1024),
             isolation: cfg.file.isolation.mode,
             preacknowledged: cfg.file.isolation.preacknowledge_host_risks,
             allow_untested_rev: cfg.file.paths.allow_untested_harness2_rev,
@@ -143,6 +149,8 @@ pub enum CancelReason {
     Timeout(Duration),
     /// The server is shutting down.
     Shutdown,
+    /// Free space on the data directory fell below `jobs.min_free_disk_mb` (MiB).
+    DiskSpace(u64),
 }
 
 impl CancelReason {
@@ -150,7 +158,9 @@ impl CancelReason {
     pub fn status(&self) -> JobStatus {
         match self {
             CancelReason::User(_) | CancelReason::Budget => JobStatus::Cancelled,
-            CancelReason::Timeout(_) | CancelReason::Shutdown => JobStatus::Failed,
+            CancelReason::Timeout(_) | CancelReason::Shutdown | CancelReason::DiskSpace(_) => {
+                JobStatus::Failed
+            }
         }
     }
 
@@ -161,6 +171,9 @@ impl CancelReason {
             CancelReason::Budget => "budget reached".to_owned(),
             CancelReason::Timeout(d) => format!("timed out after {}", human_duration(*d)),
             CancelReason::Shutdown => "server stopped".to_owned(),
+            CancelReason::DiskSpace(mb) => {
+                format!("stopped: less than {mb} MiB free on the data directory")
+            }
         }
     }
 }
@@ -1401,5 +1414,11 @@ mod tests {
             JobStatus::Failed
         );
         assert_eq!(CancelReason::Shutdown.status(), JobStatus::Failed);
+        assert_eq!(CancelReason::DiskSpace(256).status(), JobStatus::Failed);
+        assert!(
+            CancelReason::DiskSpace(256)
+                .message()
+                .contains("256 MiB free")
+        );
     }
 }

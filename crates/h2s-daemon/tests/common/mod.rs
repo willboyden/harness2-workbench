@@ -4,7 +4,7 @@
 //!
 //! Scenarios are selected by the experiment name's first `-` segment
 //! (`ok-x`, `slow-x`, `partial-x`, `fail-x`, `sleep-x`, `stubborn-x`, `chatty-x`,
-//! `secret-x`, `budget-x`, `longline-x`).
+//! `flood-x`, `secret-x`, `budget-x`, `longline-x`).
 
 #![allow(
     dead_code,
@@ -69,6 +69,9 @@ case "$FAKE_SCENARIO" in
   chatty)
     i=0
     while [ $i -lt "${FAKE_LINES:-1500}" ]; do echo "line $i"; i=$((i+1)); done ;;
+  flood)
+    # About 5 MB of output: 5000 lines of 1000 characters.
+    yes "$(printf '%01000d' 0)" | head -n 5000 ;;
   secret)
     echo "the key is $FAKE_SECRET_VALUE" ;;
   slow)

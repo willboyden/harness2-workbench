@@ -164,6 +164,12 @@ pub struct JobsSection {
     pub timeout_hours: f64,
     pub budget_poll_secs: u64,
     pub log_retention_days: u32,
+    /// Largest log stored per job; later output is read (the job never blocks) but not
+    /// stored, after one marker line.
+    pub max_log_bytes: u64,
+    /// A running job is stopped when the free space on the data directory's filesystem
+    /// falls below this many MiB; 0 = never.
+    pub min_free_disk_mb: u64,
 }
 
 impl Default for JobsSection {
@@ -174,6 +180,8 @@ impl Default for JobsSection {
             timeout_hours: 48.0,
             budget_poll_secs: 30,
             log_retention_days: 90,
+            max_log_bytes: 256 * 1024 * 1024,
+            min_free_disk_mb: 256,
         }
     }
 }
@@ -1122,6 +1130,20 @@ fn validate(
         j.log_retention_days,
         1,
         36_500,
+    );
+    range_check(
+        problems,
+        "jobs.max_log_bytes",
+        j.max_log_bytes,
+        64 * 1024,
+        1 << 40,
+    );
+    range_check(
+        problems,
+        "jobs.min_free_disk_mb",
+        j.min_free_disk_mb,
+        0,
+        1 << 40,
     );
 
     let c = &file.isolation.container;
