@@ -7,7 +7,10 @@
 //! - `codex`: `AGENTS.md`, `.agents/skills/`, `.codex/hooks.json`, `scripts/`, sub-agents
 //!   as `.codex/agents/<name>.md` with a note that Codex has no native sub-agent loader.
 //!
-//! Export never changes file contents except to join the always-on files.
+//! Export never changes file contents except to join the always-on files. It takes at most
+//! a harness's worth of files (the limits of [`tree::read_tree`]), and every path must be a
+//! clean relative path without control characters ([`names::relative_path`]), so no
+//! terminal escape sequence can ship in a file name.
 
 use std::io::Write;
 
@@ -32,14 +35,46 @@ fn refuse(problem: &str) -> CoreError {
     CoreError::invalid("target", problem)
 }
 
+/// Refuse more than one harness's worth of files: at most [`tree::MAX_TREE_FILES`] plus
+/// `extra_files` (room for the joined `AGENTS.md`), and at most [`tree::MAX_TREE_BYTES`]
+/// (plus the blank lines that join adds, when there is room for it).
+fn check_size(files: usize, sizes: impl Iterator<Item = usize>, extra_files: usize) -> Result<()> {
+    let max_files = tree::MAX_TREE_FILES + extra_files;
+    if files > max_files {
+        return Err(CoreError::TooLarge(format!(
+            "the export has {files} files, over the limit of {max_files}"
+        )));
+    }
+    // The always-on join adds at most a blank line between each of its files.
+    let slack = if extra_files > 0 { 64 } else { 0 };
+    let max_bytes = tree::MAX_TREE_BYTES + slack;
+    let total = sizes.fold(0_u64, |acc, n| {
+        acc.saturating_add(u64::try_from(n).unwrap_or(u64::MAX))
+    });
+    if total > max_bytes {
+        return Err(CoreError::TooLarge(format!(
+            "the export's files total {total} bytes, over the {max_bytes}-byte limit"
+        )));
+    }
+    Ok(())
+}
+
 /// Build the bundle for `target`. Fails when the tree's surface cannot express `target`
 /// faithfully (e.g. OpenCode plugins exported to Codex) unless the problem is only a note.
 ///
 /// Refused: OpenCode plugins to Codex, and Codex hooks to OpenCode (each acts inside the
 /// tool loop and has no counterpart). Notes cover sub-agents on Codex, frontmatter OpenCode
 /// requires but a Codex tree may lack, the AGENTS.md size on Codex, and plugin versions.
+/// More files or bytes than [`tree::read_tree`] would read is [`CoreError::TooLarge`].
 pub fn export(tree: &HarnessTree, target: ExportTarget) -> Result<ExportBundle> {
     names::harness_label(&tree.label)?;
+    check_size(
+        tree.files.len(),
+        tree.files
+            .iter()
+            .map(|f| f.content.as_ref().map_or(0, String::len)),
+        0,
+    )?;
     let mut src = Tree::new();
     for f in &tree.files {
         names::relative_path(&f.path)?;
@@ -213,9 +248,15 @@ fn bundle(
 /// directory `harness-<label>/`).
 ///
 /// Owner and group are 0 with empty names; the gzip header carries no name and mtime 0.
-/// Refused: an invalid label, an unsafe or duplicate path.
+/// Refused: an invalid label, an unsafe or duplicate path, a path with a control character,
+/// and more than one harness's worth of files ([`CoreError::TooLarge`]).
 pub fn tar_gz(bundle: &ExportBundle) -> Result<Vec<u8>> {
     names::harness_label(&bundle.label)?;
+    check_size(
+        bundle.files.len(),
+        bundle.files.iter().map(|f| f.content.len()),
+        1,
+    )?;
     let mut files: Vec<&FileText> = bundle.files.iter().collect();
     files.sort_by(|a, b| pyfmt::cmp_paths(&a.path, &b.path));
     for pair in files.windows(2) {
@@ -404,5 +445,60 @@ mod tests {
         let mut dup = b;
         dup.files[1].path = dup.files[0].path.clone();
         assert!(tar_gz(&dup).is_err());
+    }
+
+    /// A file name carrying a terminal escape sequence never reaches an export.
+    #[test]
+    fn names_with_control_characters_are_refused() {
+        let h = harness(
+            Surface::Opencode,
+            &[
+                ("systemprompt.md", "a"),
+                ("scripts/x\u{1b}]0;pwned\u{7}.py", ""),
+            ],
+        );
+        for target in [ExportTarget::Raw, ExportTarget::Opencode] {
+            let err = export(&h, target).unwrap_err();
+            assert!(err.to_string().contains("control characters"), "{err}");
+        }
+        let clean = harness(Surface::Opencode, &[("systemprompt.md", "a")]);
+        let mut b = export(&clean, ExportTarget::Raw).unwrap();
+        b.files[0].path = "a\u{9b}31m.md".into();
+        assert!(
+            tar_gz(&b)
+                .unwrap_err()
+                .to_string()
+                .contains("control characters")
+        );
+    }
+
+    #[test]
+    fn exports_take_at_most_one_harness() {
+        let paths: Vec<String> = (0..=tree::MAX_TREE_FILES)
+            .map(|i| format!("scripts/f{i}.py"))
+            .collect();
+        let files: Vec<(&str, &str)> = paths.iter().map(|p| (p.as_str(), "x")).collect();
+        let err = export(&harness(Surface::Opencode, &files), ExportTarget::Raw).unwrap_err();
+        assert!(matches!(err, CoreError::TooLarge(_)), "{err}");
+        let fits = harness(Surface::Opencode, &files[1..]);
+        assert_eq!(
+            export(&fits, ExportTarget::Raw).unwrap().files.len(),
+            tree::MAX_TREE_FILES
+        );
+        // Past the cap and the room the AGENTS.md join may add.
+        let big = "x".repeat(usize::try_from(tree::MAX_TREE_BYTES).unwrap() + 65);
+        let err = export(
+            &harness(Surface::Opencode, &[("systemprompt.md", &big)]),
+            ExportTarget::Raw,
+        )
+        .unwrap_err();
+        assert!(matches!(err, CoreError::TooLarge(_)), "{err}");
+        let mut b = export(
+            &harness(Surface::Opencode, &[("systemprompt.md", "a")]),
+            ExportTarget::Raw,
+        )
+        .unwrap();
+        b.files[0].content = big;
+        assert!(matches!(tar_gz(&b), Err(CoreError::TooLarge(_))));
     }
 }

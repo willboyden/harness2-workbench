@@ -341,7 +341,8 @@ pub fn base_url(s: &str) -> Result<()> {
 }
 
 /// A relative path inside a browsed directory (`a/b/c.txt`): no absolute paths, no `..`,
-/// no backslash, no NUL, at most 1024 bytes. Empty string = the root.
+/// no backslash, no control characters (NUL, newlines, the escape bytes of terminal
+/// sequences), at most 1024 bytes. Empty string = the root.
 ///
 /// Also refused: empty and `.` components (`a//b`, `./a`, `a/`), so every accepted path has
 /// exactly one spelling.
@@ -355,8 +356,8 @@ pub fn relative_path(s: &str) -> Result<()> {
     if s.starts_with('/') {
         return Err(bad("path", "must be relative (no leading '/')"));
     }
-    if s.contains(['\\', '\0']) {
-        return Err(bad("path", "must not contain '\\' or NUL"));
+    if s.contains('\\') || s.chars().any(char::is_control) {
+        return Err(bad("path", "must not contain '\\' or control characters"));
     }
     for comp in s.split('/') {
         match comp {
@@ -452,6 +453,26 @@ mod tests {
         assert!(relative_path("a\\b").is_err());
     }
 
+    /// Terminal escape sequences (ESC, the C1 CSI byte) and other control characters can
+    /// never reach a file name in an export or a listing request.
+    #[test]
+    fn paths_refuse_control_characters() {
+        for bad in [
+            "a\u{1b}[31m.py",
+            "skills/x/\u{9b}2J.md",
+            "a\nb",
+            "a\tb",
+            "a\0b",
+            "a\u{7f}",
+            "\rfile",
+        ] {
+            let err = relative_path(bad).unwrap_err();
+            assert!(err.to_string().contains("control characters"), "{bad:?}");
+        }
+        assert!(relative_path("skills/résumé/SKILL.md").is_ok());
+        assert!(relative_path("a b/c-d_e.f").is_ok());
+    }
+
     proptest! {
         #[test]
         fn accepted_experiment_names_are_path_safe(s in "\\PC{0,70}") {
@@ -488,6 +509,15 @@ mod tests {
                 prop_assert!(!s.starts_with('/'));
                 prop_assert!(s.split('/').all(|c| c != ".." && c != "."));
                 prop_assert!(!s.contains('\\'));
+            }
+        }
+
+        #[test]
+        fn accepted_relative_paths_have_no_control_characters(
+            s in "\\PC{0,12}|[a-z/\\x00-\\x1F\\x7F-\\x{9F}]{0,12}"
+        ) {
+            if relative_path(&s).is_ok() {
+                prop_assert!(!s.chars().any(char::is_control));
             }
         }
 

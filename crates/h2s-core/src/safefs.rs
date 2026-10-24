@@ -11,10 +11,9 @@ use cap_std::fs::{Dir, File, Metadata, MetadataExt};
 
 use crate::{CoreError, Result};
 
-/// Largest JSON document read whole (summaries, sweep records, judged rows).
-pub(crate) const MAX_JSON_BYTES: u64 = 64 * 1024 * 1024;
-/// Largest text file read whole for parsing (EXPERIENCE.md, INDEX.md, task.md, meta.json).
-pub(crate) const MAX_TEXT_BYTES: u64 = 4 * 1024 * 1024;
+/// Most entries [`list`] returns for one directory; more is [`CoreError::TooLarge`], so a
+/// directory listing never grows without bound.
+pub(crate) const MAX_DIR_ENTRIES: usize = 250_000;
 
 /// Kind of a directory entry, never following symlinks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,22 +169,38 @@ pub(crate) fn read_capped(
     Ok((buf, len.max(got.min(cap)), truncated))
 }
 
-/// Read a whole regular file, refusing it when larger than `cap`.
+fn over_cap(what: &str, len: u64, cap: u64) -> CoreError {
+    CoreError::TooLarge(format!("{what} is {len} bytes, over the {cap}-byte limit"))
+}
+
+/// Read a whole regular file, refusing it ([`CoreError::TooLarge`], before reading) when
+/// larger than `cap`. A file that grows past `cap` while it is read is refused too.
 pub(crate) fn read_whole(dir: &Dir, rel: &str, cap: u64, what: &str) -> Result<Vec<u8>> {
     let (file, len) = open_file(dir, rel, what)?;
     if len > cap {
-        return Err(CoreError::Refused(format!(
-            "{what} is {len} bytes, over the {cap}-byte read limit"
-        )));
+        return Err(over_cap(what, len, cap));
     }
     let mut buf = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
     file.take(cap.saturating_add(1)).read_to_end(&mut buf)?;
-    if u64::try_from(buf.len()).unwrap_or(u64::MAX) > cap {
-        return Err(CoreError::Refused(format!(
-            "{what} grew past the read limit"
-        )));
+    let got = u64::try_from(buf.len()).unwrap_or(u64::MAX);
+    if got > cap {
+        return Err(over_cap(what, got, cap));
     }
     Ok(buf)
+}
+
+/// [`read_whole`], `Ok(None)` when the file (or a parent) does not exist.
+pub(crate) fn read_whole_opt(
+    dir: &Dir,
+    rel: &str,
+    cap: u64,
+    what: &str,
+) -> Result<Option<Vec<u8>>> {
+    match read_whole(dir, rel, cap, what) {
+        Ok(b) => Ok(Some(b)),
+        Err(CoreError::NotFound(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// Read a whole file as UTF-8 text with invalid sequences replaced (Python's
@@ -207,12 +222,15 @@ pub(crate) fn read_text_opt(dir: &Dir, rel: &str, cap: u64, what: &str) -> Resul
     }
 }
 
-/// Parse a JSON file, `Ok(None)` when missing.
-pub(crate) fn read_json_opt(dir: &Dir, rel: &str, what: &str) -> Result<Option<serde_json::Value>> {
-    let bytes = match read_whole(dir, rel, MAX_JSON_BYTES, what) {
-        Ok(b) => b,
-        Err(CoreError::NotFound(_)) => return Ok(None),
-        Err(e) => return Err(e),
+/// Parse a JSON file of at most `cap` bytes, `Ok(None)` when missing.
+pub(crate) fn read_json_opt(
+    dir: &Dir,
+    rel: &str,
+    cap: u64,
+    what: &str,
+) -> Result<Option<serde_json::Value>> {
+    let Some(bytes) = read_whole_opt(dir, rel, cap, what)? else {
+        return Ok(None);
     };
     serde_json::from_slice(&bytes)
         .map(Some)
@@ -223,10 +241,21 @@ pub(crate) fn read_json_opt(dir: &Dir, rel: &str, what: &str) -> Result<Option<s
 }
 
 /// Every entry of `dir` with a UTF-8 name, sorted by name (byte order). Never follows
-/// symlinks: a link is reported as [`EntryKind::Symlink`].
+/// symlinks: a link is reported as [`EntryKind::Symlink`]. More than [`MAX_DIR_ENTRIES`]
+/// entries is [`CoreError::TooLarge`].
 pub(crate) fn list(dir: &Dir) -> Result<Vec<Entry>> {
+    list_capped(dir, MAX_DIR_ENTRIES)
+}
+
+/// [`list`] with a smaller entry cap: more than `max` entries is [`CoreError::TooLarge`].
+pub(crate) fn list_capped(dir: &Dir, max: usize) -> Result<Vec<Entry>> {
     let mut out = Vec::new();
     for entry in dir.entries()? {
+        if out.len() >= max {
+            return Err(CoreError::TooLarge(format!(
+                "a directory has more than {max} entries"
+            )));
+        }
         let entry = entry?;
         let Ok(name) = entry.file_name().into_string() else {
             continue;
@@ -291,8 +320,8 @@ fn walk(
         for e in list(&d)? {
             seen += 1;
             if seen > max_entries {
-                return Err(CoreError::Refused(format!(
-                    "directory tree has more than {max_entries} entries"
+                return Err(CoreError::TooLarge(format!(
+                    "a directory tree has more than {max_entries} entries"
                 )));
             }
             let rel = if prefix.is_empty() {
@@ -374,7 +403,7 @@ mod tests {
         ));
         assert!(matches!(
             read_whole(&d, "a/b/f.txt", 3, "f"),
-            Err(CoreError::Refused(_))
+            Err(CoreError::TooLarge(_))
         ));
         assert!(matches!(
             read_whole(&d, "a/missing", 3, "f"),
@@ -393,5 +422,31 @@ mod tests {
         let (files, links) = walk_files(&d, &[], 100).unwrap();
         assert_eq!(files, vec![("a/b/f.txt".to_owned(), 11)]);
         assert_eq!(links.len(), 2);
+    }
+
+    /// Listings and walks stop with `TooLarge` at their caps instead of growing.
+    #[test]
+    fn listings_and_walks_are_capped() {
+        let (t, d) = root();
+        for i in 0..5 {
+            std::fs::create_dir_all(t.path().join(format!("d{i}"))).unwrap();
+            std::fs::write(t.path().join(format!("d{i}/f")), "x").unwrap();
+        }
+        assert_eq!(list_capped(&d, 5).unwrap().len(), 5);
+        assert!(matches!(list_capped(&d, 4), Err(CoreError::TooLarge(_))));
+        // 5 directories + 5 files.
+        assert_eq!(walk_files(&d, &[], 10).unwrap().0.len(), 5);
+        assert!(matches!(
+            walk_files(&d, &[], 9),
+            Err(CoreError::TooLarge(_))
+        ));
+        assert!(matches!(total_size(&d, 9), Err(CoreError::TooLarge(_))));
+        // A file over the read cap is refused before it is read; at the cap it reads.
+        std::fs::write(t.path().join("five"), "12345").unwrap();
+        assert_eq!(read_whole(&d, "five", 5, "f").unwrap(), b"12345");
+        let err = read_whole(&d, "five", 4, "f").unwrap_err();
+        assert!(matches!(err, CoreError::TooLarge(_)), "{err}");
+        assert!(err.to_string().contains("4-byte limit"));
+        assert!(read_whole_opt(&d, "nope", 4, "f").unwrap().is_none());
     }
 }

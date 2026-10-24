@@ -36,6 +36,7 @@ pub mod report;
 pub mod results;
 pub mod tree;
 
+mod lite;
 mod pyfmt;
 mod pyjson;
 mod safefs;
@@ -48,6 +49,13 @@ pub use error::{CoreError, Result};
 /// The google-research/harness2 commit this release is tested against (2026-10-14,
 /// "Fix arXiv link", tree edc756a4d03a2826a248115482084a176e60e751).
 pub const TESTED_HARNESS2_COMMIT: &str = "1cfe254e8d25b15f37048c3730134686abe60335";
+
+/// Latest upload time harness2's Python dependencies are resolved against at install
+/// (`uv pip install --exclude-newer`): the commit time of [`TESTED_HARNESS2_COMMIT`]
+/// (2026-10-13T21:22:49-05:00) in UTC. harness2 ships no lock file; with this cutoff an
+/// install never picks up a package released after the tested commit, and the resolution
+/// does not drift with new uploads.
+pub const TESTED_HARNESS2_DEPS_CUTOFF: &str = "2026-10-14T02:22:49Z";
 
 /// Upstream repository harness2 is installed from.
 pub const HARNESS2_REPO_URL: &str = "https://github.com/google-research/harness2.git";

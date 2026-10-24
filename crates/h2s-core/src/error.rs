@@ -31,6 +31,13 @@ pub enum CoreError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
+    /// Data on disk is larger than this crate will hold in memory: an oversized results
+    /// file, a harness tree over its byte or file-count budget, a directory with too many
+    /// entries. Nothing was truncated. The message names the limit and is safe to show
+    /// (servers map this to 413). Additive after contract v1.2.
+    #[error("too large: {0}")]
+    TooLarge(String),
+
     /// Interface stub not yet implemented. Never reachable in a release build: the release
     /// gate greps for this variant.
     #[error("not implemented yet: {0}")]
