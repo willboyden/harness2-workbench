@@ -368,7 +368,9 @@ progress bar and the current task update, and log lines arrive as they are writt
 *Mock data.* The log can be filtered with **Search the log** (case-insensitive) and the **stdout**,
 **stderr** and **server** switches (server lines are the Workbench's own: step boundaries, isolation
 notes); **Follow new lines** keeps the newest line in view; **Download** saves what the page holds.
-If the event stream drops, the page is designed to reconnect with a back-off and, after repeated
+The page holds the newest 20,000 lines, fewer when they are long (about 16 MiB of text); on a longer
+log it fetches only those and says how many older lines it does not keep (the REST API's
+`GET /api/v1/jobs/{id}/log` pages through all of them). If the event stream drops, the page is designed to reconnect with a back-off and, after repeated
 failures, to poll (from the UI notes; the author did not break a stream to see it). **Cancel** (operators;
 the role that could have started the job) asks you to confirm: harness2 gets
 `SIGTERM` to its process group and `SIGKILL` after 10 seconds, finished tasks are kept, and the task

@@ -66,8 +66,17 @@ impl Ctl {
         }
         self.backfilling.set_value(true);
         spawn_local(async move {
+            let mut avg_line_bytes = None;
             for _ in 0..50 {
-                let Some(from) = self.log.try_with_untracked(LogBuffer::next) else {
+                let total = self
+                    .job
+                    .try_with_untracked(|j| j.as_ref().map_or(0, |j| j.log_lines))
+                    .unwrap_or(0);
+                // A long log: start where the lines the browser keeps begin.
+                let Some(from) = self
+                    .log
+                    .try_update_untracked(|l| l.catch_up(total, avg_line_bytes))
+                else {
                     break;
                 };
                 let url = paths::job_log(&self.id.get_value(), from, 2000);
@@ -75,6 +84,10 @@ impl Ctl {
                     Ok(chunk) => {
                         let empty = chunk.lines.is_empty();
                         let complete = chunk.complete;
+                        if !empty {
+                            let bytes: usize = chunk.lines.iter().map(|l| l.text.len()).sum();
+                            avg_line_bytes = Some(bytes / chunk.lines.len());
+                        }
                         self.log.try_update(|l| {
                             l.extend(chunk.lines);
                         });

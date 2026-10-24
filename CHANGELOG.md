@@ -65,7 +65,9 @@ Each change, its tests and how it was checked are in
   is recorded as `<too large: N bytes>`) and refuse more than 64 MiB and 1 GiB in all.
 - Second review: job-log pages and event-stream replays stop near 1 MiB (`next` says where to go
   on), and the MCP `get_job_log tail=N` and job-log resource follow those pages, so they still end
-  at the newest line; results responses are built inside their read permit and refused with `413`
+  at the newest line; the web UI's job page fetches only the lines it keeps (the newest 20,000, at
+  most about 16 MiB), so it reaches the end of a long log; results responses are built inside their
+  read permit and refused with `413`
   past 64 MiB; every route has a read budget of bytes and sweeps; a request that goes away cancels
   its reads (`503`); at most 200 sweeps are listed per experiment; the sweep cache evicts the least
   recently used entry and serves a changed sweep as it was while it is read again.

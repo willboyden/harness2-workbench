@@ -7,6 +7,8 @@ use h2w_api::{LogLine, LogStream};
 
 /// Lines kept in the browser; older ones are dropped from the front.
 pub(crate) const DEFAULT_CAP: usize = 20_000;
+/// Bytes of line text kept in the browser (the newest line is kept whatever its size).
+pub(crate) const DEFAULT_BYTE_CAP: usize = 16 * 1024 * 1024;
 /// Out-of-order lines held while a gap is being filled.
 const PENDING_CAP: usize = 5_000;
 
@@ -26,26 +28,37 @@ pub(crate) struct LogBuffer {
     lines: VecDeque<LogLine>,
     /// Line number expected next (one past the last appended line).
     next: u64,
-    /// Lines dropped from the front because of the cap.
+    /// Lines before the first one held: dropped from the front because of the caps, or
+    /// skipped by [`LogBuffer::catch_up`].
     dropped: u64,
     pending: BTreeMap<u64, LogLine>,
     cap: usize,
+    /// Bytes of text in `lines`.
+    bytes: usize,
+    byte_cap: usize,
 }
 
 impl Default for LogBuffer {
     fn default() -> Self {
-        LogBuffer::with_cap(DEFAULT_CAP)
+        LogBuffer::with_caps(DEFAULT_CAP, DEFAULT_BYTE_CAP)
     }
 }
 
 impl LogBuffer {
+    #[cfg(test)]
     pub(crate) fn with_cap(cap: usize) -> LogBuffer {
+        LogBuffer::with_caps(cap, DEFAULT_BYTE_CAP)
+    }
+
+    pub(crate) fn with_caps(cap: usize, byte_cap: usize) -> LogBuffer {
         LogBuffer {
             lines: VecDeque::new(),
             next: 0,
             dropped: 0,
             pending: BTreeMap::new(),
             cap: cap.max(1),
+            bytes: 0,
+            byte_cap,
         }
     }
 
@@ -76,11 +89,34 @@ impl LogBuffer {
 
     fn append(&mut self, line: LogLine) {
         self.next = line.n + 1;
+        self.bytes += line.text.len();
         self.lines.push_back(line);
-        while self.lines.len() > self.cap {
-            self.lines.pop_front();
+        while self.lines.len() > self.cap || (self.bytes > self.byte_cap && self.lines.len() > 1) {
+            let Some(old) = self.lines.pop_front() else {
+                break;
+            };
+            self.bytes -= old.text.len();
             self.dropped += 1;
         }
+    }
+
+    /// Where to fetch from next for a log of `total` lines. When the lines before the
+    /// newest ones that fit the caps would only be dropped again, skip them (and what is
+    /// held, which is older still) instead of downloading them. `avg_line_bytes`, the
+    /// average size in a page already fetched, lets the byte cap narrow the jump.
+    pub(crate) fn catch_up(&mut self, total: u64, avg_line_bytes: Option<usize>) -> u64 {
+        let fit = avg_line_bytes.map_or(self.cap, |avg| {
+            self.cap.min(self.byte_cap / avg.max(1)).max(1)
+        });
+        let target = total.saturating_sub(u64::try_from(fit).unwrap_or(u64::MAX));
+        if target > self.next {
+            self.lines.clear();
+            self.bytes = 0;
+            self.dropped = target;
+            self.next = target;
+            self.drain_pending();
+        }
+        self.next
     }
 
     fn drain_pending(&mut self) {
@@ -273,6 +309,51 @@ mod tests {
             vec![8, 9]
         );
         assert_eq!(b.push(l(5)), Push::Duplicate);
+    }
+
+    #[test]
+    fn caps_bytes_but_keeps_the_newest_line() {
+        // "line N" is 6 bytes: 20 bytes hold three lines.
+        let mut b = LogBuffer::with_caps(100, 20);
+        b.extend((0..10).map(l));
+        assert_eq!(b.len(), 3);
+        assert_eq!(b.dropped(), 7);
+        let mut big = l(10);
+        big.text = "x".repeat(50);
+        b.push(big);
+        assert_eq!(b.iter().map(|x| x.n).collect::<Vec<_>>(), vec![10]);
+        assert_eq!(b.dropped(), 10);
+    }
+
+    #[test]
+    fn catching_up_skips_only_lines_it_would_drop() {
+        let mut full = LogBuffer::with_cap(3);
+        full.extend((0..10).map(l));
+        let mut b = LogBuffer::with_cap(3);
+        b.extend((0..2).map(l));
+        // Ten lines and room for three: fetch from 7, as if 0..7 had come and gone.
+        assert_eq!(b.catch_up(10, None), 7);
+        assert_eq!((b.len(), b.dropped()), (0, 7));
+        b.extend((7..10).map(l));
+        assert_eq!(b, full);
+        // Nothing to skip when the rest fits.
+        assert_eq!(b.catch_up(12, None), 10);
+        assert_eq!(b.len(), 3);
+    }
+
+    #[test]
+    fn catching_up_uses_the_byte_cap_and_keeps_pending_lines() {
+        // 60 bytes at 6 bytes a line hold ten of the cap's hundred lines.
+        let mut b = LogBuffer::with_caps(100, 60);
+        b.push(l(0));
+        assert_eq!(b.push(l(95)), Push::Gap { from: 1 });
+        assert_eq!(b.push(l(3)), Push::Gap { from: 1 });
+        assert_eq!(b.catch_up(100, Some(6)), 90);
+        assert!(b.has_gap(), "line 95 still waits for 90..95");
+        b.extend((90..95).map(l));
+        assert_eq!(b.next(), 96);
+        assert!(!b.has_gap());
+        assert_eq!(b.dropped(), 90);
     }
 
     #[test]
