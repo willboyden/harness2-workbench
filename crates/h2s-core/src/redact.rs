@@ -6,8 +6,16 @@
 //!
 //! Besides each value itself, a few derived spellings are redacted under the same name,
 //! because logs rarely print a secret exactly as stored: its JSON-escaped form, each
-//! substantial line of a multi-line value (logs are line-split), and each substantial string
-//! inside a JSON value (a service-account key's `private_key`).
+//! substantial line of a multi-line value (logs are line-split), each substantial string
+//! inside a JSON value (a service-account key's `private_key`), and the standard and
+//! URL-safe base64 encodings of the whole value, padded and unpadded.
+//!
+//! **Redaction is best effort.** It catches the spellings above and nothing else. A value
+//! that is transformed in any other way is shown as it was printed: reversed, split across
+//! lines or log records, spaced out, percent- or hex-encoded, base64-encoded together with
+//! other text (an HTTP Basic `user:password` header) or wrapped onto several lines, hashed,
+//! compressed. A job that holds a secret can print it in a form no redactor recognises, so
+//! the logs of such a job are as sensitive as the secret.
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -83,6 +91,31 @@ fn json_strings(v: &serde_json::Value, out: &mut Vec<String>, depth: usize) {
     }
 }
 
+const BASE64_STANDARD: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64_URL_SAFE: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/// RFC 4648 base64 of `bytes` in `alphabet`, with `=` padding when `pad`.
+fn base64(bytes: &[u8], alphabet: &[u8; 64], pad: bool) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let byte = |i: usize| u32::from(chunk.get(i).copied().unwrap_or(0));
+        let group = (byte(0) << 16) | (byte(1) << 8) | byte(2);
+        // 1, 2 or 3 input bytes carry 2, 3 or 4 symbols.
+        let symbols = chunk.len() + 1;
+        for i in 0..4_usize {
+            if i < symbols {
+                let index = usize::try_from((group >> (18 - 6 * i)) & 63).unwrap_or(0);
+                out.push(char::from(alphabet.get(index).copied().unwrap_or(b'=')));
+            } else if pad {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 /// Every spelling of `value` to redact.
 fn variants(value: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -93,6 +126,11 @@ fn variants(value: &str) -> Vec<String> {
         && let Ok(doc) = serde_json::from_str::<serde_json::Value>(value)
     {
         json_strings(&doc, &mut out, 0);
+    }
+    for alphabet in [BASE64_STANDARD, BASE64_URL_SAFE] {
+        for pad in [true, false] {
+            out.push(base64(value.as_bytes(), alphabet, pad));
+        }
     }
     out
 }
@@ -240,7 +278,76 @@ mod tests {
         );
     }
 
+    #[test]
+    fn base64_matches_rfc_4648() {
+        let vectors = [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ];
+        for (plain, encoded) in vectors {
+            assert_eq!(base64(plain.as_bytes(), BASE64_STANDARD, true), encoded);
+            assert_eq!(
+                base64(plain.as_bytes(), BASE64_STANDARD, false),
+                encoded.trim_end_matches('=')
+            );
+        }
+        // Python: base64.b64encode / urlsafe_b64encode(bytes([0xfb, 0xff, 0xbf])).
+        assert_eq!(base64(&[0xfb, 0xff, 0xbf], BASE64_STANDARD, true), "+/+/");
+        assert_eq!(base64(&[0xfb, 0xff, 0xbf], BASE64_URL_SAFE, true), "-_-_");
+    }
+
+    #[test]
+    fn base64_spellings_are_redacted() {
+        // Python: base64.b64encode(b">>>???ab") == b"Pj4+Pz8/YWI=", and the URL-safe
+        // alphabet swaps + and / for - and _.
+        let red = r(&[("S", ">>>???ab")]);
+        for form in ["Pj4+Pz8/YWI=", "Pj4+Pz8/YWI", "Pj4-Pz8_YWI=", "Pj4-Pz8_YWI"] {
+            assert_eq!(
+                red.redact(&format!("Authorization: Bearer {form} end")),
+                "Authorization: Bearer [REDACTED:S] end",
+                "{form}"
+            );
+        }
+        // Base64 of the UTF-8 bytes.
+        let red = r(&[("U", "kéy-ünïcode-1234")]);
+        assert_eq!(
+            red.redact("x=a8OpeS3DvG7Dr2NvZGUtMTIzNA=="),
+            "x=[REDACTED:U]"
+        );
+    }
+
+    /// Best effort, as documented: spellings other than the listed ones are not caught.
+    #[test]
+    fn other_transformations_are_not_caught() {
+        let red = r(&[("S", "abc123def456")]);
+        for text in ["654fed321cba", "abc123 def456", "abc123\ndef456"] {
+            assert_eq!(red.redact(text), text);
+        }
+    }
+
     proptest! {
+        #[test]
+        fn base64_of_a_secret_never_survives(
+            secret in "\\PC{1,40}",
+            pre in "[ :=a-z]{0,10}",
+            post in "[ ;,a-z]{0,10}",
+            url in any::<bool>(),
+            pad in any::<bool>(),
+        ) {
+            let red = r(&[("S", &secret)]);
+            let alphabet = if url { BASE64_URL_SAFE } else { BASE64_STANDARD };
+            let form = base64(secret.as_bytes(), alphabet, pad);
+            let text = format!("{pre}{form}{post}");
+            let out = red.redact(&text);
+            prop_assert!(!out.contains(&form));
+            prop_assert!(out.contains("[REDACTED:S]"));
+        }
+
         #[test]
         fn secret_never_survives(secret in "[A-Za-z0-9+/=_-]{8,40}", pre in "\\PC{0,20}", post in "\\PC{0,20}") {
             let red = r(&[("S", &secret)]);
