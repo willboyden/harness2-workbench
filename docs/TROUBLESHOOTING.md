@@ -121,6 +121,11 @@ server's log line for that request and the audit record. Start there.
 | A live log stops after about an hour, or ten idle minutes | By design: the stream ends and the client reconnects with `Last-Event-ID`. |
 | `curl` works but the page shows `UI not built — run cargo xtask web, then rebuild the server.` | This server was built without `dist/web`. Build the UI, then rebuild the server (`cargo xtask dist` does both in order; if you built the server first, `touch crates/h2s-daemon/src/http/static_ui.rs` so cargo rebuilds it: it does not notice `dist/web` appearing). The API works regardless. |
 | The audit log shows the proxy's address for every user | `server.trusted_proxies` does not include the proxy. |
+| The sign-in page says `The server did not accept this token. Check that it was copied completely and has not been revoked or expired.` | The server answered `401 invalid token` (unknown, wrong, expired or revoked token). Create a new one (`h2studio token create`). |
+| The sign-in page says `That does not look like a Studio token: tokens start with “h2s_”.` or `Paste your API token first.` | Checked in the browser before anything is sent. |
+| The sign-in page says `Too many sign-in attempts from this address. Wait a minute before trying again.` | `429` from the login rate limit (see the `429` row above). |
+| You are sent back to the sign-in page with no message while using the UI | Your session ended: it expired (`auth.session_ttl_hours`), you signed out elsewhere, or the token was revoked. Sign in again; you return to the page you were on. |
+| A page of the UI shows an error toast with a server message | Look the message up in [HTTP errors by status](#http-errors-by-status). The [user guide](USER-GUIDE.md#14-when-something-looks-wrong) lists the UI's own messages. |
 
 ## Starting the server
 
