@@ -239,14 +239,34 @@ fn config_check_reports_problems() {
     assert_eq!(o.status.code(), Some(1));
 }
 
+/// A spawned subcommand that is killed when the test ends, even when an assertion fails first:
+/// without this a failing test leaves its server running after its temporary directory is gone.
+struct Spawned(Option<std::process::Child>);
+
+impl Spawned {
+    fn id(&self) -> u32 {
+        self.0.as_ref().map_or(0, std::process::Child::id)
+    }
+}
+
+impl Drop for Spawned {
+    fn drop(&mut self) {
+        if let Some(mut c) = self.0.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+}
+
 /// Spawn a long-running subcommand and return it with the first stdout line.
-fn spawn_until_line(mut c: Command) -> (std::process::Child, String) {
+fn spawn_until_line(mut c: Command) -> (Spawned, String) {
     let mut child = c
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let stdout = child.stdout.take().unwrap();
+    let child = Spawned(Some(child));
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut line = String::new();
@@ -259,12 +279,14 @@ fn spawn_until_line(mut c: Command) -> (std::process::Child, String) {
     (child, line.trim().to_owned())
 }
 
-fn stop(mut child: std::process::Child) -> std::process::ExitStatus {
+fn stop(mut child: Spawned) -> std::process::ExitStatus {
     let pid = nix::unistd::Pid::from_raw(i32::try_from(child.id()).unwrap());
     nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap();
     let deadline = Instant::now() + Duration::from_secs(40);
     loop {
-        if let Some(s) = child.try_wait().unwrap() {
+        let done = child.0.as_mut().and_then(|c| c.try_wait().unwrap());
+        if let Some(s) = done {
+            child.0 = None;
             return s;
         }
         assert!(
@@ -757,11 +779,11 @@ fn egress_startup_log_names_each_entry_with_its_ports() {
         .env("H2S_LOG_FORMAT", "json")
         .stdout(Stdio::piped())
         .stderr(std::fs::File::create(&log).unwrap());
-    let mut child = c.spawn().unwrap();
+    let mut spawned = c.spawn().unwrap();
+    let stdout = spawned.stdout.take().unwrap();
+    let child = Spawned(Some(spawned));
     let mut line = String::new();
-    BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
+    BufReader::new(stdout).read_line(&mut line).unwrap();
     assert!(
         line.starts_with("h2studio egress proxy listening on"),
         "{line}"
