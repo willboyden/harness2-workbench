@@ -487,7 +487,7 @@ impl JobManager {
         let need = spec.required_role();
         if !actor.principal.role.allows(need) {
             return Err(ApiError::forbidden(format!(
-                "starting a {} job requires the {} role",
+                "starting a job of kind {} requires the {} role",
                 kind.as_str(),
                 need.as_str()
             )));
@@ -909,7 +909,7 @@ impl JobManager {
         let need = live.spec.required_role().max(h2s_api::Role::Operator);
         if !actor.principal.role.allows(need) {
             return Err(ApiError::forbidden(format!(
-                "cancelling a {} job requires the {} role",
+                "cancelling a job of kind {} requires the {} role",
                 live.spec.kind().as_str(),
                 need.as_str()
             )));

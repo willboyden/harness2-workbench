@@ -564,6 +564,10 @@ async fn creation_is_validated_before_anything_runs() {
         )
         .await;
     assert_eq!(r.status(), 403);
+    assert_eq!(
+        r.json::<ErrorBody>().await.unwrap().error.message,
+        "starting a job of kind install_harness2 requires the admin role"
+    );
     let r = t.create_job(&t.viewer, demo_spec("ok-v2")).await;
     assert_eq!(r.status(), 403);
     // A demo on a standard experiment is a conflict.
