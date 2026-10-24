@@ -190,20 +190,41 @@ fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
         .build()?)
 }
 
-async fn shutdown_signal() {
+/// SIGTERM and SIGINT handlers. Install them before announcing readiness: a signal that
+/// arrives after the `listening` line must start the graceful shutdown, not kill the
+/// process (the default action).
+struct ShutdownSignals {
+    term: Option<tokio::signal::unix::Signal>,
+    int: Option<tokio::signal::unix::Signal>,
+}
+
+/// Register the handlers (needs a running Tokio runtime).
+fn shutdown_signals() -> ShutdownSignals {
     use tokio::signal::unix::{SignalKind, signal};
-    let mut term = signal(SignalKind::terminate()).ok();
-    let terminate = async {
-        match term.as_mut() {
-            Some(t) => {
-                t.recv().await;
-            }
-            None => std::future::pending::<()>().await,
+    ShutdownSignals {
+        term: signal(SignalKind::terminate()).ok(),
+        int: signal(SignalKind::interrupt()).ok(),
+    }
+}
+
+/// The next delivery of `s` (never, when its handler could not be installed).
+async fn received(s: Option<&mut tokio::signal::unix::Signal>) {
+    match s {
+        Some(s) => {
+            s.recv().await;
         }
-    };
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        () = terminate => {}
+        None => std::future::pending::<()>().await,
+    }
+}
+
+impl ShutdownSignals {
+    /// Resolves at the first SIGTERM or SIGINT.
+    async fn wait(self) {
+        let ShutdownSignals { mut term, mut int } = self;
+        tokio::select! {
+            () = received(term.as_mut()) => {}
+            () = received(int.as_mut()) => {}
+        }
     }
 }
 
@@ -235,13 +256,14 @@ fn serve(config: Option<&Path>) -> anyhow::Result<ExitCode> {
         let server = Server::bind(cfg, ServerOptions::new(Arc::new(CoreBackend)))
             .await
             .context("starting the server")?;
+        let signals = shutdown_signals();
         let addr = server.local_addr();
         let mut out = std::io::stdout().lock();
         writeln!(out, "h2studio listening on http://{addr}")?;
         out.flush()?;
         drop(out);
         tracing::info!(%addr, "listening");
-        server.run(shutdown_signal()).await;
+        server.run(signals.wait()).await;
         Ok(ExitCode::SUCCESS)
     }))
 }
@@ -573,8 +595,10 @@ fn egress_proxy(config: Option<&Path>) -> anyhow::Result<ExitCode> {
             .with_context(|| format!("binding {}", cfg.egress_listen))?;
         let addr = listener.local_addr()?;
         for r in &cfg.egress_allow {
+            let ports: Vec<String> = r.ports.iter().map(u16::to_string).collect();
             tracing::info!(
                 host = %if r.wildcard { format!("*.{}", r.host) } else { r.host.clone() },
+                ports = %ports.join(","),
                 allow_private = r.allow_private,
                 "egress allowlist entry"
             );
@@ -582,6 +606,7 @@ fn egress_proxy(config: Option<&Path>) -> anyhow::Result<ExitCode> {
         if cfg.egress_allow.is_empty() {
             tracing::warn!("the egress allowlist is empty: every request will be refused");
         }
+        let signals = shutdown_signals();
         let mut out = std::io::stdout().lock();
         writeln!(out, "h2studio egress proxy listening on {addr}")?;
         out.flush()?;
@@ -592,7 +617,7 @@ fn egress_proxy(config: Option<&Path>) -> anyhow::Result<ExitCode> {
             crate::egress::ProxySettings::new(cfg.egress_allow.clone()),
             rx,
         ));
-        shutdown_signal().await;
+        signals.wait().await;
         let _ = tx.send(true);
         let _ = serve.await;
         Ok(ExitCode::SUCCESS)

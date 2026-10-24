@@ -736,3 +736,47 @@ fn errors_name_each_cause_once() {
     assert!(err.contains("cannot read"), "{err}");
     assert_eq!(err.matches("os error").count(), 1, "{err}");
 }
+
+/// The egress proxy logs each allowlist entry with its ports at startup.
+#[test]
+fn egress_startup_log_names_each_entry_with_its_ports() {
+    let e = env();
+    std::fs::create_dir_all(e.config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &e.config,
+        format!(
+            "[paths]\ndata_dir = \"{}\"\n[egress]\nlisten = \"127.0.0.1:0\"\n\
+             allow = [\"api.example.com\", {{host = \"litellm\", allow_private = true, ports = [4000, 4001]}}]\n",
+            e.root.join("data").display()
+        ),
+    )
+    .unwrap();
+    let log = e.root.join("egress.log");
+    let mut c = cmd(&e.home);
+    c.args(["egress-proxy", "--config", e.config.to_str().unwrap()])
+        .env("H2S_LOG_FORMAT", "json")
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&log).unwrap());
+    let mut child = c.spawn().unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    assert!(
+        line.starts_with("h2studio egress proxy listening on"),
+        "{line}"
+    );
+    let status = stop(child);
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(status.success(), "{status:?}\n{text}");
+    let entries: Vec<serde_json::Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["fields"]["message"] == "egress allowlist entry")
+        .collect();
+    assert_eq!(entries.len(), 2, "{text}");
+    assert_eq!(entries[0]["fields"]["host"], "api.example.com");
+    assert_eq!(entries[0]["fields"]["ports"], "443,80");
+    assert_eq!(entries[1]["fields"]["host"], "litellm");
+    assert_eq!(entries[1]["fields"]["ports"], "4000,4001");
+}

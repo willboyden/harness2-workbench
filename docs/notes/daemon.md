@@ -32,7 +32,7 @@ results; explanations and logs go to standard error.
 | `h2studio audit verify` | `audit chain OK: N entries; head <seq> <hash>` or `audit chain BROKEN: first bad record S of N entries` (exit 1). |
 | `h2studio openapi` | the OpenAPI 3.1 document. |
 | `h2studio version` | `h2studio <version>` (and the commit when built with `H2S_BUILD_COMMIT`). |
-| `h2studio egress-proxy` | one line `h2studio egress proxy listening on <ip>:<port>`. |
+| `h2studio egress-proxy` | one line `h2studio egress proxy listening on <ip>:<port>`; stderr logs each allowlist entry with its ports. SIGINT/SIGTERM stop it (handlers are installed before the line is printed, for `serve` too). |
 
 `init`:
 
