@@ -346,7 +346,7 @@ fn under_pycache(rel: &str) -> bool {
 ///
 /// A harness is held in memory whole, so it is bounded: more than 2,000 on-surface files,
 /// more than 64 MiB in total, one file over 4 MiB, or more than 20,000 entries is
-/// [`CoreError::TooLarge`] (counted from the directory listing before any file is read).
+/// [`CoreError::TooLarge`], decided from the directory listing before any file is read.
 pub fn read_tree(dir: &cap_std::fs::Dir, surface: Surface) -> Result<(Tree, Vec<String>)> {
     read_tree_capped(dir, surface, MAX_TREE_FILES, MAX_TREE_BYTES)
 }
@@ -376,6 +376,11 @@ fn read_tree_capped(
         return Err(CoreError::TooLarge(format!(
             "the harness has {} files, over the limit of {max_files}",
             on.len()
+        )));
+    }
+    if let Some((rel, len)) = on.iter().find(|(_, len)| *len > MAX_HARNESS_FILE) {
+        return Err(CoreError::TooLarge(format!(
+            "harness file {rel} is {len} bytes, over the {MAX_HARNESS_FILE}-byte limit"
         )));
     }
     let listed = on
@@ -1177,6 +1182,10 @@ mod tests {
         let one = tempfile::tempdir().unwrap();
         sparse(&one.path().join("systemprompt.md"), MAX_HARNESS_FILE + 1);
         let err = read_tree(&open(one.path()), Surface::Opencode).unwrap_err();
-        assert!(matches!(err, CoreError::TooLarge(_)), "{err}");
+        assert_eq!(
+            err.to_string(),
+            "too large: harness file systemprompt.md is 4194305 bytes, over the 4194304-byte \
+             limit"
+        );
     }
 }
