@@ -102,6 +102,9 @@ Keys beyond §11 (all optional, defaults shown):
   `server.request_timeout_secs` is 503.
 - **Request ids**: `x-request-id` is honoured only from `trusted_proxies` and only when it is
   1..=128 characters of `[A-Za-z0-9._:-]`; otherwise a new id is generated.
+- **System info**: `SystemInfo.host_risks_preacknowledged` (additive after contract v1.2) is
+  `isolation.preacknowledge_host_risks`, for every role: when true, jobs need no
+  `acknowledge_risks` and the UI does not ask for it.
 - **Static UI**: `/`, `/app.js`, `/styles.css`, `/favicon.svg`, `/pkg/**` from `dist/web` embedded
   at build time; other non-API GETs return `index.html`. Without `dist/web` the server builds and
   serves a page saying `UI not built — run cargo xtask web`. `Cache-Control: no-cache` with an

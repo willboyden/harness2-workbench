@@ -263,6 +263,7 @@ async fn system_info(State(st): State<AppState>, headers: HeaderMap) -> R<Json<S
             home: admin.then(|| "/srv/harness2-studio/harness2".to_owned()),
         },
         isolation: g.isolation,
+        host_risks_preacknowledged: false,
         container_runtime: (g.isolation == Isolation::Container).then(|| "podman".to_owned()),
         auth_mode: h2s_api::AuthMode::Token,
         server_time: rfc3339(now_secs()),

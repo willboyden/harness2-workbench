@@ -1234,6 +1234,27 @@ async fn preacknowledged_host_risks_need_no_flag() {
     assert_eq!(r.status(), 201);
     let j: Job = r.json().await.unwrap();
     t.wait_terminal(&j.id, 30).await;
+    // Every role can see it (the UI then skips asking for the acknowledgement).
+    let info: h2s_api::SystemInfo = t
+        .get("/api/v1/system/info", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(info.host_risks_preacknowledged);
+    t.stop().await;
+    let t = TestServer::start().await;
+    let info: h2s_api::SystemInfo = t
+        .get("/api/v1/system/info", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!info.host_risks_preacknowledged);
     t.stop().await;
 }
 
