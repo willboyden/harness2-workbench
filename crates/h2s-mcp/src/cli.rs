@@ -31,7 +31,11 @@ as command-line arguments.
   http: streamable HTTP on --listen at path /mcp; every request must carry its own \
 `Authorization: Bearer h2s_...`, which is forwarded to the Studio server.
 
-Models cannot set acknowledge_risks=true unless --allow-risk-acknowledgement is given.
+Least privilege: give the agent a viewer token; an operator token only when it must start \
+jobs; never an admin token (install harness2, set up benchmarks and run the bridge from the web \
+UI instead). Models cannot set acknowledge_risks=true unless --allow-risk-acknowledgement is \
+given. Tool results can contain text written by models (rollouts, logs, harness files): the \
+server tells agents to treat it as untrusted data.
 
 Logs go to stderr (RUST_LOG adjusts them).";
 

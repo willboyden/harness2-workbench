@@ -430,15 +430,22 @@ impl H2sMcp {
             (Ok(p), Ok(s)) => (p, s),
             (Err(e), _) | (_, Err(e)) => return output::error(errors::render(&e, Role::Viewer)),
         };
-        let note = if system.harness2.installed {
-            None
-        } else {
-            Some(
-                "harness2 is not installed on the server yet: an admin can install it with \
-                 install_harness2."
+        let mut notes = Vec::new();
+        if principal.role == Role::Admin {
+            notes.push(
+                "This session uses an admin token. Agents should hold a viewer token, or an \
+                 operator token when they must start jobs: ask the user for one."
                     .to_owned(),
-            )
-        };
+            );
+        }
+        if !system.harness2.installed {
+            notes.push(
+                "harness2 is not installed on the server yet: an admin can install it from the \
+                 web UI (or with install_harness2)."
+                    .to_owned(),
+            );
+        }
+        let note = (!notes.is_empty()).then(|| notes.join(" "));
         let info = ServerInfoOutput {
             mcp_server: McpServerVersion {
                 name: MCP_NAME,

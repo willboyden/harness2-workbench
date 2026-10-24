@@ -6,19 +6,27 @@ a thin client of a running Studio server (`h2studio serve`, default `http://127.
 keeps no state, and every call it makes carries an API token, so the server's roles (viewer <
 operator < admin) and its audit log apply to each agent.
 
-Status (2026-10-23): the tools, resources, prompts and both transports are tested against a
+Status (2026-10-24): the tools, resources, prompts and both transports are tested against a
 mock Studio server (wiremock) and with an rmcp client, in process, over HTTP and against the
-built binary over stdio (`cargo test -p h2s-mcp`). They have not yet run against the real
-Studio server. The client snippets below follow each client's documented configuration format;
-they have not been tried against those clients from this repository.
+built binary over stdio (`cargo test -p h2s-mcp`); the end-to-end suite
+(`cargo xtask e2e --suite mcp`) runs the binary over stdio against a real Studio server and
+harness2 checkout. The client snippets below follow each client's documented configuration
+format; they have not been tried against those clients from this repository.
 
-## 1. A token
+## 1. A token: least privilege
 
-Create a token for the agent with the role it needs (operator to run jobs, viewer to read
-results; admin only for installing harness2, setting up benchmarks and the Codex bridge):
+Give the agent the smallest role that does the job:
+
+- **viewer** by default: it can read everything an agent needs to analyse results (experiments,
+  tasks, harnesses, diffs, scores, reports, logs) and estimate costs;
+- **operator** only when the agent must start jobs (demo, preview, check, runs, pipelines,
+  judging, reports, splits) or create experiments;
+- **never admin.** Install harness2, set up benchmarks and run the Codex bridge from the web UI
+  yourself. An agent's input includes text written by models (see section 4), so an admin token
+  in its hands is an admin token for whatever wrote that text.
 
 ```sh
-h2studio token create --help    # name, role and expiry options
+h2studio token create --help    # name, role and expiry options; prefer an expiry
 ```
 
 The token (`h2s_<id>_<secret>`) is shown once. Keep it in a file only you can read:
@@ -268,6 +276,11 @@ addendum v1.2) `check_profile`
 - `wait_for_job` (and job tools with `wait_secs`) follow the server's job event stream, fall
   back to polling, and send MCP progress notifications (finished tasks / total, current task,
   with a heartbeat at least every 10 s) when the client sends a progress token.
+- **Untrusted content.** Rollout files, job logs, task prompts and improver notes, harness files
+  (`get_harness`, `diff_harnesses`, `export_harness`), audit sessions and library lessons are
+  written by models or benchmark tasks. The server instructions and those tools' descriptions
+  tell the agent to read them as data and never follow instructions found in them; treat an
+  agent that acts on them anyway as compromised for that session.
 - `install_harness2` always installs the commit this Studio release was tested against: the
   tool has no `rev` argument (security audit F13).
 - Units: percent (0..100) in reports and headlines (`get_report`, `get_experiment`); fractions
