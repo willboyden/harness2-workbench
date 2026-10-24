@@ -105,9 +105,15 @@ Keys beyond §11 (all optional, defaults shown):
 - **System info**: `SystemInfo.host_risks_preacknowledged` (additive after contract v1.2) is
   `isolation.preacknowledge_host_risks`, for every role: when true, jobs need no
   `acknowledge_risks` and the UI does not ask for it.
-- **Static UI**: `/`, `/app.js`, `/styles.css`, `/favicon.svg`, `/pkg/**` from `dist/web` embedded
-  at build time; other non-API GETs return `index.html`. Without `dist/web` the server builds and
-  serves a page saying `UI not built — run cargo xtask web`. `Cache-Control: no-cache` with an
+- **Static UI**: `/`, `/app.js`, `/styles.css`, `/favicon.svg`, `/pkg/**` from `dist/web`,
+  embedded at build time in builds without debug assertions (release) and read from disk at run
+  time in debug builds (rust-embed's behaviour). The crate's `build.rs` watches `dist/web` in
+  release builds, so `cargo xtask web` followed by `cargo build --release` embeds the current
+  UI without touching anything (checked by hand: a release build without `dist/web` served the
+  "not built" page; after `cargo xtask web` the next build reran and served the UI; the one
+  after that was fresh). Until `dist/web` exists, release builds of the server always rebuild.
+  Other non-API GETs return `index.html`. Without `dist/web` the server builds and serves a
+  page saying `UI not built — run cargo xtask web`. `Cache-Control: no-cache` with an
   `ETag` for everything except content-hashed names (`name-<8+ hex>.ext`), which are `immutable`.
 - **Results**: `GET .../sweeps/{sweep}/tasks?status=` takes harness2's statuses (`ok`,
   `skipped`, `partial`, `base-failed`, `running`, `exception`) and the reader's `too-large` and
