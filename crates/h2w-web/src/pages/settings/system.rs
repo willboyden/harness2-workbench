@@ -102,7 +102,7 @@ pub(crate) fn System() -> impl IntoView {
                         <Card title="Server">
                             <dl class="kv">
                                 <dt>"Workbench version"</dt>
-                                <dd>{i.studio_version.clone()}{i.build_commit.clone().map(|c| format!(" ({c})"))}</dd>
+                                <dd>{i.workbench_version.clone()}{i.build_commit.clone().map(|c| format!(" ({c})"))}</dd>
                                 <dt>"Authentication"</dt>
                                 <dd>{match i.auth_mode { AuthMode::Token => "API tokens (browser sessions from a token)", AuthMode::Proxy => "trusted reverse proxy (SSO), plus tokens" }}</dd>
                                 <dt>"Isolation"</dt>

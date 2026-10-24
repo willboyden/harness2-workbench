@@ -30,7 +30,7 @@ pub struct Readiness {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SystemInfo {
-    pub studio_version: String,
+    pub workbench_version: String,
     /// Git commit the server was built from, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_commit: Option<String>,

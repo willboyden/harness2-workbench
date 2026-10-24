@@ -429,8 +429,8 @@ secret and never the key itself, judge and Codex endpoints, extra environment va
 literals or secret references, prices for the estimator, and egress hosts); **Delete** is refused
 while an experiment is pinned to the profile. What each field means, and what works with which
 benchmark and executor, is in [MODELS.md](MODELS.md). The *egress hosts* box is informational:
-the server does not add those hosts to the egress allowlist (the form's hint says it derives them;
-see the note in [section 14](#14-when-something-looks-wrong)).
+the server does not add those hosts to the egress allowlist (the form's hint says so too); an
+administrator adds them to `[egress] allow`.
 
 After you save, a card says what the profile still lacks (the **profile check**):
 
@@ -571,8 +571,7 @@ accepts a commit other than the tested one, which the server then refuses by def
 
 On 2026-10-24, in headless Firefox 157.0.1 through geckodriver 0.37.1, against the real server and the
 mock API described at the top, with the web UI built from the main branch after the security-review
-fixes. All 38 pictures were taken again from that build; those of pages that did not change came out
-byte-identical to the earlier ones.
+fixes and the rename to Harness² Workbench. All 38 pictures were taken from that one build.
 
 - **Exercised and photographed or read back** (the buttons each role sees were listed from the page
   for a viewer, an operator and an admin): sign-in (empty, malformed and wrong token, the return
@@ -594,6 +593,5 @@ byte-identical to the earlier ones.
   must be installed first); the narrow layouts of other pages; any browser other than Firefox; any
   screen reader; and everything that needs a model-backed run.
 
-The screenshots contain demo data only. Before saving each one (the two phone-sized pictures
-excepted: their text was read instead) the capture script refused any page whose visible text held a
-home-directory path, a temporary-directory path, a user name or a token.
+The screenshots contain demo data only. Before saving each one the capture script refused any page
+whose visible text held a home-directory path, a temporary-directory path, a user name or a token.

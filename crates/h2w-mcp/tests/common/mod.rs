@@ -77,7 +77,7 @@ pub fn census() -> Value {
 
 pub fn system_info() -> Value {
     typed::<SystemInfo>(json!({
-        "studio_version": "0.1.0",
+        "workbench_version": "0.1.0",
         "harness2": {
             "installed": true, "managed": true,
             "commit": "1cfe254000000000000000000000000000000000",
@@ -356,7 +356,7 @@ pub fn comparison() -> Value {
 
 pub fn manifest() -> Value {
     typed::<Manifest>(json!({
-        "schema_version": 1, "generated_at": NOW, "studio_version": "0.1.0", "experiment": EXP,
+        "schema_version": 1, "generated_at": NOW, "workbench_version": "0.1.0", "experiment": EXP,
         "harness2_commit": "1cfe254000000000000000000000000000000000",
         "dependency_pins": [{"key": "opencode", "value": "1.14.0"}],
         "models": [{"key": "solver", "value": "glm-5"}],

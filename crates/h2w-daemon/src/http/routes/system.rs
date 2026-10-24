@@ -65,7 +65,7 @@ pub async fn info(
         None
     };
     Ok(Json(SystemInfo {
-        studio_version: env!("CARGO_PKG_VERSION").to_owned(),
+        workbench_version: env!("CARGO_PKG_VERSION").to_owned(),
         build_commit: BUILD_COMMIT.map(str::to_owned),
         harness2,
         isolation: state.cfg.isolation(),
