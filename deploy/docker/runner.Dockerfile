@@ -26,6 +26,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /uvx /usr/local/bin/
+# uv's licence texts, which its image does not carry (the files of the pinned tag; update them
+# with uv, docs/SUPPLY-CHAIN.md). Debian packages keep theirs in /usr/share/doc/*/copyright.
+COPY deploy/docker/licenses/uv/ /usr/share/doc/uv/
 
 # A managed CPython shared by every user of the image, outside any home directory.
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \

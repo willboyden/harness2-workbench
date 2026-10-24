@@ -25,10 +25,13 @@ and the repository admin role may bypass it. If you fork this project, set the s
 
 Publish only what CI builds. A binary or WebAssembly bundle built on your machine embeds your
 paths (`/home/<you>/...`, from panic locations and debug info); if you ever must, build with
-`RUSTFLAGS="--remap-path-prefix=$HOME=/build --remap-path-prefix=$PWD=/src"`. Before the first
-release, add the third-party licence texts to the release archives and both images (for example
-with `cargo-about`, pinned and cooldown-checked like any other tool): the archives carry LICENSE
-and NOTICE, but not the licences of the crates compiled in.
+`RUSTFLAGS="--remap-path-prefix=$HOME=/build --remap-path-prefix=$PWD=/src"`.
+
+Release archives and the all-in-one image carry `THIRD-PARTY-LICENSES.md` next to `LICENSE` and
+`NOTICE`: the licence texts of every crate compiled into the servers and the web UI (dev and build
+dependencies excluded), written by `cargo xtask licenses` with cargo-about 0.9.2 (pinned and
+cooldown-checked; `supply-chain/about.toml` holds the same allow-list as `deny.toml`). The runner
+image carries uv's licence texts; its Debian packages keep theirs in `/usr/share/doc/*/copyright`.
 
 ## Checklist
 
@@ -37,7 +40,7 @@ and NOTICE, but not the licences of the crates compiled in.
 2. **Version.** Bump `version` in `[workspace.package]` of the root `Cargo.toml`, then
    `cargo check --workspace` to refresh `Cargo.lock`.
 3. **Gates.** `cargo xtask check` and the end-to-end suite (`crates/h2w-e2e/README.md`) pass
-   locally; CI is green on `main`.
+   locally, `cargo xtask licenses` writes the licence file; CI is green on `main`.
 4. **Clean clone.** In a temporary directory outside the repository:
    `git clone <repo> && cd harness2-workbench && cargo xtask check && cargo xtask dist`. A working
    tree is not a clean clone: this is what catches files that exist only on your machine.

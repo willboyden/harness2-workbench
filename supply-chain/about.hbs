@@ -1,0 +1,26 @@
+# Third-party licences
+
+Harness² Workbench is licensed under the Apache License 2.0 (`LICENSE`, `NOTICE`). Its server, MCP
+server and web UI also contain the open-source Rust crates listed here, under the licences below.
+This file is generated from `Cargo.lock` by `cargo xtask licenses` (cargo-about); do not edit it.
+
+## Overview
+
+{{#each overview}}
+- {{{name}}}: {{count}} crate(s)
+{{/each}}
+
+{{#each licenses}}
+## {{{name}}}
+
+Used by:
+
+{{#each used_by}}
+- {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/each}}
+
+````text
+{{{text}}}
+````
+
+{{/each}}

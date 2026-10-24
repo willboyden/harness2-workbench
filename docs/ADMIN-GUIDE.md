@@ -178,7 +178,11 @@ docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.0 .
   `/healthz` health check. It is what [section 10](#10-the-compose-reference-deployment) runs.
 
 Every base image is pinned by digest; Dependabot proposes updates with the same 14-day cooldown as
-the crates, except Node majors, which are chosen by hand from the LTS lines. The all-in-one image
+the crates, except Node majors, which are chosen by hand from the LTS lines, and uv, which is
+bumped by hand ([SUPPLY-CHAIN.md](SUPPLY-CHAIN.md#bumping-uv-by-hand)). Licence texts:
+`/usr/share/doc/harness2-workbench/` in the all-in-one image (`LICENSE`, `NOTICE` and
+`THIRD-PARTY-LICENSES.md`, the crates compiled in), `/usr/share/doc/uv/` in both, and each Debian
+package's `/usr/share/doc/<package>/copyright`. The all-in-one image
 builds on the runner image named by the `RUNNER_IMAGE` build argument (default
 `harness2-workbench-runner:0.1.0`), so `--build-arg RUNNER_IMAGE=<name:tag>` puts it on your own
 runner image.
