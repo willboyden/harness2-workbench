@@ -278,8 +278,9 @@ modes [parallel] unless I say otherwise; read the task stream and totals.
 7. estimate_cost with the preview's total_tasks; show me the rollouts, improver sessions and \
 USD range, and wait for my explicit go-ahead.
 8. start_pipeline with budget_usd and judge_bases=true. If server_info shows host isolation, \
-acknowledge_risks=true is required: explain that the executor then runs with the server \
-user's files and network, and set it only if I agree.
+the server needs acknowledge_risks=true: the executor then runs with the server user's files \
+and network. Explain that to me. You may set it only if server_info's policy allows it and I \
+agree; otherwise I start the run in the web UI.
 9. wait_for_job until the job finishes (call it again after a timeout); on failure read \
 get_job_log with tail=100.
 10. get_report for the sweep (the run step's namespace): per mode, score and all-pass rate in \

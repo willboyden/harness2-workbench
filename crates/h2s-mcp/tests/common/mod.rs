@@ -688,9 +688,25 @@ pub async fn connect(url: &str, token: &str) -> Client {
 
 /// [`connect`] with a given wait limiter.
 pub async fn connect_with(url: &str, token: &str, waits: WaitLimiter) -> Client {
+    connect_configured(url, token, waits, false).await
+}
+
+/// [`connect`] to a server that passes `acknowledge_risks=true` on (as if a human had started
+/// it with `--allow-risk-acknowledgement`).
+pub async fn connect_allowing_risk_acknowledgement(url: &str, token: &str) -> Client {
+    connect_configured(url, token, WaitLimiter::default(), true).await
+}
+
+async fn connect_configured(
+    url: &str,
+    token: &str,
+    waits: WaitLimiter,
+    allow_risk_acknowledgement: bool,
+) -> Client {
     let api = ApiClient::new(url, &ClientOptions::default()).unwrap();
-    let server =
-        H2sMcp::new(api, Credentials::Fixed(Token::parse(token).unwrap())).with_wait_limiter(waits);
+    let server = H2sMcp::new(api, Credentials::Fixed(Token::parse(token).unwrap()))
+        .with_wait_limiter(waits)
+        .with_risk_acknowledgement(allow_risk_acknowledgement);
     let (server_io, client_io) = tokio::io::duplex(1 << 20);
     tokio::spawn(async move {
         if let Ok(running) = server.serve(server_io).await {
