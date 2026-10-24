@@ -571,8 +571,7 @@ accepts a commit other than the tested one, which the server then refuses by def
 
 On 2026-10-24, in headless Firefox 157.0.1 through geckodriver 0.37.1, against the real server and the
 mock API described at the top, with the web UI built from the main branch after the security-review
-fixes. All 38 pictures were taken again from that build; those of pages that did not change came out
-byte-identical to the earlier ones.
+fixes and the rename to Harness² Workbench. All 38 pictures were taken from that one build.
 
 - **Exercised and photographed or read back** (the buttons each role sees were listed from the page
   for a viewer, an operator and an admin): sign-in (empty, malformed and wrong token, the return
@@ -594,6 +593,5 @@ byte-identical to the earlier ones.
   must be installed first); the narrow layouts of other pages; any browser other than Firefox; any
   screen reader; and everything that needs a model-backed run.
 
-The screenshots contain demo data only. Before saving each one (the two phone-sized pictures
-excepted: their text was read instead) the capture script refused any page whose visible text held a
-home-directory path, a temporary-directory path, a user name or a token.
+The screenshots contain demo data only. Before saving each one the capture script refused any page
+whose visible text held a home-directory path, a temporary-directory path, a user name or a token.
