@@ -19,6 +19,17 @@ transcript says otherwise. **Not verified anywhere**: rootful Docker, Podman, a 
 (only simulated headers), nginx or any proxy other than the compose stack's Caddy, the systemd
 unit beyond a syntax check, and any model-backed run.
 
+The behaviours added after an independent security review (collected in
+[section 17](#17-what-changed-with-the-security-review)) were run by the author on 2026-10-24
+against scratch servers: throttling of failed authentication and the cap on its audit records,
+repeated `Host` and proxy headers, the per-client connection and event-stream limits, the log size
+cap and the free-space floor, restart recovery after a `kill -9`, the non-dumpable server and
+egress proxy, the `__Host-` session cookie, the install restriction, and a container job's
+variables through `--env-file` together with the `runner_image` and `container_network` checks.
+The container checks used a **stand-in `docker` script** that records what it is given and answers
+the probes, not a real container runtime. What the compose image's PID 1 holds was read from its
+Dockerfile, not run.
+
 > **Read this first: host isolation is not a security boundary.** In the default `host` isolation,
 > harness2's executors run as the server's user. A malicious or prompt-injected executor can
 > therefore read the Studio's database (stored secrets, token hashes), its files and its
@@ -26,9 +37,10 @@ unit beyond a syntax check, and any model-backed run.
 > For anything but your own trusted experiments use container isolation
 > ([section 8](#8-container-isolation-step-by-step)); that is what it is for. The compose reference
 > deployment ([section 10](#10-the-compose-reference-deployment)) contains the whole Studio from
-> your host and network, but **the jobs inside it are not isolated from the Studio itself**.
-> Items marked *planned, not in this commit* below describe fixes that are under way and are **not**
-> part of this revision; they are collected in [section 17](#17-planned-changes-not-in-this-commit).
+> your host and network, but **the jobs inside it are not isolated from the Studio itself**. The
+> server and the egress proxy make themselves non-dumpable, so a same-user job cannot read their
+> `/proc/<pid>/environ` or memory, but it can still open the database file and everything else the
+> user can read: the caveat stands.
 
 Contents: [1 Architecture](#1-architecture-in-one-page) · [2 Requirements](#2-requirements) ·
 [3 Installation](#3-installation) · [4 First run](#4-first-run) ·
@@ -40,7 +52,7 @@ Contents: [1 Architecture](#1-architecture-in-one-page) · [2 Requirements](#2-r
 [11 Observability](#11-observability) · [12 Data, backups and upgrades](#12-data-backups-and-upgrades) ·
 [13 Audit log](#13-audit-log) · [14 systemd](#14-running-as-a-systemd-user-service) ·
 [15 Hardening checklist](#15-hardening-checklist) · [16 Command reference](#16-command-reference) ·
-[17 Planned changes](#17-planned-changes-not-in-this-commit)
+[17 What changed with the security review](#17-what-changed-with-the-security-review)
 
 ## 1. Architecture in one page
 
@@ -101,26 +113,36 @@ install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Node.j
 ```console
 $ git clone https://github.com/willboyden/harness2-studio.git && cd harness2-studio
 $ cargo build --release --locked -p h2s-daemon -p h2s-mcp
-    Finished `release` profile [optimized] target(s) in 1m 17s
+    Finished `release` profile [optimized] target(s) in 1m 07s
 $ ls -l target/release/h2studio target/release/h2studio-mcp | awk '{print $5, $9}'
-17698000 target/release/h2studio
-13948312 target/release/h2studio-mcp
+21509776 target/release/h2studio
+13997640 target/release/h2studio-mcp
 ```
 
 This builds the two binaries (`h2studio`, `h2studio-mcp`) with SQLite bundled and TLS via rustls
 (no OpenSSL). They are self-contained but **dynamically linked against glibc** (`libc`, `libm`,
 `libgcc_s`). A binary needs a glibc at least as new as the one it was built against, so build on the
 oldest distribution you will run it on (or on one with the same glibc). (The
-times and sizes above are from a run with warm dependency caches and without the web UI.) The server
-embeds the web UI at compile time when `dist/web/` exists; build it first
+times and sizes above are from a run with warm dependency caches, with the web UI embedded.) The server
+embeds the web UI when `dist/web/` exists; build it first
 with `cargo xtask web` (needs `wasm-bindgen-cli` 0.2.129 and the `wasm32-unknown-unknown` target,
 which `rust-toolchain.toml` installs). `cargo xtask dist` does both steps. **Without `dist/web/` the
-server still builds and runs**: the API works and `/` shows a page saying `UI not built`. Cargo does
-not notice that `dist/web/` appeared after a server build (verified: a `cargo build` after
-`cargo xtask web` finished at once and the server still served that page), so build the UI first, or
-run `touch crates/h2s-daemon/src/http/static_ui.rs` before rebuilding the server. `cargo xtask web`
-builds a release-size UI (a 3.4 MB `.wasm` here); `cargo xtask web --dev` builds a faster debug one
-(about 150 MB).
+server still builds and runs**: the API works and `/` shows a page saying `UI not built`.
+
+- **Release builds notice the UI.** The crate's build script watches `dist/web`, so `cargo xtask web`
+  followed by `cargo build --release` recompiles the server with it, with nothing to touch.
+  Verified on 2026-10-24: a release server built without `dist/web` served the placeholder
+  (`/app.js` was `404`); after `cargo xtask web` the next release build recompiled `h2s-daemon`
+  and served the UI (`/app.js` `200`, the 3.4 MB `.wasm` as `application/wasm`); the build after that
+  was fresh.
+- **Debug builds read the files from disk at run time, but only if `dist/web/` existed when the
+  crate was compiled.** A debug server compiled without it keeps serving the placeholder after
+  `cargo xtask web` *and* after a plain `cargo build`, which does not rebuild it (verified); run
+  `touch crates/h2s-daemon/src/http/static_ui.rs` and build again. With the UI present at compile
+  time, an edit to `dist/web/styles.css` was served at once, without a rebuild (verified).
+
+`cargo xtask web` builds a release-size UI (a 3.4 MB `.wasm` here); `cargo xtask web --dev` builds
+a faster debug one (about 150 MB).
 
 ### 3.2 Release archives (not yet published)
 
@@ -350,16 +372,20 @@ Other environment variables the server reads: `H2S_CONFIG` (the configuration pa
 | Key | Type | Default | Validation | Effect |
 |---|---|---|---|---|
 | `server.listen` | string | `"127.0.0.1:8722"` | `ip:port` (an IP, not a name; `[::1]:8722` for IPv6); port 0 picks a free port | Where the server binds. Loopback by default; the server prints the bound address once listening. Override: `H2S_LISTEN` |
-| `server.public_url` | string | `"http://127.0.0.1:8722"` | `http` or `https` URL with a host; no credentials, query, fragment or path prefix | The URL people type. Its host (and port) join the `Host` allowlist, its origin is the expected `Origin` of browser requests, and `https` makes session cookies `Secure`. Override: `H2S_PUBLIC_URL` |
+| `server.public_url` | string | `"http://127.0.0.1:8722"` | `http` or `https` URL with a host; no credentials, query, fragment or path prefix | The URL people type. Its host (and port) join the `Host` allowlist, its origin is the expected `Origin` of browser requests, and `https` makes the session cookie `Secure` and names it `__Host-h2s_session` (`h2s_session` over plain http). Override: `H2S_PUBLIC_URL`. An `https` URL with no `server.trusted_proxies` draws a warning |
 | `server.allowed_hosts` | list of strings | `[]` | each `host`, `host:port`, `[v6]` or `[v6]:port` with a valid name or IP | Extra `Host` values answered (a LAN name, or the name a reverse proxy forwards). An entry without a port matches any port. Anything else is `421` |
-| `server.trusted_proxies` | list of strings | `[]` | each an IP address or CIDR | Peers whose `X-Forwarded-For` and `x-request-id` are believed (the client is the right-most address that is not itself trusted) and, in proxy mode, whose identity headers are accepted. Empty = none trusted |
+| `server.trusted_proxies` | list of strings | `[]` | each an IP address or CIDR | Peers whose `X-Forwarded-For` and `x-request-id` are believed (the client is the right-most address that is not itself trusted) and, in proxy mode, whose identity headers are accepted. They are also exempt from `server.max_connections_per_ip` (a reverse proxy limits its own clients). Empty = none trusted |
 | `server.max_body_bytes` | integer | `1048576` | 1024 to 1073741824 | Largest request body; more is `413` |
 | `server.request_timeout_secs` | integer | `60` | 1 to 3600 | Longest a request may take; more is `503` |
 | `server.sse_max_connections` | integer | `64` | 1 to 10000 | Open job event streams at once; more is `503` |
+| `server.sse_max_per_principal` | integer | `8` | 1 to 10000 | Event streams one principal may hold: a token together with all its browser sessions, or one proxy user. More is `429` `this caller already has N open event streams; close one first` (`Retry-After: 5`) |
 | `server.login_attempts_per_minute` | integer | `10` | 1 to 10000 | Login attempts, successful or not, per client address (IPv6 per /64): a token bucket of that size refilled over a minute; empty is `429` with `Retry-After` |
+| `server.max_connections_per_ip` | integer | `256` | 1 to 1024 | Open connections one client address (IPv6: one /64) may hold, out of the server's 1,024 in total. Further connections are closed at accept, counted in `h2s_connections_refused_total{reason="per_client"}` and logged at most once a minute. Peers in `server.trusted_proxies` are exempt |
 
-Fixed limits that are not configurable: 1024 concurrent connections, 10 s to send request headers,
-SSE heartbeats every 15 s, 10 minutes idle and 1 hour maximum per event stream.
+Fixed limits that are not configurable: 1024 concurrent connections in total, 10 s to send request
+headers, SSE heartbeats every 15 s (the caller's credential is checked again at each one), 10 minutes
+idle and 1 hour maximum per event stream. Failed authentication has its own fixed limits
+([section 6.5](#65-failed-authentication-is-throttled)).
 
 ### `[auth]` and `[auth.proxy]`: who may call
 
@@ -383,6 +409,7 @@ SSE heartbeats every 15 s, 10 minutes idle and 1 hour maximum per event stream.
 | `paths.experiments_dir` | string | `""` = `<data_dir>/experiments` | absolute or `~/...` | Each experiment is a directory here, one `HARNESS2_RUNS_DIR` |
 | `paths.harness2_home` | string | `""` = `<data_dir>/harness2` | absolute or `~/...` | The harness2 checkout with its `.venv` and `dependencies/` |
 | `paths.harness2_managed` | boolean | `true` | | `true`: the Studio installs and updates harness2 there. `false`: an existing checkout that is never modified; `install_harness2` is refused |
+| `paths.allow_untested_harness2_rev` | boolean | `false` | | `false`: `install_harness2` with a `rev` other than the tested commit is refused, `422` on `params.rev` (`only the tested harness2 commit <sha> can be installed; an administrator can allow others with paths.allow_untested_harness2_rev = true`), because a fork can make any commit fetchable from the upstream repository and installing runs its build code. `true` accepts any 40-hex commit |
 
 ### `[jobs]`: the job engine
 
@@ -393,13 +420,15 @@ SSE heartbeats every 15 s, 10 minutes idle and 1 hour maximum per event stream.
 | `jobs.timeout_hours` | number | `48.0` | greater than 0, at most 8760; fractions allowed | Wall-clock limit per job; exceeding it ends the job `failed` with `timed out after ...` |
 | `jobs.budget_poll_secs` | integer | `30` | 1 to 3600 | How often the budget guard reads recorded spend while a `run` step runs |
 | `jobs.log_retention_days` | integer | `90` | 1 to 36500 | Job log files older than this are deleted (the job rows stay) |
+| `jobs.max_log_bytes` | integer | `268435456` (256 MiB) | 65536 to 1099511627776 | Largest log stored per job. Past it the log gets one marker line, `log limit of N reached (jobs.max_log_bytes): further output of this job is not stored; the job keeps running`; output is still read (the job never blocks) and parsed for progress, results and the bridge, but not stored, and each step's end says how many lines were not stored. The server's own lines may use 64 KiB more |
+| `jobs.min_free_disk_mb` | integer | `256` | 0 to 1099511627776 | A running job is stopped, status `failed` with `stopped: less than N MiB free on the data directory`, when the filesystem of `paths.data_dir` has less free space than this; checked when the job starts and every 15 s. `0` = never |
 
 ### `[isolation]` and `[isolation.container]`: where jobs run
 
 | Key | Type | Default | Validation | Effect |
 |---|---|---|---|---|
 | `isolation.mode` | string | `"host"` | `host` or `container` | `host`: jobs run as the server's user with its files and network (upstream's behaviour). `container`: each job runs in a hardened container ([section 8](#8-container-isolation-step-by-step)) |
-| `isolation.preacknowledge_host_risks` | boolean | `false` | | When `false`, `run` and `pipeline` jobs in host mode must carry `acknowledge_risks: true` or are refused (`422`). `true` accepts every such run without the flag, **including runs started by MCP agents** (their own acknowledgement guard has nothing left to refuse): set it only on a machine where every operator has been told and no agent holds an operator token |
+| `isolation.preacknowledge_host_risks` | boolean | `false` | | When `false`, `run` and `pipeline` jobs in host mode must carry `acknowledge_risks: true` or are refused (`422`). `true` accepts every such run without the flag, **including runs started by MCP agents** (their own acknowledgement guard has nothing left to refuse), and the web UI's run wizard then shows a note instead of asking: set it only on a machine where every operator has been told and no agent holds an operator token |
 | `isolation.container.runtime` | string | `"docker"` | `docker` or `podman` | The container CLI |
 | `isolation.container.image` | string | `"harness2-studio-runner:0.1.0"` | pinned: `name:tag` with a tag other than `latest`, or `name@sha256:<64 hex>`; the repository name in lowercase | The runner image |
 | `isolation.container.network` | string | `"none"` | `none`, or a user-defined network name (`[A-Za-z0-9][A-Za-z0-9_.-]*`, at most 64 characters; never `host`, `bridge` or `default`) | `none`: no network (the demo works; model calls and installs do not). A network name puts jobs on it, normally an internal one behind an egress proxy |
@@ -413,7 +442,7 @@ SSE heartbeats every 15 s, 10 minutes idle and 1 hour maximum per event stream.
 
 | Key | Type | Default | Validation | Effect |
 |---|---|---|---|---|
-| `egress.listen` | string | `"0.0.0.0:3128"` | `ip:port` | Where the proxy binds. Every interface by default, which is right inside a container on an internal network and wrong on a shared host: bind `127.0.0.1:3128` or an internal address there (a default of `127.0.0.1:3128`, with the compose configuration setting `0.0.0.0` explicitly, is planned, not in this commit) |
+| `egress.listen` | string | `"127.0.0.1:3128"` | `ip:port` | Where the proxy binds. Loopback by default (also in the file `init` writes), because the proxy has no client access list: listening beyond loopback must be an explicit choice. Job containers must reach it, so a deployment sets an address on the jobs network, such as `0.0.0.0:3128` inside the proxy's own container, as the compose example configuration does (the plain example keeps the loopback default and says in a comment to change it for a container) |
 | `egress.allow` | list | `[]` | each entry a host name, a `*.suffix` wildcard, or a table; IP literals are refused; names are validated; `ports` may not contain 0 | The only hosts the proxy will contact. **Empty refuses every request** (the proxy warns at start-up). Entry forms and rules: [section 9](#9-the-egress-allowlist) |
 
 An `allow` entry is `"host"`, `"*.suffix"`, or `{ host = "...", allow_private = true, ports = [4000] }`.
@@ -449,8 +478,12 @@ documented role.
 A token is `h2s_<id>_<secret>`: an 8-character public id and a 256-bit random secret. The server
 stores only the SHA-256 of the secret and compares in constant time (ADR
 [0008](adr/0008-api-tokens-and-sessions.md)). Browser users paste a token into the sign-in page,
-which exchanges it for an `HttpOnly`, `SameSite=Strict` session cookie (`Secure` when
-`public_url` is `https`).
+which exchanges it for an `HttpOnly`, `SameSite=Strict` session cookie. Over plain http it is
+named `h2s_session`; when `public_url` is `https` it is `Secure` and named `__Host-h2s_session`
+(`Path=/`, no `Domain`), so a browser refuses a cookie of that name planted by a sibling subdomain,
+and a plain `h2s_session` cookie is ignored. Verified with `public_url = "https://studio.example.com"`
+and the proxy's headers simulated: the login response carried
+`set-cookie: __Host-h2s_session=<id>; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=43200`.
 
 ```console
 $ h2studio token create --name "ci viewer" --role viewer --expires-in-days 30 > viewer.token
@@ -519,17 +552,24 @@ forwards. In proxy mode tokens still work, so scripts keep using bearer tokens; 
 proxy user is recorded in the audit log by the user header's value. The UI contract is unchanged:
 mutating requests still need `x-h2s-request: 1` and a matching `Origin`.
 
-**Duplicates.** The server takes the **first** value of the user header and of the secret header
-and the **union of every** groups header. It does not reject a request that carries the same header
-twice, so a proxy that *appends* to these headers instead of replacing them lets a client add a
-groups line such as an administrators group, or put its own user header first. Make the proxy delete
-all client-supplied copies of the user, groups and secret headers and set exactly one of each.
-Rejecting duplicates with a `401` is planned, not in this commit.
+**Repeated headers are refused.** A request in which the user, groups or secret header appears more
+than once is `401` (`invalid credentials`; the audit record and the metric say
+`proxy_duplicate_header`), because it means a value written by the client got past the proxy: taking
+the first user, or the union of the groups, would let a client choose its identity or add itself to
+an administrators group. The proxy must still delete whatever the client sent under those names and
+set each of them exactly once; a single groups header may hold a comma-separated list. Verified: a
+request with a repeated user, groups or secret header got `401` (three audit records, metric
+`h2s_auth_failures_total{reason="proxy_duplicate_header"} 3`); the same request with single headers
+got `200`, and `staff,h2s-operators` in one header gave the operator role.
 
 **If `trusted_proxies` is broad**, for example all private ranges as in the compose example, any
 host in those ranges can *try* the headers, and only the shared secret stands between it and an
-admin identity. A job in host mode that can read the server's environment can read that secret. Keep the secret in a secret store, make it long and random, and narrow
-`trusted_proxies` to the proxy's address as soon as it is known.
+admin identity. A same-user job cannot read the secret from the server's `/proc/<pid>/environ` (the
+server is non-dumpable), but it can read it wherever else you keep it: an `EnvironmentFile=` of the
+server's user is readable by a host-mode job, and in the compose image PID 1 is `tini`, which holds
+the container's environment and which a job in the same container can read at `/proc/1/environ`
+(from the Dockerfile; not run). Keep the secret in a secret store, make it long and random, and
+narrow `trusted_proxies` to the proxy's address as soon as it is known.
 
 ### 6.4 Secrets
 
@@ -546,7 +586,8 @@ $ curl -s -H "$AUTH" $BASE/api/v1/secrets
 ```
 
 A secret is handed to a job only when the job's profile references it, and only through the child's
-environment (never the command line: a step whose argv would contain a secret value is refused).
+environment (never the command line: a step whose argv would contain a secret value is refused; a
+container job gets it through a private env file, [section 8](#8-container-isolation-step-by-step)).
 Every log line, error message and audit detail passes through a redactor that replaces values with
 `[REDACTED:<NAME>]` (including a value's JSON-escaped form and each line of a multi-line value).
 **Redaction is best effort**: it matches the literal value, its JSON-escaped form and its standard
@@ -556,6 +597,32 @@ header) is not recognised, and **job logs are readable by every viewer**. Do not
 **Secrets stored in the database are not encrypted at rest**; the file is mode 0600 in a 0700
 directory. See [THREAT-MODEL.md](THREAT-MODEL.md) for what that implies, in particular for host-mode
 jobs and for backups.
+
+### 6.5 Failed authentication is throttled
+
+A client address (IPv6: one /64; behind a reverse proxy, the address found through
+`server.trusted_proxies`) that presents credentials which are refused (a malformed, unknown, wrong,
+expired or revoked token or session, or rejected proxy headers) may do so **60 times a minute**
+(a token bucket refilled over the minute). Further failures are answered `429`
+`rate_limited` (`too many attempts; try again in N s`, with `Retry-After`) and counted as
+`h2s_auth_failures_total{reason="rate_limited"}`. **Valid credentials from the same address keep
+working.** A request with no credentials at all is never throttled or audited (it is counted as
+`missing`). The login endpoint has its own, smaller limit (`server.login_attempts_per_minute`).
+
+Of those failures (and of denied logins) **at most 10 per client and minute are written to the audit
+log**; the rest are counted in `h2s_audit_suppressed_total`, so junk credentials cannot flood the
+hash-chained log. Verified with 75 requests carrying a made-up bearer token: the first 60 were `401`,
+the other 15 `429` (`too many attempts; try again in 1 s`); a valid token from the same address got
+`200` in between; the audit log held 10 `auth.failed` records (`unknown_token on /api/v1/auth/me`);
+the metrics read `h2s_auth_failures_total{reason="unknown_token"} 60`,
+`h2s_auth_failures_total{reason="rate_limited"} 15` and `h2s_audit_suppressed_total 50`.
+
+Each limiter tracks up to 10,000 clients. When its table is full, clients whose bucket has refilled
+are forgotten first and newcomers that still do not fit share one overflow bucket, so flooding the
+table with addresses cannot reset anyone's limit (the limiter never fails open; unit test
+`ratelimit.rs::a_full_table_shares_one_overflow_bucket_instead_of_failing_open`). Behind a reverse
+proxy list the proxy in `trusted_proxies`; otherwise every user shares the proxy's address and one
+person's mistakes lock out the others.
 
 ## 7. Reverse proxy and TLS
 
@@ -574,9 +641,18 @@ trusted_proxies = ["203.0.113.10"]               # the proxy's address(es): X-Fo
   or a loopback form of the bound port gets `421 this server does not answer to that Host`. This
   stops DNS rebinding. When `public_url` uses the default port for its scheme (443 or 80), that name
   is accepted on any port. Make your proxy forward the original `Host` (or list the name it sends).
-- **`public_url`** also fixes the expected `Origin` of browser requests and the `Secure` cookie
-  attribute (`https`). The server ignores `X-Forwarded-Proto` and `X-Forwarded-Host`: `public_url`
-  is the only source of truth for the scheme and host.
+  A request with **more than one `Host` header is `400`** (`the request has more than one Host
+  header`, RFC 9112 section 3.2), and an absolute-form request target (`GET http://host/...`) must
+  name an allowed host as well. Verified with raw requests: two allowed `Host` lines `400`; an
+  absolute-form target for `evil.example` with an allowed `Host` `421`.
+- **`public_url`** also fixes the expected `Origin` of browser requests and the session cookie:
+  `https` makes it `Secure` and names it `__Host-h2s_session`. The server ignores
+  `X-Forwarded-Proto` and `X-Forwarded-Host`: `public_url` is the only source of truth for the scheme
+  and host. With an `https` URL and an empty `trusted_proxies`, `serve` and `config check` warn
+  (verified): `server.public_url is https but server.trusted_proxies is empty: when a reverse proxy
+  terminates TLS in front of this server, every client has the proxy's address (one login rate limit
+  and one connection limit for all, the proxy's address in the audit log); list the proxy's address
+  in server.trusted_proxies`.
 - **`trusted_proxies`.** Only peers in this list may set `X-Forwarded-For` and `x-request-id`, and
   (proxy mode) identity headers. The client address is found by walking `X-Forwarded-For` from the
   right and taking the first entry that is not itself a trusted proxy; an entry that is not an IP
@@ -593,7 +669,10 @@ trusted_proxies = ["203.0.113.10"]               # the proxy's address(es): X-Fo
   ```
 
   If the proxy is not listed, every client appears with the proxy's address, shares one login
-  rate-limit bucket, and the audit log is far less useful.
+  rate-limit bucket, one failed-authentication bucket and one connection limit, and the audit log
+  is far less useful. A listed proxy is exempt from `server.max_connections_per_ip`: it must limit
+  its own clients (connections and request rates), because the server's global caps (1,024
+  connections, 64 event streams) are what is left.
 - **Streaming.** Job logs stream over server-sent events. The proxy must not buffer responses
   (the server sends `x-accel-buffering: no`; Caddy needs `flush_interval -1`, nginx
   `proxy_buffering off`). Allow responses to stay open for up to an hour.
@@ -642,19 +721,47 @@ points:
 | `/h2s/experiment` | the experiment directory | read-write |
 | `/h2s/job` | a per-job directory with generated files (OpenCode config, a service-account key) | read-only |
 
-Secrets travel as `-e NAME` (the value comes from the runtime CLI's own environment, never from its
-argument list). Nothing else of the server's environment enters the container; the proxy is added
-with `isolation.container.proxy`. The image is pinned by tag or digest (`latest` is refused); the
-`host` network, a writable job-files mount and a non-numeric user are refused; and the container's label is read
-and compared with the job id **before** any stop, so a cancelled job stops its own container and
-nothing else. Not set: a read-only root file system, ulimits or a disk quota, a custom seccomp or
-AppArmor profile (the runtime's defaults apply). **The server does not check that the configured
-network is `--internal`**: on a network with a route out a job can ignore the proxy, so verify it
-yourself (`docker network inspect <name>` shows `"Internal": true`). The variables of a job
-(including secret values) are given to the runtime command through that command's own environment
-on the host, as `-e NAME`; handing them over in a 0600 environment file instead is planned, not in
-this commit. On a **rootful** runtime the server user, who controls the runtime's socket, is
-root-equivalent on the host: prefer rootless.
+**Variables.** Every variable a job needs (profile variables, secret values, `HARNESS2_RUNS_DIR`)
+is written as `NAME=VALUE` lines to `<data_dir>/jobs/<id>/container.env` (mode 0600, deleted with the
+job directory) and given to the runtime with `--env-file`. The runtime CLI itself runs with the
+server's pass-through variables, its own settings (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
+`XDG_RUNTIME_DIR`, `CONTAINER_HOST`, `CONTAINERS_CONF`, `REGISTRY_AUTH_FILE`) and `H2S_JOB_ID` only,
+so no profile variable (one could steer the CLI, such as `DOCKER_CONTEXT`) and no secret value
+reaches its environment or command line. The proxy settings of `isolation.container.proxy` are fixed
+`-e NAME=VALUE` arguments (never secrets). The file format has no escapes: a value with a line
+break or NUL, or a variable over 64 KiB, fails the job with an error that names the variable (never
+the value). Checked with a stand-in `docker` script (not a real runtime) that records what it is
+given: the `run` call held `--env-file .../container.env` and the fixed proxy settings and no
+`-e MY_KEY`; the file, mode 600, held the profile variable and the secret; the script's environment
+names held neither; the secret appeared nowhere in its log; the file was gone after the job.
+
+**Hardening.** The image is pinned by tag or digest (`latest` is refused); the `host` network, a
+writable job-files mount and a non-numeric user are refused; and the container's label is read and
+compared with the job id **before** any stop, so a cancelled job stops its own container and nothing
+else. Nothing else of the server's environment enters the container. Not set: a read-only root file
+system, ulimits or a disk quota, a custom seccomp or AppArmor profile (the runtime's defaults apply).
+On a **rootful** runtime the server user, who controls the runtime's socket, is root-equivalent on
+the host: prefer rootless.
+
+**The jobs network must be internal, and the server now checks.** With `isolation.container.proxy`
+set, the server asks the runtime at start-up whether the network is internal
+(`network inspect --format {{.Internal}}`) and logs, when it is not (or cannot be inspected), a
+warning that starts `SECURITY:`; the same finding is the doctor check `container_network`
+(`warn`; `h2studio doctor` exits 1 while any check is `FAIL`, not for a warning). A job on a network
+with a route out can ignore the proxy. Verified with the stand-in runtime answering `true` and then
+`false`:
+
+```text
+INFO network h2s-jobs is internal: container jobs reach the internet only through the egress proxy http://h2s-egress:3128
+WARN SECURITY: network h2s-jobs is NOT internal: container jobs can reach the internet directly, around the egress proxy http://h2s-egress:3128 remedy="Recreate it with `docker network create --internal h2s-jobs` and attach the egress proxy to it and to a network with internet access."
+```
+
+**The runner image is checked too.** The doctor check `runner_image` asks the runtime
+(`image inspect`) for the configured image: `ok` when present, `fail` (the report is then not ok)
+with the build command when not, `warn` when the runtime cannot be asked. Verified with the stand-in
+runtime: `runner image harness2-studio-runner:0.1.0 is not present for docker (`image inspect` exit
+1); container jobs cannot start`, remedy `docker build -f deploy/docker/runner.Dockerfile -t
+harness2-studio-runner:0.1.0 .`.
 
 **Rootless and rootful runtimes** need different users. The experiment directory is bind-mounted
 and must be writable by the job:
@@ -696,7 +803,7 @@ on rootless Docker). The commands are from the example configuration's own comme
    proxy = "http://h2s-egress:3128"
 
    [egress]
-   listen = "0.0.0.0:3128"
+   listen = "0.0.0.0:3128"            # the job containers must reach it: not the loopback default
    allow = ["github.com", "pypi.org", "files.pythonhosted.org",
             "aiplatform.googleapis.com", "oauth2.googleapis.com"]
    ```
@@ -711,8 +818,8 @@ on rootless Docker). The commands are from the example configuration's own comme
    ```
 
 5. *Start the Studio* (on the host, as usual) with that configuration. `h2studio doctor` should show
-   `container_runtime` ok and `GET /api/v1/system/info` should report `"isolation": "container"` and
-   `"container_runtime": "docker"`.
+   `container_runtime`, `runner_image` and `container_network` ok, and `GET /api/v1/system/info`
+   should report `"isolation": "container"` and `"container_runtime": "docker"`.
 6. *Install harness2 in container mode.* A harness2 environment created on the host points at the
    **host's** Python and cannot run inside the runner image (see below), so run the `install_harness2`
    job (admin) **while the Studio is in container mode**: the install then runs in the runner image
@@ -799,7 +906,9 @@ IPv4-mapped, NAT64 and 6to4 IPv6 addresses are judged by the IPv4 address they e
 | not a proxy request | `400` `only CONNECT and absolute http:// requests are proxied` |
 
 Refused clients get their answer and the connection closes. **Every decision is logged**, never a
-body: `client`, `host`, `port`, `decision` (`allow`/`deny`) and `reason`:
+body: `client`, `host`, `port`, `decision` (`allow`/`deny`) and `reason`. Start-up logs each
+allowlist entry with its ports (`egress allowlist entry host=litellm ports=4000
+allow_private=true`; verified, and the process is non-dumpable and exits 0 on SIGTERM):
 
 ```text
 INFO egress client=127.0.0.1 host="localhost" port=47811 decision="allow" reason="allowlisted"
@@ -814,7 +923,10 @@ connections.
 **What it is not.**
 
 - It does **not authenticate clients**: anything that can reach its port can use it for the allowed
-  hosts. Keep it on the internal jobs network, never on a shared one.
+  hosts. Keep it on the internal jobs network, never on a shared one. That is why `egress.listen`
+  defaults to `127.0.0.1:3128` (also in the file `init` writes): reaching it from job containers is
+  an explicit choice, made with an address on the jobs network (`0.0.0.0:3128` inside the proxy's
+  own container, as the compose example configuration does).
 - It sees host names and ports, not content: HTTPS tunnels are opaque, so it cannot stop data
   leaving to a host you allowed (`*.googleapis.com` includes everyone's storage buckets). Prefer
   exact host names.
@@ -839,9 +951,12 @@ alongside any published result.
 services, three networks. **It does not isolate the jobs from the Studio**: they run in host
 isolation inside the same container, as the same user, so a malicious or prompt-injected executor
 can read and change the Studio's data volume (the database, stored secrets, token hashes, the audit
-chain) and the server's environment, and so can act as a Studio administrator. What the container
-does is keep that executor away from your host's files, your other containers and any network
-except the hosts on the allowlist. To isolate jobs from the Studio, run `h2studio` on a host with
+chain) and, through the image's PID 1, the container's environment, and so can act as a Studio
+administrator. (The server makes itself non-dumpable, but the image starts it under `tini`
+(`ENTRYPOINT ["/usr/bin/tini", "--", "h2studio"]`), which stays dumpable and holds the container's
+environment; a job of the same user can read `/proc/1/environ`. Read from the Dockerfile and the
+Linux rules, not run.) What the container does is keep that executor away from your host's files,
+your other containers and any network except the hosts on the allowlist. To isolate jobs from the Studio, run `h2studio` on a host with
 container isolation ([section 8](#8-container-isolation-step-by-step)).
 
 ```text
@@ -854,7 +969,8 @@ browser --https--> ingress (Caddy, TLS) --> studio --> egress proxy --> allowed 
   allow`. It runs as `node`, with `cap_drop: [ALL]`, `no-new-privileges`, 4096 pids, 16 GB and 8
   CPUs, and the volume `studio-data` at `/data`.
 - **`egress`** (the same image, command `egress-proxy`) is on `jobs` and `uplink`, read-only, with
-  its own health check on port 3128 (the image's default check probes the Studio's port).
+  its own health check on port 3128 (the image's default check probes the Studio's port). Its
+  configuration sets `[egress] listen = "0.0.0.0:3128"` explicitly: the default is loopback.
 - **`ingress`** (Caddy, pinned by digest) publishes 443 and 80 on **loopback by default**
   (`H2S_INGRESS_BIND=0.0.0.0` on a real server) and terminates TLS using `deploy/examples/Caddyfile`.
 
@@ -931,8 +1047,13 @@ never headers, cookies or bodies. `healthz`, `readyz` and `metrics` are logged a
 ```
 
 Under systemd, `journalctl --user -u h2studio -f`; under compose, `docker compose logs -f studio`.
-**Job logs** are files: `<data_dir>/logs/jobs/<job-id>.log`, one JSON object per line, mode 0600,
-secrets already redacted and server paths masked; also served by `GET /api/v1/jobs/{id}/log`.
+**Job logs** are files: `<data_dir>/logs/jobs/<job-id>.log`, one JSON object per line, mode 0600, at
+most `jobs.max_log_bytes` each, secrets already redacted (best effort) and server paths masked
+(also inside `file://` URLs, and in the text a result carries from the job's output); also served by
+`GET /api/v1/jobs/{id}/log`. Verified with a stand-in job that printed 32 MiB against
+`jobs.max_log_bytes = 65536`: the job still succeeded in about a second, the log file was 65,862
+bytes, and it held the marker line and, at the end, `299639 lines (32.1 MiB) of output were not
+stored (log limit)`.
 
 **Traces.** With `telemetry.otlp_endpoint` set, request spans (method, matched route, status,
 request id) are exported over OTLP/HTTP (protobuf) to `<endpoint>/v1/traces` with
@@ -962,7 +1083,9 @@ $ curl -s -H "Authorization: Bearer $SCRAPE_SECRET" $BASE/api/v1/auth/me        
 | `h2s_jobs_running` | gauge | | jobs running now |
 | `h2s_job_duration_seconds` | histogram | `kind` | wall-clock duration of finished jobs |
 | `h2s_spend_usd_total` | counter | `experiment` | improver spend recorded while jobs ran (at most 50 experiments are labelled; the rest are `other`) |
-| `h2s_auth_failures_total` | counter | `reason` | refused requests: `missing`, `malformed`, `unknown_token`, `bad_secret`, `expired`, `revoked`, `session_invalid`, `proxy_untrusted`, `proxy_secret`, `proxy_user`, `proxy_no_role`, `forbidden`, `rate_limited`, `host`, `csrf`, `origin`, `unavailable` |
+| `h2s_auth_failures_total` | counter | `reason` | refused requests: `missing`, `malformed`, `unknown_token`, `bad_secret`, `expired`, `revoked`, `session_invalid`, `proxy_untrusted`, `proxy_secret`, `proxy_user`, `proxy_duplicate_header`, `proxy_no_role`, `forbidden`, `rate_limited` (login limit, failed-authentication limit), `sse_per_principal`, `host`, `csrf`, `origin`, `unavailable` |
+| `h2s_audit_suppressed_total` | counter | | records of failed authentication not written to the audit log because the client used its 10 per minute |
+| `h2s_connections_refused_total` | counter | `reason` | connections closed at accept: `total` (the server's 1,024) or `per_client` (`server.max_connections_per_ip`) |
 | `h2s_sse_connections` | gauge | | open job event streams |
 
 A family appears once it has a sample. Label sets are bounded by construction. A scrape job (not
@@ -977,7 +1100,8 @@ scrape_configs:
 ```
 
 (Add the target's name to `server.allowed_hosts` if you scrape it by a name other than the ones
-above.) Useful alerts: a rising `h2s_auth_failures_total{reason!="missing"}`,
+above.) Useful alerts: a rising `h2s_auth_failures_total{reason!="missing"}` or
+`h2s_audit_suppressed_total`, any `h2s_connections_refused_total`,
 `h2s_jobs_total{status="failed"}`, `h2s_sse_connections` near `server.sse_max_connections`, and
 `/readyz` returning `503`.
 
@@ -991,12 +1115,16 @@ reveals paths or versions.
 ```text
 <config dir>/h2studio.toml            configuration (0600)   <config dir>/admin.token   bootstrap token (0600)
 <data_dir>/studio.db (+ -wal, -shm)   tokens (hashed), sessions, jobs, experiments, profiles, SECRETS, audit chain
-<data_dir>/logs/jobs/<id>.log         job logs (0600), deleted after jobs.log_retention_days
-<data_dir>/jobs/<id>/                 per-job generated files (0700): OpenCode config, key file; deleted when the job ends
+<data_dir>/logs/jobs/<id>.log         job logs (0600), at most jobs.max_log_bytes each, deleted after jobs.log_retention_days
+<data_dir>/jobs/<id>/                 per-job generated files (0700): OpenCode config, key file, container.env; deleted when the job ends
 <data_dir>/splits/<name>.json         train/test split files
 <experiments_dir>/<name>/             one harness2 results directory per experiment
 <harness2_home>/                      the harness2 checkout, its .venv and dependencies/ (reproducible)
 ```
+
+The data directory and every directory below it that the server writes (`logs`, `logs/jobs`, `jobs`,
+`splits`, `experiments`) are set to mode 0700 at start-up, also when they already existed, for
+example a volume mounted at `/data`.
 
 **What to back up.** The database, the experiments directory, the configuration file, and any
 `H2S_SECRET_*` values from wherever you keep them. Not the harness2 checkout (reinstall it; the
@@ -1032,15 +1160,17 @@ The backup copy above opened and verified (`audit chain OK: 39 entries; head 39 
 1. Back up (above) and read the [changelog](../CHANGELOG.md) for breaking changes: before 1.0 a
    minor version may break; patch versions do not.
 2. Stop the server (jobs running are stopped and marked failed; plan a quiet moment), replace the
-   binaries, start. The database **migrates itself** on start (`PRAGMA user_version`).
+   binaries, start. The database **migrates itself** on start (`PRAGMA user_version`; verified on a
+   copy of an older database: schema 1 became 2, which adds the boot id that restart recovery
+   uses, and every row survived).
 3. A database written by a *newer* build is refused: `the database was written by a newer
    Harness² Studio (schema N, this build knows M)`. To go back, restore the pre-upgrade backup.
 4. Each release is tested against one harness2 commit; `doctor` warns when yours differs. To move
-   harness2, start `install_harness2` with `reinstall: true` (and `rev` for another commit; any
-   40-character commit id is accepted today, and the job builds whatever it finds there, so use
-   only commits you trust; restricting this to the tested commit unless a configuration flag
-   allows others is planned, not in this commit) in managed mode, or update your own checkout and
-   re-run its setup. The dependency cutoff stays at the tested commit's date, so a newer commit that
+   harness2, start `install_harness2` with `reinstall: true` in managed mode, or update your own
+   checkout and re-run its setup. A `rev` other than the tested commit is refused (`422` on
+   `params.rev`) unless `paths.allow_untested_harness2_rev = true`; with it, the job builds
+   whatever it finds at that commit, so use only commits you trust (verified: with the flag on, a
+   made-up commit started the job, which failed at `git fetch` with `not our ref`). The dependency cutoff stays at the tested commit's date, so a newer commit that
    needs newer packages fails to install in managed mode: install it yourself in an unmanaged
    checkout. Completed sweeps are unaffected, but a resumed sweep should use the harness2 it started
    with.
@@ -1053,11 +1183,13 @@ and access denial is appended to a **SHA-256 hash chain** in the database: `hash
 || canonical JSON of the record)`. Records hold the actor, action, target, outcome, client address,
 request id and a short detail (never a secret value or a request body). A request with **no**
 credentials at all is only counted in `h2s_auth_failures_total`. A request that **presents** a
-credential that is refused (even a junk bearer token) is recorded, so **any client that can reach
-the server can add audit records** (the independent review measured about 33 MB for 140,000
-requests). Throttling failed authentication and capping those records is planned, not in this
-commit; until then keep the listener reachable only by people you trust, and let the reverse proxy
-limit request rates.
+credential that is refused (even a junk bearer token) is recorded, but **at most 10 such records
+per client and minute** are written (`auth.failed`, and denied `auth.login`); the rest are counted in
+`h2s_audit_suppressed_total`, and past 60 failures a minute the client gets `429`
+([section 6.5](#65-failed-authentication-is-throttled)). Before this limit, the independent review
+had measured about 33 MB of audit rows for 140,000 junk requests; with it a client adds at most 600
+rows an hour. Distinct client addresses each have their own allowance, so limit who can reach the
+listener, and let the reverse proxy limit request rates.
 
 ```console
 $ h2studio audit verify
@@ -1115,7 +1247,8 @@ the runtime CLI); that line is untested. Secrets for the service belong in a fil
       machine. In host mode, `acknowledge_risks` is required (`preacknowledge_host_risks = false`).
 - [ ] The egress allowlist names exact hosts, has no broad wildcards, and drops the setup hosts
       (GitHub, Hugging Face) before evaluation runs.
-- [ ] The egress proxy's port is reachable only from the jobs network.
+- [ ] The egress proxy's port is reachable only from the jobs network (its default bind is
+      loopback; you widened it on purpose).
 - [ ] Secrets are supplied as `H2S_SECRET_*` from a secret store where possible; the database and
       its backups are encrypted and access-controlled; short-lived cloud credentials are preferred.
 - [ ] The head hash of the audit chain is recorded off the server on a schedule.
@@ -1124,14 +1257,20 @@ the runtime CLI); that line is untested. Secrets for the service belong in a fil
 - [ ] MCP clients get viewer tokens unless they must run jobs; an operator token only when the agent
       must start them, short-lived; **never an admin token**; and the cloud account behind the models
       has its own spend limit ([MCP.md](MCP.md#3-safety-rules)).
-- [ ] The jobs network really is `--internal` (`docker network inspect <name>` shows
-      `"Internal": true`); the server does not check.
+- [ ] The jobs network really is `--internal`: `h2studio doctor` shows `container_network` ok (the
+      server warns at start-up and in the doctor when it is not) and `runner_image` ok.
 - [ ] Proxy mode: the proxy deletes every client-supplied identity and secret header and sets
-      exactly one of each; `trusted_proxies` is the proxy's own address.
-- [ ] The reverse proxy limits connections and request rates per client; the server's own caps on
-      connections and event streams are global.
+      exactly one of each (the server refuses repeats with `401`); `trusted_proxies` is the proxy's
+      own address.
+- [ ] The reverse proxy limits connections and request rates per client: the server limits each
+      client address (`server.max_connections_per_ip`, event streams per principal, failed
+      authentication) but exempts the proxies in `trusted_proxies`, and its global caps (1,024
+      connections, 64 event streams) are what is left.
+- [ ] `server.public_url` is `https` only together with `trusted_proxies` (the server warns
+      otherwise); `h2studio config check` prints no warning you have not read.
 - [ ] Every token has an expiry, the bootstrap token included.
-- [ ] `jobs.timeout_hours`, `jobs.max_concurrent` and disk space are sized; `doctor` is clean.
+- [ ] `jobs.timeout_hours`, `jobs.max_concurrent`, `jobs.max_log_bytes`, `jobs.min_free_disk_mb` and
+      disk space are sized; `doctor` is clean.
 - [ ] No `.env` file in the harness2 checkout (it bypasses profiles and secrets).
 - [ ] The server runs as an unprivileged user, never root.
 
@@ -1139,39 +1278,58 @@ the runtime CLI); that line is untested. Secrets for the service belong in a fil
 
 | Command | Standard output | Notes |
 |---|---|---|
-| `h2studio serve` | `h2studio listening on http://<ip>:<port>` once bound | graceful on `SIGINT`/`SIGTERM` |
+| `h2studio serve` | `h2studio listening on http://<ip>:<port>` once bound | graceful on `SIGINT`/`SIGTERM` (the handlers are installed before that line is printed); makes itself non-dumpable first |
 | `h2studio init [--data-dir P] [--force]` | the new admin token, alone | see [section 4](#4-first-run) |
 | `h2studio token create --name N --role R [--expires-in-days D]` | the new token, alone | `R` is `viewer`, `operator` or `admin`; `TOKEN=$(h2studio token create ...)` works |
 | `h2studio token list [--json]` | a table, or JSON | never secrets |
 | `h2studio token revoke ID` | nothing | exit 1 when no active token has that id |
 | `h2studio doctor [--json]` | the checks | exit 1 while a check is `FAIL` |
-| `h2studio config check` | `configuration OK` and the resolved paths | problems on standard error, exit 1; warns when proxy mode lacks its secret in the environment |
+| `h2studio config check` | `configuration OK` and the resolved paths | problems on standard error, exit 1; warns (exit 0) when proxy mode lacks its secret in the environment, or `public_url` is https with no `trusted_proxies` |
 | `h2studio audit verify` | `audit chain OK: N entries; head <seq> <hash>` or `audit chain BROKEN: ...` | exit 1 when broken; `no database at <path>` if absent |
 | `h2studio openapi` | the OpenAPI 3.1 document | needs neither configuration nor a server |
 | `h2studio version` | `h2studio <version>` (and the commit when built with `H2S_BUILD_COMMIT`) | |
-| `h2studio egress-proxy` | `h2studio egress proxy listening on <ip>:<port>` | [section 9](#9-the-egress-allowlist) |
+| `h2studio egress-proxy` | `h2studio egress proxy listening on <ip>:<port>` | [section 9](#9-the-egress-allowlist); non-dumpable; logs each allowlist entry with its ports |
 | `h2studio-mcp ...` | | [MCP.md](MCP.md) |
 
 Every `h2studio` command accepts `--config PATH` anywhere on the line. Explanations and logs go to
-standard error; standard output is for results you can capture.
+standard error; standard output is for results you can capture. A failure is one line,
+`h2studio: <what>: <cause>`, with each cause printed once.
 
 The `doctor` checks (id: what it looks for): `harness2` (installed, at the tested commit), `uv`,
 `python312`, `git`, `node20`, `npm`, `curl`, `docker`, `podman`, `pandoc`, `pdftoppm`, `gcloud`,
-`adc`, `container_runtime`, `disk`, `dotenv`. What each means and how to fix it:
+`adc`, `container_runtime`, `disk`, `dotenv`, and, in container isolation, `runner_image` and
+`container_network`. What each means and how to fix it:
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md#h2studio-doctor-checks).
 
-## 17. Planned changes (not in this commit)
+## 17. What changed with the security review
 
-These fixes were found by an independent review and are under way. **None is part of this revision**:
-this guide describes what the code does today. When one lands, its entry here and the *planned* marks
-elsewhere are to be turned into plain statements.
+An independent code review (by a separate AI agent, not a human penetration test) led to the changes
+below before the first release. This table is for anyone who ran an earlier build; each row says
+where this guide describes the new behaviour. The exact messages are in
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
-| Planned change | Today | Where it is mentioned |
+| Area | Before | Now |
 |---|---|---|
-| The egress proxy's default `listen` becomes `127.0.0.1:3128`; the compose configuration sets `0.0.0.0` explicitly | default `0.0.0.0:3128` | [section 5](#5-configuration-reference), [section 9](#9-the-egress-allowlist) |
-| `jobs.max_log_bytes`: a per-job cap on the log file | no cap beyond 64 KiB per line | [THREAT-MODEL.md](THREAT-MODEL.md) D3 |
-| Throttling of failed authentication, and a cap on the audit records it creates | only login attempts are throttled; every refused credential is recorded | [section 13](#13-audit-log) |
-| The session cookie is named `__Host-h2s_session` over https | `h2s_session` | [API.md](API.md#2-authentication) |
-| `paths.allow_untested_harness2_rev`: `install_harness2` accepts only the tested commit unless this is `true` | any 40-hex commit id | [section 12](#12-data-backups-and-upgrades) |
-| Container jobs receive their variables through a 0600 environment file | `-e NAME`, values in the runtime command's environment | [section 8](#8-container-isolation-step-by-step) |
-| Duplicate identity headers in proxy mode are refused with `401` | first user value, union of groups | [section 6.3](#63-proxy-sso-mode) |
+| Failed authentication | every refused credential was audited and answered `401` | 60 a minute per client, then `429`; at most 10 audit records a minute per client; `h2s_audit_suppressed_total` ([6.5](#65-failed-authentication-is-throttled)) |
+| Repeated proxy headers | the first user, the union of the groups | `401` ([6.3](#63-proxy-sso-mode)) |
+| Repeated `Host` header | the first was checked | `400`; an absolute-form target must name an allowed host too ([7](#7-reverse-proxy-and-tls)) |
+| Session cookie over https | `h2s_session` | `__Host-h2s_session`, so browsers sign in again after the switch ([6.2](#62-token-mode)) |
+| `install_harness2` with a `rev` | any commit | the tested commit only, unless `paths.allow_untested_harness2_rev = true` ([5](#5-configuration-reference), [12](#12-data-backups-and-upgrades)) |
+| harness2's Python dependencies | newest at install time | as of the tested commit's date (`--exclude-newer`) ([4](#4-first-run)) |
+| Egress proxy default bind | `0.0.0.0:3128` | `127.0.0.1:3128`; the compose example sets `0.0.0.0` explicitly ([9](#9-the-egress-allowlist)) |
+| Container job variables | `-e NAME`, values in the runtime CLI's environment | a 0600 `--env-file`; the CLI's environment holds no profile variable or secret ([8](#8-container-isolation-step-by-step)) |
+| Jobs network | not checked | warning at start-up and doctor check `container_network`; doctor check `runner_image` ([8](#8-container-isolation-step-by-step)) |
+| Job log size | unbounded | `jobs.max_log_bytes` (256 MiB) ([5](#5-configuration-reference)) |
+| Free disk | not watched | running jobs stopped below `jobs.min_free_disk_mb` (256) ([5](#5-configuration-reference)) |
+| Connections | 1,024 in total | also 256 per client address (`server.max_connections_per_ip`) ([5](#5-configuration-reference)) |
+| Event streams | 64 in total, authorised once | also 8 per principal (`429`), credential checked at every heartbeat ([5](#5-configuration-reference)) |
+| Restart recovery | recorded pid and start time | boot id, and `H2S_JOB_ID` in the group's environment ([THREAT-MODEL.md](THREAT-MODEL.md) D7) |
+| The server's memory and environment | readable by a same-user job through `/proc` | the server and the egress proxy are non-dumpable (the note at the top, [10](#10-the-compose-reference-deployment)) |
+| Results of hostile experiments | per-file read caps | bounded per request, 4 reads at once, `413 too large` ([API.md](API.md#6-paging-filters-and-limits)) |
+| Profile `extra_env` | a short list of names | many more reserved ([MODELS.md](MODELS.md#reserved-environment-variables)); saving a profile that uses one is `422`, and a profile stored earlier that uses one starts its job (`201`) which then fails with `could not prepare the job: invalid input: extra_env.<NAME>: ...` |
+| Secret redaction | the literal value | also its base64 spellings ([6.4](#64-secrets)) |
+| Host paths in job results and `file://` URLs | shown | masked ([THREAT-MODEL.md](THREAT-MODEL.md) I4) |
+| Result files a job leaves (`demo.json`, split files) | read as they were | a symlink, FIFO or device is refused, over 16 MiB is refused |
+| `GET /system/info` | | gains `host_risks_preacknowledged` ([API.md](API.md#4-roles-and-routes)); the web UI's run wizard asks nothing when it is `true` and its System page says so |
+| Database schema | 1 | 2 (migrates itself, [12](#12-data-backups-and-upgrades)) |
+| Data directories | 0700 when created | forced to 0700 at every start |

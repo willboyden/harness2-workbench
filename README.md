@@ -69,12 +69,13 @@ through the Studio**: the only real harness2 workflow exercised end to end is th
 |---|---|---|---|
 | REST API: 49 operations, OpenAPI 3.1 | Implemented | verified live (curl against a real server and the real demo) | [API.md](docs/API.md) |
 | Sign-in with API tokens and browser sessions | Implemented | verified live | roles viewer < operator < admin; [ADR 0008](docs/adr/0008-api-tokens-and-sessions.md) |
-| Single sign-on through a trusted reverse proxy | Implemented | verified live with simulated proxy headers; not with a real SSO proxy | headers plus a shared secret; [ADMIN-GUIDE](docs/ADMIN-GUIDE.md#63-proxy-sso-mode) |
-| Host, CSRF and Origin protection; strict security headers | Implemented | verified live | no CORS, ever |
-| Write-only secrets; best-effort redaction of logs, errors and audit | Implemented | fakes only for redaction (stub processes print planted secrets); set/list verified live | not encrypted at rest; a value a job transforms is not caught; every viewer reads job logs |
-| Hash-chained audit log | Implemented | verified live (verification; an edit to a copy detected) | not tamper-proof: anyone who can write the data directory, host-mode jobs included, can rewrite the whole chain; [THREAT-MODEL](docs/THREAT-MODEL.md) |
-| Job engine: queue, live logs over SSE, cancel, timeout, budget guard, restart recovery | Implemented | verified live for queueing, SSE, cancelling a queued job; fakes only for running-job cancel, timeout, budget and recovery | stub executables stand in for harness2 |
-| Managed harness2 install (pinned commit) or an existing checkout | Implemented | verified live | a few seconds with warm caches |
+| Single sign-on through a trusted reverse proxy | Implemented | verified live with simulated proxy headers; not with a real SSO proxy | headers plus a shared secret; a repeated identity header is refused; [ADMIN-GUIDE](docs/ADMIN-GUIDE.md#63-proxy-sso-mode) |
+| Host, CSRF and Origin protection; strict security headers | Implemented | verified live | no CORS, ever; a repeated `Host` header is refused |
+| Abuse limits: failed-authentication throttle (60 a minute per client), connection cap per address, event-stream cap per principal, job-log cap, free-disk floor | Implemented | verified live by the author on 2026-10-24 against a scratch server (job output from a stand-in harness2 script) | no general request-rate limit; [THREAT-MODEL](docs/THREAT-MODEL.md) rows D1 and D3 |
+| Write-only secrets; best-effort redaction of logs, errors and audit | Implemented | fakes only for redaction (stub processes print planted secrets); set/list verified live | not encrypted at rest; a value a job transforms is not caught; every viewer reads job logs; the server and the egress proxy refuse `/proc` reads by a same-user job (verified live), the database file stays readable to it |
+| Hash-chained audit log | Implemented | verified live (verification; an edit to a copy detected) | not tamper-proof: anyone who can write the data directory, host-mode jobs included, can rewrite the whole chain; failed authentications are recorded at most 10 a minute per client; [THREAT-MODEL](docs/THREAT-MODEL.md) |
+| Job engine: queue, live logs over SSE, cancel, timeout, budget guard, restart recovery | Implemented | verified live for queueing, SSE, cancelling a queued job and, with a stand-in harness2 script, restart recovery after `kill -9`, the log cap and the free-disk floor; fakes only for running-job cancel, timeout and budget | stub executables stand in for harness2 |
+| Managed harness2 install (pinned commit) or an existing checkout | Implemented | verified live | a few seconds with warm caches; only the tested commit can be installed unless an administrator sets `paths.allow_untested_harness2_rev` |
 | Free demo workflow (`harness2-demo`) | Implemented | verified live (real harness2) | also through MCP |
 | Benchmark `check` and `setup` | Implemented | `check` verified live (failure path on an uninstalled benchmark); `setup` against recorded dry-run output only | real setup is network-heavy and unverified |
 | Sweeps: `preview`, `run`, `judge`, `report`, `split`, `pipeline` | Implemented | fakes only | parsers checked against recorded harness2 output and output of upstream's own code run offline |
@@ -84,8 +85,8 @@ through the Studio**: the only real harness2 workflow exercised end to end is th
 | Model profiles: OpenAI-compatible endpoints (LiteLLM, vLLM, SGLang, Ollama) | Implemented | fakes only; compatibility read from upstream sources | open questions listed |
 | Codex executor and the Vertex bridge | Implemented | fakes only | host isolation only |
 | WorkBuddy-Bench | Partial | unverified | Vertex-only upstream; host isolation only |
-| Container isolation (Docker or Podman) | Implemented | verified live by the maintainers on rootless Docker, 2026-10-23; refusals and `doctor` verified live by the author; rootful Docker and Podman unverified | [ADMIN-GUIDE §8](docs/ADMIN-GUIDE.md#8-container-isolation-step-by-step) |
-| Egress allowlist proxy (hostnames, ports, address checks) | Implemented | verified live | no client authentication; hostname-level only |
+| Container isolation (Docker or Podman) | Implemented | verified live by the maintainers on rootless Docker, 2026-10-23; refusals and `doctor` verified live by the author; the 0600 environment file and the `container_network` and `runner_image` checks verified live by the author only against a stand-in `docker` script; rootful Docker and Podman unverified | [ADMIN-GUIDE §8](docs/ADMIN-GUIDE.md#8-container-isolation-step-by-step) |
+| Egress allowlist proxy (hostnames, ports, address checks) | Implemented | verified live | listens on loopback unless configured; no client authentication; hostname-level only |
 | Compose reference deployment (internal network, egress proxy, TLS ingress) | Implemented | verified live by the maintainers, 2026-10-23; not re-run by the author | [ADMIN-GUIDE §10](docs/ADMIN-GUIDE.md#10-the-compose-reference-deployment) |
 | OpenTelemetry traces (OTLP/HTTP) and Prometheus metrics | Implemented | verified live (local collector; scrape with a bearer secret) | |
 | MCP server: 42 tools, resources, prompts; stdio and streamable HTTP | Implemented | verified live (stdio session including a real demo run, HTTP guard); client configuration snippets unverified | [MCP.md](docs/MCP.md) |
@@ -201,8 +202,9 @@ The Studio starts processes, holds model-provider keys and serves an admin inter
 to fail closed: it binds to loopback, refuses requests for unknown `Host` names (DNS rebinding) and
 state-changing requests without a custom header or from another origin (CSRF), sends a strict
 Content-Security-Policy, authenticates with 256-bit tokens stored only as hashes, checks roles in every
-route, never returns or logs a secret value, validates every identifier and resolves every path
-without following symlinks, and appends every sensitive action to a hash-chained audit log. Containers
+route, throttles failed authentication, never returns or logs a secret value, validates every
+identifier and resolves every path without following symlinks, and appends every sensitive action to a
+hash-chained audit log. Containers
 drop all capabilities and reach only the hosts you list.
 
 It does **not** make running model-written code safe. In host mode, anyone who can start a run can in
@@ -211,8 +213,9 @@ read the database (stored secrets, token hashes) and rewrite the audit chain. Se
 a 0600 database; redaction of logs is best effort; the audit chain is a SHA-256 hash chain that is
 only as good as the head hash you keep elsewhere (not tamper-proof); MCP agents are prompt-injectable,
 which is why MCP cannot write profiles, secrets or tokens. An independent review of the code by a
-separate AI agent found issues whose fixes are not all in this revision: see
-[ADMIN-GUIDE §17](docs/ADMIN-GUIDE.md#17-planned-changes-not-in-this-commit). Read
+separate AI agent found issues; their fixes are in this revision
+([ADMIN-GUIDE §17](docs/ADMIN-GUIDE.md#17-what-changed-with-the-security-review)) and have not been
+reviewed independently a second time. No human penetration test has been done. Read
 [THREAT-MODEL.md](docs/THREAT-MODEL.md) for the assets, trust boundaries, a STRIDE analysis with the
 code that implements each control, and the residual risks in plain words. Report vulnerabilities
 privately as described in [SECURITY.md](SECURITY.md).

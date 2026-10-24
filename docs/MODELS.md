@@ -63,18 +63,34 @@ profile-derived variables added to it. `HARNESS2_RUNS_DIR` is always set to the 
 | `OPENAI_BASE_URL`, `OPENAI_API_KEY` | when a `judge_endpoint` is given and the judge model starts with `gpt`, `o1`, `o3`, `o4` or `o5` | when the judge model starts with `gpt`, `o1`, `o3`, `o4` or `o5` | the judge endpoint |
 | `HARNESS2_CODEX_BASE_URL`, `_API_KEY`, `HARNESS2_CODEX_MODEL` | from `codex_endpoint` / `codex_model` | same | `codex_endpoint` |
 
-A `custom` profile sets nothing by itself: only its `extra_env`. Names that control the loader,
-the interpreter, the server or credentials the server manages are **refused** in `extra_env`:
-`PATH`, `HOME`, `SHELL`, `IFS`, `ENV`, `BASH_ENV`, `NODE_OPTIONS`, `OPENCODE_CONFIG`,
-`OPENCODE_CONFIG_CONTENT`, `OPENCODE_PERMISSION`, `HARNESS2_RUNS_DIR`,
-`GOOGLE_APPLICATION_CREDENTIALS`, `DOCKER_HOST`, `SSH_AUTH_SOCK`, the proxy variables
-(`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`), and any name starting with `LD_`,
-`DYLD_`, `PYTHON`, `H2S_`, `UV_`, `BUN_` or `NPM_CONFIG_`. The list is a safety net for mistakes,
-not a security boundary: other variables that change what a program does (for example
-`DOCKER_CONTEXT`, `GIT_SSH_COMMAND`, `NODE_PATH`, `SSL_CERT_FILE` or `JAVA_TOOL_OPTIONS`) are
-accepted, in container mode a profile's variables also reach the container-runtime command the
-server starts on the host, and only an admin can write a profile, so treat the admin role
-accordingly.
+A `custom` profile sets nothing by itself: only its `extra_env`.
+
+### Reserved environment variables
+
+Names that control the loader, an interpreter or the shell, the server, the container runtime,
+which certificates jobs trust, or credentials the server manages are **refused** in `extra_env`
+(`422` when the profile is saved). Exact names: `PATH`, `HOME`, `SHELL`, `IFS`, `ENV`, `BASH_ENV`,
+`SHELLOPTS`, `BASHOPTS`, `PS4`, `GCONV_PATH`, `GLIBC_TUNABLES`, `NODE_OPTIONS`, `NODE_PATH`,
+`NODE_TLS_REJECT_UNAUTHORIZED`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `_JAVA_OPTIONS`, `RUBYOPT`,
+`RUBYLIB`, `PERL5OPT`, `PERL5LIB`, `PERLLIB`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`,
+`OPENCODE_PERMISSION`, `HARNESS2_RUNS_DIR`, `GOOGLE_APPLICATION_CREDENTIALS`, `DOCKER_HOST`,
+`SSH_AUTH_SOCK`, `CONTAINER_HOST`, `REGISTRY_AUTH_FILE`, the proxy variables (`HTTPS_PROXY`,
+`HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`) and the certificate variables (`SSL_CERT_FILE`,
+`SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`). Prefixes: any name
+starting with `LD_`, `DYLD_`, `PYTHON`, `H2S_`, `UV_`, `BUN_`, `NPM_CONFIG_`, `DOCKER_`,
+`CONTAINERS_`, `XDG_`, `GIT_` or `OPENCODE_`. The source is `crates/h2s-core/src/env.rs`.
+
+The list is a safety net for mistakes, not a security boundary: other variables that change what a
+program does are accepted (`PIP_*`, for example, is not on it), and only an admin can write a
+profile, so treat the admin role accordingly. A profile that was stored before a name was reserved
+is not rewritten: its jobs are still accepted, then fail at start with `could not prepare the job:
+invalid input: extra_env.<NAME>: ...`; save the profile again without that variable.
+
+In container mode a job's variables, profile variables and secrets included, reach the container
+through a 0600 environment file in the job's directory (one `NAME=value` per line, deleted with the
+job), not through the container-runtime command's command line or environment. A value that
+contains a line break or NUL cannot be written that way and fails the job (`the value of <NAME>
+contains a line break or NUL, ...`); a line (`NAME=value`) is limited to 64 KiB.
 
 ## 2. Which benchmark and executor work with which profile kind
 
@@ -214,7 +230,7 @@ Validation errors name the field. Real examples (`422`): `a vertex profile needs
 `use OpenCode's provider/model form, e.g. google-vertex/gemini-3.5-flash`; `use the bare model id;
 the server adds h2s/`; `names starting with LD_ are reserved and cannot be set by a profile`;
 `HTTPS_PROXY is managed by the server and cannot be set by a profile`; `set exactly one of value or
-secret`.
+secret`. The same wording covers `GIT_*`, `DOCKER_*`, `XDG_*` and the other reserved names.
 
 ## 4. Vertex AI credentials
 

@@ -326,12 +326,17 @@ base runs**; and **Stop when recorded spend reaches (USD, optional)**, a guard c
 summaries land (a task in flight finishes first, and it counts improver spend only: executor
 spend is not recorded, so real cost is higher). Under host isolation a banner reads **Jobs run on
 the server host** and **Start the pipeline** stays disabled until you tick **I understand and want
-to run on the host**. **Read that banner as including the Studio's own data**: in host mode the
-executor runs as the server's user, and that user owns the Studio's database and stored secrets (see
-[THREAT-MODEL.md](THREAT-MODEL.md)). The banner and the checkbox appear whenever the server's
-isolation is `host` (read from the UI's source: under container isolation they are not shown), even
-if an administrator has set `isolation.preacknowledge_host_risks`, because the UI cannot see that
-setting.
+to run on the host**. The banner says what that means: the executor runs as the server's user, that
+user owns the Studio's database (stored secrets, token hashes), and so a malicious or
+prompt-injected executor is effectively a Studio administrator (see
+[THREAT-MODEL.md](THREAT-MODEL.md)). Under container isolation the banner and the checkbox are not
+shown (read from the UI's source, not tried). If an administrator has set
+`isolation.preacknowledge_host_risks`, the banner and the checkbox are replaced by one line, *The
+server pre-acknowledges host-isolation risks (isolation.preacknowledge_host_risks).*, and **Start the
+pipeline** needs no tick; the UI learns this from the server's `host_risks_preacknowledged` field.
+That was seen in headless Firefox against the mock API started with its pre-acknowledge option
+(wizard) and against a real server with the setting on (the System page, which then says runs do not
+ask); a real run through such a server was not started.
 
 Starting opens the job page. A *viewer* can walk the wizard but sees **Read-only: your role (viewer)
 can explore the options and estimates, but previews and runs need the operator role**
@@ -463,8 +468,8 @@ re-walks it (*The chain is intact: all 28 entries link correctly* in this pictur
 evidence of accidental or casual edits, **not as a tamper-proof record**: anyone who can write the
 server's data directory, host-mode jobs included, can rewrite the whole chain and the check will
 still pass. Keep the head hash somewhere the server's user cannot write
-([ADMIN-GUIDE.md](ADMIN-GUIDE.md#13-audit-log)). Any client that can reach the server can also add
-records by sending refused credentials.
+([ADMIN-GUIDE.md](ADMIN-GUIDE.md#13-audit-log)). Refused credentials are recorded too, but at most
+10 a minute per client address (the rest are only counted), so junk requests cannot flood the log.
 
 ### 11.5 System
 
@@ -476,8 +481,12 @@ checkout) and the **Environment checks** (the doctor: one row per tool with its 
 what it is needed for; **Re-run checks** for operators and admins). The picture is the *viewer's*
 view; an **admin** also sees the data directory and the checkout path (absolute paths on the server)
 and the form **Install or reinstall harness2** (an optional 40-character commit id, *Re-create the
-virtual environment*, *Include the bridge extra*). The commit id box accepts any commit and the
-server builds whatever it finds there: use only commits you trust ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#12-data-backups-and-upgrades)).
+virtual environment*, *Include the bridge extra*). The commit id box accepts any well-formed id, but
+the server refuses every commit except the tested one (the toast shows its message, `params.rev: only
+the tested harness2 commit ... can be installed`) unless an administrator has set
+`paths.allow_untested_harness2_rev = true`; with that switch on, the server builds whatever it finds
+at the commit, so use only commits you trust ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#12-data-backups-and-upgrades)).
+The form's own hint says only that other commits were not tested with this release.
 
 ## 12. Keyboard, themes and phones
 
@@ -542,30 +551,28 @@ are no per-experiment permissions.
 | A blank page and *needs JavaScript and WebAssembly* | The browser blocks one of them. |
 | You are sent to the sign-in page with no message | Your session ended (expired, signed out, or the token was revoked). Sign in again. |
 | `Cannot judge from here` on the Report tab | The sweep has no benchmark cell or the experiment has no pinned profile. |
-| **Start the pipeline** is disabled | Tick the host-isolation acknowledgement; or you are a viewer. |
+| **Start the pipeline** is disabled | Tick the host-isolation acknowledgement (it is not shown when the server pre-acknowledges host risks); or you are a viewer. |
 | *Before you continue: run the preview…* | The wizard needs a preview for the current options. |
 | *Jobs will be refused until these secrets are set* | A profile secret has no value: an admin sets it under **Settings → Secrets**. |
 | A tool is listed as `failed` or `warning` on the dashboard | The doctor found something; the fix is printed under it ([TROUBLESHOOTING.md](TROUBLESHOOTING.md#h2studio-doctor-checks)). |
 | Job logs do not update live | A reverse proxy is buffering server-sent events ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#7-reverse-proxy-and-tls)). |
 | Any API error | The toast shows the server's message; look it up in [TROUBLESHOOTING.md](TROUBLESHOOTING.md#http-errors-by-status). |
 
-**Differences between the UI's text and the server's behaviour that the author noticed** (reported to
-the maintainers; the guide follows the server):
-
-- The host-isolation banner and the Help FAQ describe the risk as the executor reading "what the
-  server user can", without saying that this includes the Studio's own database and secrets.
-- The profile form says egress hosts are "derived from the endpoints" when empty and that they are
-  the hosts container jobs may reach; the server applies neither (the egress allowlist in the
-  server's configuration is the only list that matters).
-- The Help FAQ says a profile is pinned "when the experiment is created"; the server pins it at the
-  first job that writes into the experiment.
-- Opening `/compare?a=…&b=…` with the mode written `agg` or `seq` shows the results but leaves the
-  two selectors on their placeholder (`parallel` and `sequential` work; the UI writes those).
+**UI wording that was wrong in the first revision of this guide and has been fixed in the UI**
+(checked in headless Firefox on 2026-10-24 against the build of the same source as this text): the
+host-isolation banner and the Help FAQ now say that the executor can reach the Studio's own database;
+the profile form says the egress-hosts list is informational and not applied by the server; the FAQ
+says an experiment keeps the profile it was created with or, without one, the profile of its first
+job that writes into it; and a comparison opened with `agg` or `seq` in the address selects
+`parallel` and `sequential`. One difference remains: the **Install or reinstall harness2** form
+accepts a commit other than the tested one, which the server then refuses by default (section 11.5).
 
 ## 15. What was verified
 
-On 2026-10-24, in headless Firefox 157 through geckodriver 0.37.1, against the real server and the
-mock API described at the top:
+On 2026-10-24, in headless Firefox 157.0.1 through geckodriver 0.37.1, against the real server and the
+mock API described at the top, with the web UI built from the main branch after the security-review
+fixes. All 38 pictures were taken again from that build; those of pages that did not change came out
+byte-identical to the earlier ones.
 
 - **Exercised and photographed or read back** (the buttons each role sees were listed from the page
   for a viewer, an operator and an admin): sign-in (empty, malformed and wrong token, the return

@@ -48,14 +48,16 @@ Two credentials are accepted, checked in this order:
 
 1. **`Authorization: Bearer h2s_<id>_<secret>`**: an API token. A malformed `Authorization`
    header is a `401`; it never falls through to the cookie.
-2. **The `h2s_session` cookie**: set by `POST /auth/login`, which exchanges a token for a
-   browser session.
+2. **The session cookie**: `h2s_session`, or `__Host-h2s_session` when `server.public_url` is
+   `https` (the server reads only the name it sets). `POST /auth/login` sets it; it exchanges a
+   token for a browser session.
 
 In `auth.mode = "proxy"` a third credential exists, identity headers from a trusted reverse
 proxy; tokens keep working there. See [ADMIN-GUIDE.md](ADMIN-GUIDE.md).
 
-A token is `h2s_` + an 8-character id + `_` + a 43-character secret. The server stores only the
-SHA-256 of the secret and compares in constant time. Create tokens with `h2studio token create`
+A token is `h2s_` + an 8-character id (`a-z`, `0-9`) + `_` + a 43-character secret (`A-Z`, `a-z`,
+`0-9`, `-`, `_`); anything else, any non-ASCII character included, is a `401` before the database is
+asked. The server stores only the SHA-256 of the secret and compares in constant time. Create tokens with `h2studio token create`
 or `POST /tokens` (admin); the secret is shown **once**.
 
 ```console
@@ -64,13 +66,21 @@ $ curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/auth/me
 ```
 
 **Sessions.** `POST /auth/login` with `{"token": "..."}` returns the same `Principal` with
-`"kind":"session"` and sets a cookie named `h2s_session` that is `HttpOnly`, `SameSite=Strict`,
-`Path=/`, and `Secure` when `server.public_url` is `https` (a `__Host-` prefixed name over https is
-planned, not in this commit). It lasts `auth.session_ttl_hours` (default 12) and
-never outlives its token; revoking a token ends its sessions; `POST /auth/logout` deletes the
-session and clears the cookie. Logins are rate-limited per client address
-(`server.login_attempts_per_minute`, a token bucket; IPv6 clients per /64): beyond it the answer
-is `429` with `Retry-After`.
+`"kind":"session"` and sets a cookie that is `HttpOnly`, `SameSite=Strict` and `Path=/`. Over plain
+http it is named `h2s_session`; when `server.public_url` is `https` it is named
+`__Host-h2s_session` and is also `Secure` (browsers then refuse a `Domain` attribute or a cookie set
+by a sibling subdomain, and the server ignores a plain `h2s_session`). It lasts
+`auth.session_ttl_hours` (default 12) and never outlives its token; revoking a token ends its
+sessions; `POST /auth/logout` deletes the session and clears the cookie. Logins are rate-limited
+per client address (`server.login_attempts_per_minute`, a token bucket; IPv6 clients per /64):
+beyond it the answer is `429` with `Retry-After`.
+
+**Failed authentication is throttled.** Every refused credential (a malformed, unknown, wrong,
+expired or revoked token, an ended session, bad proxy headers) is counted against the client's
+address (IPv6 per /64). After 60 failures in a minute, further failing requests from that address get
+`429` `rate_limited` (`too many attempts; try again in N s`) with `Retry-After`; requests with valid
+credentials from the same address still succeed. A request that carries no credentials at all is
+answered `401` `authentication required` and does not count towards the limit.
 
 ```console
 $ curl -si -c cookies.txt -H "x-h2s-request: 1" -H "content-type: application/json" \
@@ -84,6 +94,9 @@ cache-control: no-store
 {"id":"a7jbu6x4","name":"initial admin","role":"admin","kind":"session"}
 ```
 
+Behind `server.public_url = "https://..."` the same header reads
+`set-cookie: __Host-h2s_session=<session-id>; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=43200`.
+
 Prefer a bearer token for scripts: no cookie jar, and no Origin rule to think about.
 
 ## 3. Headers, Origin and CSRF
@@ -93,7 +106,7 @@ event streams and the static UI alike.
 
 | Check | Rule | Refusal |
 |---|---|---|
-| `Host` | must be one the server answers to: the host of `server.public_url`, `server.allowed_hosts`, and `127.0.0.1:P`, `localhost:P`, `[::1]:P` for the bound port P | `421` `misdirected_request`: `this server does not answer to that Host` |
+| `Host` | must be one the server answers to: the host of `server.public_url`, `server.allowed_hosts`, and `127.0.0.1:P`, `localhost:P`, `[::1]:P` for the bound port P. An absolute-form request target (`GET http://host/...`) must name an allowed host as well. More than one `Host` header is refused | `421` `misdirected_request`: `this server does not answer to that Host`; two `Host` headers: `400` `bad_request`: `the request has more than one Host header` |
 | `x-h2s-request` | every method except `GET`, `HEAD` and `OPTIONS` must send `x-h2s-request: 1`, **including login, logout and requests that carry a bearer token** | `403` `forbidden`: `state-changing requests need the header x-h2s-request: 1` |
 | `Origin` | when present on such a request, it must be the origin of `public_url`, or `http(s)://` + the request's own `Host`; `null` is refused. `curl` and SDKs send none | `403` `forbidden`: `cross-origin requests are refused` |
 | body size | declared or streamed body at most `server.max_body_bytes` (1 MiB) | `413` `payload_too_large`: `the request body is larger than N bytes` |
@@ -233,6 +246,10 @@ Notes on single routes:
 
 - `GET /system/doctor?refresh=true` runs the probes now instead of using the 60-second cache
   and needs operator.
+- `GET /system/info` includes `isolation` (`host` or `container`), `container_runtime` (set when
+  container isolation is configured and the runtime answers) and `host_risks_preacknowledged`
+  (`true` when the administrator set `isolation.preacknowledge_host_risks`, so jobs need no
+  `acknowledge_risks`).
 - `GET /metrics` accepts a viewer credential, or, when `telemetry.metrics_token_secret` names a
   secret, that secret's value as a bearer token. The metrics token unlocks `/metrics` and nothing
   else.
@@ -276,16 +293,16 @@ are written for people and never contain secret values or quoted request input.
 
 | Status | `code` | Typical causes (exact messages are in [TROUBLESHOOTING.md](TROUBLESHOOTING.md)) |
 |---|---|---|
-| 400 | `bad_request` | body is not JSON or not `application/json`; unknown job `kind` |
+| 400 | `bad_request` | body is not JSON or not `application/json`; unknown job `kind`; more than one `Host` header |
 | 405 | `bad_request` | the path exists but not for that method (the message is `method not allowed`; an `Allow` header lists the right ones) |
-| 401 | `unauthorized` | no or invalid credentials; expired or revoked token; ended session |
-| 403 | `forbidden` | role too low; missing `x-h2s-request`; foreign `Origin`; a proxy user whose groups grant no role |
+| 401 | `unauthorized` | no or invalid credentials; expired or revoked token; ended session; in proxy mode a user, groups or secret header sent more than once |
+| 403 | `forbidden` | role too low (a job start says `starting a job of kind <kind> requires the <role> role`); missing `x-h2s-request`; foreign `Origin`; a proxy user whose groups grant no role |
 | 404 | `not_found` | unknown route, experiment, sweep, job, token |
 | 409 | `conflict` | experiment exists; wrong profile for a pinned experiment; archived experiment; job already finished; container isolation refuses WorkBuddy and the bridge |
 | 413 | `payload_too_large` | body over `server.max_body_bytes`; or a results read past one of the server's memory bounds (`too large: ...`, see section 6) |
 | 421 | `misdirected_request` | unknown `Host` |
 | 422 | `validation` | a field is wrong: `details` names it. Also unknown or unparsable **query parameters** (field `query`) |
-| 429 | `rate_limited` | too many login attempts; `Retry-After` says how long |
+| 429 | `rate_limited` | too many login attempts; too many failed authentications from one address; a caller that already holds `server.sse_max_per_principal` event streams; `Retry-After` says how long |
 | 503 | `unavailable` | harness2 not installed; job queue full; too many event streams; database unavailable; request timed out |
 | 500 | `internal` | a bug or an I/O failure; the message is generic, the cause is in the server log under the request id |
 
@@ -312,7 +329,7 @@ are strict: an unknown name or a value that does not parse is a `422` on the fie
 |---|---|---|
 | `GET /jobs` | `status`, `kind`, `experiment` | 50 / 500 |
 | `GET /audit` | none | 100 / 500 |
-| `GET .../tasks` | `domain`, `status` (`ok`, `skipped`, `partial`, `base-failed`, `running`, `exception`) | 200 / 1000 |
+| `GET .../tasks` | `domain`, `status` (`ok`, `skipped`, `partial`, `base-failed`, `running`, `exception`, `too-large`, `unreadable`) | 200 / 1000 |
 | `GET /jobs/{id}/log` | `from` (0-based line), `limit` | 500 / 5000 |
 
 Other bounds: request body 1 MiB (configurable); rollout and audit-text files 2 MiB; a job log line
@@ -322,7 +339,10 @@ larger one appears as a row with status `too-large`, and a file that cannot be r
 `unreadable`), 10,000 tasks per sweep, 256 MiB of summaries per list view, 100,000 judged rows, a
 harness tree or export 2,000 files and 64 MiB, any directory listing 250,000 entries (the full list
 is in `docs/notes/core.md`); `POST /harness/validate` at most 5,000
-files; secret values at most 64 KiB; experiment descriptions 4,000 characters and 32 tags.
+files; secret values at most 64 KiB; experiment descriptions 4,000 characters and 32 tags. At most
+four results reads run at once; the others wait for a permit within the request timeout. A sweep's
+task list is cached until its files change (five minutes at most), and a sweep that cannot be read
+is left out of the sweep list instead of failing it.
 
 ## 7. Jobs
 
@@ -344,9 +364,11 @@ and returns `201` with the job in state `queued`.
 | `install_harness2` | fetch harness2 at the tested commit (or the commit `rev` names) and install it | admin | `rev`, `extras`, `reinstall` |
 | `bridge` | `harness2-bridge`: a Responses-API endpoint on Vertex AI for Codex; runs until cancelled | admin | `profile`, `model`, `port`, `expose_to_containers` |
 
-`rev` accepts any full 40-character commit id and the job builds what it finds there: only the admin
-role can start it, and use only commits you trust (restricting `rev` to the tested commit unless a
-configuration flag allows others is planned, not in this commit).
+`rev` must be the tested commit (the default) unless an administrator has set
+`paths.allow_untested_harness2_rev = true` in the configuration; otherwise any other value is a `422`
+on `params.rev`: `only the tested harness2 commit <sha> can be installed; an administrator can
+allow others with paths.allow_untested_harness2_rev = true`. With the switch on, `rev` accepts any
+full 40-character commit id and the job builds what it finds there (use only commits you trust).
 
 `cell` is `{"bench": "lab"}` (also `"substrate": "oc"|"cx"`, and `"subset"` for `wb`);
 `options` is `{"k": 1, "modes": ["parallel"], "seed": 7, "split": "all", "workers": 1,
@@ -368,8 +390,13 @@ concurrency count.
 **Status.** `queued`, `running`, then one of `succeeded`, `partial` (harness2 exit code 2:
 finished, but some tasks failed or stayed ungraded), `failed`, `cancelled`. A job's `error` is a
 one-line reason: `cancelled by <name>`, `budget reached`, `timed out after 1h 30m`,
-`server restarted`, `server stopped`, or `exited with code N: <last stderr line>` (`exited with a
-signal` when a signal ended it; a pipeline prefixes `step <name> failed: `).
+`server restarted`, `server stopped`, `stopped: less than N MiB free on the data directory` (see
+`jobs.min_free_disk_mb`), or `exited with code N: <last stderr line>` (`exited with a signal` when a
+signal ended it; a pipeline prefixes `step <name> failed: `).
+
+A job's stored log stops at `jobs.max_log_bytes` (256 MiB by default): the log then holds one line
+saying so, the job goes on, and its last line says how many lines and bytes of output were not
+stored (`N lines (X) of output were not stored (log limit)`).
 
 A real demo job, created and read back (trimmed):
 
@@ -434,9 +461,12 @@ $ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "x-h2s-request: 1" -H "co
   already finished gets a snapshot (and any replay) and the stream closes. A client that falls
   behind gets a fresh snapshot; page the log from its `log_lines`.
 - At most `server.sse_max_connections` streams (default 64) are open at once; more get `503`
-  `too many open event streams; try again later`.
-- The stream is authorised when it opens and is not re-checked: if the token is revoked later, a
-  stream that is already open keeps delivering until it ends (at most an hour).
+  `too many open event streams; try again later`. One caller (a token, a session's token, a proxy
+  user) may hold `server.sse_max_per_principal` of them (default 8); a ninth gets `429`
+  `this caller already has 8 open event streams; close one first` with `Retry-After: 5`.
+- The credential is checked when the stream opens and again at every heartbeat: if the token is
+  revoked, expires or the session ends, the stream closes at the next heartbeat (within 15 seconds).
+  Proxy-mode users have nothing to revoke; their streams end at the idle or lifetime limit.
 - The response carries `x-accel-buffering: no`; a reverse proxy must not buffer it (Caddy:
   `flush_interval -1`; nginx: `proxy_buffering off`). Unknown comment lines (`: ...`) should be
   ignored.
@@ -477,7 +507,7 @@ $ python3 -c 'import json; d=json.load(open("openapi.json")); print(d["openapi"]
 
 The running server serves the same document at `GET /api/v1/openapi.json` (viewer). It describes
 the 49 operations of the table above, 134 schemas, and the two security schemes (`bearer`, and the
-`h2s_session` cookie). No Swagger UI is bundled, because the usual one loads a script from a CDN
+session cookie, `h2s_session` or `__Host-h2s_session` over https). No Swagger UI is bundled, because the usual one loads a script from a CDN
 and the server's Content-Security-Policy forbids that; open the file in any OpenAPI viewer or
 feed it to a client generator (not tried by the authors of this page).
 

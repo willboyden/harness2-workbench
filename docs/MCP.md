@@ -367,7 +367,9 @@ network (`setup_benchmark`, `install_harness2`, `start_run`, `start_pipeline`, `
      slow ones default to **0** and return the queued job at once (`start_run`, `start_pipeline`,
      `start_judge`, `setup_benchmark`, `install_harness2`, `start_bridge`).
    - `wait_for_job` waits for `timeout_secs` (default 50, maximum 600) on the server's event
-     stream (falling back to polling every `poll_interval_secs`, default 2) and, if the client
+     stream (falling back to polling every `poll_interval_secs`, default 2, whenever the stream cannot
+     be used, for instance when the Studio refuses it with `429` because the token already holds
+     `server.sse_max_per_principal` open streams; read from the code, not exercised) and, if the client
      sent a progress token, emits progress notifications with finished/total tasks and the current
      task, at least every 10 s. On timeout it returns the job as it is; the job keeps running.
    - Each token may run at most `--max-waits-per-token` (default 4) waits at once, in both
