@@ -117,15 +117,23 @@ pub const JOB_STOP_WAIT: Duration = Duration::from_secs(20);
 pub enum StartError {
     #[error("cannot create the data directories: {0}")]
     Dirs(std::io::Error),
+    // Each message includes its cause, which is therefore not also a `source()`: printing
+    // the chain (`{:#}`, as the CLI does) would show it twice.
     #[error("cannot open the database: {0}")]
-    Db(#[from] crate::db::DbError),
-    #[error("cannot listen on {addr}: {source}")]
+    Db(crate::db::DbError),
+    #[error("cannot listen on {addr}: {error}")]
     Bind {
         addr: SocketAddr,
-        source: std::io::Error,
+        error: std::io::Error,
     },
     #[error("{0}")]
     Config(String),
+}
+
+impl From<crate::db::DbError> for StartError {
+    fn from(e: crate::db::DbError) -> Self {
+        StartError::Db(e)
+    }
 }
 
 /// Options that tests (and embedders) may set; the defaults read the process environment.
@@ -177,9 +185,9 @@ impl Server {
     pub async fn bind(cfg: Config, opts: ServerOptions) -> Result<Server, StartError> {
         let listener = TcpListener::bind(cfg.listen)
             .await
-            .map_err(|source| StartError::Bind {
+            .map_err(|error| StartError::Bind {
                 addr: cfg.listen,
-                source,
+                error,
             })?;
         Self::with_listener(cfg, opts, listener).await
     }
@@ -194,9 +202,9 @@ impl Server {
         listener: TcpListener,
     ) -> Result<Server, StartError> {
         cfg.paths.ensure().map_err(StartError::Dirs)?;
-        let bound = listener.local_addr().map_err(|source| StartError::Bind {
+        let bound = listener.local_addr().map_err(|error| StartError::Bind {
             addr: cfg.listen,
-            source,
+            error,
         })?;
         let proxy_secret = if cfg.file.auth.mode == h2s_api::AuthMode::Proxy {
             let name = &cfg.file.auth.proxy.secret_env;

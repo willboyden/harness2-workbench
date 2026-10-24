@@ -694,3 +694,45 @@ async fn container_jobs_get_their_environment_through_an_env_file() {
     let used = read("env-file-path.txt");
     assert!(!std::path::Path::new(used.trim()).exists(), "{used}");
 }
+
+/// Errors print each cause once ("Address already in use (os error 98)" used to appear
+/// twice: in the message and again as its source).
+#[test]
+fn errors_name_each_cause_once() {
+    let e = env();
+    std::fs::create_dir_all(e.config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &e.config,
+        format!(
+            "[paths]\ndata_dir = \"{}\"\n",
+            e.root.join("data").display()
+        ),
+    )
+    .unwrap();
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = taken.local_addr().unwrap().to_string();
+    let o = cmd(&e.home)
+        .args(["serve", "--config", e.config.to_str().unwrap()])
+        .env("H2S_LISTEN", &addr)
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    let err = stderr(&o);
+    let line = err
+        .lines()
+        .find(|l| l.starts_with("h2studio:"))
+        .unwrap_or_else(|| panic!("{err}"));
+    assert!(line.contains(&format!("cannot listen on {addr}")), "{line}");
+    assert_eq!(line.matches("Address already in use").count(), 1, "{line}");
+    drop(taken);
+
+    // A configuration that cannot be read (a directory).
+    let o = run(
+        &e.home,
+        &["config", "check", "--config", e.root.to_str().unwrap()],
+    );
+    assert_eq!(o.status.code(), Some(1));
+    let err = stderr(&o);
+    assert!(err.contains("cannot read"), "{err}");
+    assert_eq!(err.matches("os error").count(), 1, "{err}");
+}

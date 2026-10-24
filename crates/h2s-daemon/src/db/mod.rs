@@ -24,15 +24,16 @@ use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags};
 
-/// Errors from the state store.
+/// Errors from the state store. Each message includes its cause, so the cause is not also
+/// exposed as `source()`: printing the chain (`{:#}`) would show it twice.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
     #[error("database: {0}")]
-    Sqlite(#[from] rusqlite::Error),
+    Sqlite(rusqlite::Error),
     #[error("database file: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
     #[error("stored JSON is invalid: {0}")]
-    Json(#[from] serde_json::Error),
+    Json(serde_json::Error),
     #[error(
         "the database was written by a newer Harness² Studio (schema {found}, this build knows {known})"
     )]
@@ -41,6 +42,24 @@ pub enum DbError {
     Closed,
     #[error("{0}")]
     Invalid(String),
+}
+
+impl From<rusqlite::Error> for DbError {
+    fn from(e: rusqlite::Error) -> Self {
+        DbError::Sqlite(e)
+    }
+}
+
+impl From<std::io::Error> for DbError {
+    fn from(e: std::io::Error) -> Self {
+        DbError::Io(e)
+    }
+}
+
+impl From<serde_json::Error> for DbError {
+    fn from(e: serde_json::Error) -> Self {
+        DbError::Json(e)
+    }
 }
 
 /// Result alias for this module.

@@ -44,6 +44,8 @@ results; explanations and logs go to standard error.
 - refuses (exit 1, nothing on stdout) when an active admin token already exists, unless
   `--force`, which mints another bootstrap token.
 
+Errors are printed as one line, `h2studio: <what>: <cause>`, each cause once.
+
 The CLI and a running server can use the same database at once (WAL, 10 s busy timeout). CLI
 token actions are audited with the actor `cli`.
 

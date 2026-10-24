@@ -536,10 +536,11 @@ pub struct Config {
 /// Why a configuration could not be used.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("cannot read {path}: {source}")]
+    // The message includes the cause; it is not also a `source()` (it would print twice).
+    #[error("cannot read {path}: {error}")]
     Read {
         path: PathBuf,
-        source: std::io::Error,
+        error: std::io::Error,
     },
     #[error("{path}: {message}")]
     Parse { path: String, message: String },
@@ -658,7 +659,7 @@ impl Config {
             Err(e) => {
                 return Err(ConfigError::Read {
                     path: loc.path,
-                    source: e,
+                    error: e,
                 });
             }
         };
