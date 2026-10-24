@@ -14,7 +14,7 @@
 # Every base is pinned by digest; Dependabot proposes updates (14-day cooldown).
 # Build: docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.0 .
 
-FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a AS uv
+FROM ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff AS uv
 
 FROM docker.io/library/node:22-trixie-slim@sha256:8eb619e402eaede1748a3c8173bffab391592812e85136452f781741c7242ddf
 
