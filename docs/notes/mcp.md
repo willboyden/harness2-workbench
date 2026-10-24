@@ -52,6 +52,16 @@ Each API token may run at most `--max-waits-per-token` waits at once (default 4,
 transports): `wait_for_job` beyond it is a tool error starting `rate_limited:`, and a job tool
 called with `wait_secs` returns the job it created without waiting, with a note.
 
+**Host-isolation risk acknowledgement.** Under host isolation the Studio server requires
+`acknowledge_risks=true` on runs and pipelines, because the executor then has the server
+user's files and network. A model must not accept that for the user, so `h2studio-mcp` refuses
+`start_run` / `start_pipeline` calls with `acknowledge_risks=true` (a tool error starting
+`forbidden:`) unless whoever starts it passes `--allow-risk-acknowledgement` or sets
+`H2S_MCP_ALLOW_RISK_ACK=1` (both transports; off by default). The alternatives: a human starts
+host-isolation runs from the web UI, or an admin pre-acknowledges host risks in the server's
+configuration. Calls without the acknowledgement are passed on unchanged and the server
+decides. `server_info` shows the setting under `mcp_server.policy`.
+
 `h2studio-mcp` refuses a plain-`http` `--server-url` on a non-loopback host, because the token
 would cross the network unencrypted; use `https` (or `--allow-insecure-remote` if you accept
 that). Logs go to stderr; `RUST_LOG` adjusts them (default `warn,h2s_mcp=info`). Tokens are never

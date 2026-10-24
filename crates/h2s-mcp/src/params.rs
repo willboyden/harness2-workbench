@@ -31,10 +31,12 @@ const RUN_MODES: &str = "Recursion modes, the same ones the run used.";
 const BUDGET: &str = "Stop the job once recorded spend reaches this many USD (checked as task \
                       summaries land; a task in flight finishes first). harness2 records \
                       improver spend only, not executor rollouts. Omit for no cap.";
-const ACKNOWLEDGE_RISKS: &str = "Must be true when the server runs jobs without container \
-                                 isolation (server_info shows isolation host): the executor then \
-                                 has the server user's files and network. Set it only with the \
-                                 user's informed consent.";
+const ACKNOWLEDGE_RISKS: &str = "Needed when the server runs jobs without container isolation \
+                                 (server_info shows isolation host): the executor then has the \
+                                 server user's files and network. This MCP server accepts true \
+                                 only when started with --allow-risk-acknowledgement; otherwise \
+                                 a human starts the run in the web UI, or the Studio server \
+                                 pre-acknowledges host risks.";
 
 fn quick_wait() -> u32 {
     45

@@ -61,6 +61,7 @@ pub struct H2sMcp {
     api: ApiClient,
     credentials: Credentials,
     waits: WaitLimiter,
+    allow_risk_acknowledgement: bool,
     tools: Arc<ToolRouter<H2sMcp>>,
 }
 
@@ -70,6 +71,10 @@ impl std::fmt::Debug for H2sMcp {
             .field("api", &self.api)
             .field("credentials", &self.credentials)
             .field("waits", &self.waits)
+            .field(
+                "allow_risk_acknowledgement",
+                &self.allow_risk_acknowledgement,
+            )
             .finish_non_exhaustive()
     }
 }
@@ -87,7 +92,25 @@ struct ServerInfoOutput {
 struct McpServerVersion {
     name: &'static str,
     version: &'static str,
+    policy: McpPolicy,
 }
+
+/// What this MCP server lets callers do beyond their role.
+#[derive(Serialize)]
+struct McpPolicy {
+    /// `acknowledge_risks=true` is passed on (`--allow-risk-acknowledgement`).
+    allow_risk_acknowledgement: bool,
+    /// Concurrent waits allowed per API token.
+    max_waits_per_token: usize,
+}
+
+/// Why `acknowledge_risks=true` is refused unless a human enabled it.
+const RISK_ACK_REFUSED: &str = "forbidden: this MCP server does not let a model set \
+acknowledge_risks=true, which accepts for the user that the executor runs with the server \
+user's files and network (host isolation). A human can start this run from the Studio web UI; \
+an admin can pre-acknowledge host risks in the server configuration; or the person who runs \
+h2studio-mcp can start it with --allow-risk-acknowledgement (H2S_MCP_ALLOW_RISK_ACK=1). Without \
+acknowledge_risks the call goes through and the Studio server decides.";
 
 const MCP_NAME: &str = "h2studio-mcp";
 const MCP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -106,8 +129,17 @@ impl H2sMcp {
             api,
             credentials,
             waits: WaitLimiter::default(),
+            allow_risk_acknowledgement: false,
             tools,
         }
+    }
+
+    /// Pass `acknowledge_risks=true` on to the server (off by default: a model must not accept
+    /// host-isolation risks for the user unless a human decided so when starting this server).
+    #[must_use]
+    pub fn with_risk_acknowledgement(mut self, allow: bool) -> Self {
+        self.allow_risk_acknowledgement = allow;
+        self
     }
 
     /// Use `waits` to cap concurrent waits per token (share one limiter between the handlers
@@ -411,6 +443,10 @@ impl H2sMcp {
             mcp_server: McpServerVersion {
                 name: MCP_NAME,
                 version: MCP_VERSION,
+                policy: McpPolicy {
+                    allow_risk_acknowledgement: self.allow_risk_acknowledgement,
+                    max_waits_per_token: self.waits.max_per_token(),
+                },
             },
             server_url: self.api.server_url().to_owned(),
             principal,
@@ -801,6 +837,9 @@ impl H2sMcp {
         ctx: RequestContext<RoleServer>,
         Args(input): Args<RunInput>,
     ) -> rmcp::model::CallToolResult {
+        if input.params.acknowledge_risks && !self.allow_risk_acknowledgement {
+            return output::error(RISK_ACK_REFUSED.to_owned());
+        }
         self.start_job(&ctx, JobSpec::Run(input.params), input.wait_secs)
             .await
     }
@@ -823,6 +862,9 @@ impl H2sMcp {
         ctx: RequestContext<RoleServer>,
         Args(input): Args<PipelineInput>,
     ) -> rmcp::model::CallToolResult {
+        if input.params.acknowledge_risks && !self.allow_risk_acknowledgement {
+            return output::error(RISK_ACK_REFUSED.to_owned());
+        }
         self.start_job(&ctx, JobSpec::Pipeline(input.params), input.wait_secs)
             .await
     }

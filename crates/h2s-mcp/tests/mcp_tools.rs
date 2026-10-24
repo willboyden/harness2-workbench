@@ -292,6 +292,7 @@ async fn initialize_reports_identity_capabilities_and_instructions() {
         "wait_for_job",
         "PERCENT",
         "FRACTIONS",
+        "--allow-risk-acknowledgement",
     ] {
         assert!(instructions.contains(word), "instructions lack {word}");
     }
@@ -407,7 +408,8 @@ async fn tools_list_is_complete_described_and_annotated() {
 async fn every_tool_happy_path_against_the_mock_server() {
     let studio = Studio::start().await;
     studio.mount_happy(TOKEN, "alice", "admin").await;
-    let client = connect(&studio.url(), TOKEN).await;
+    // The run case sets acknowledge_risks: a server where a human allowed that.
+    let client = connect_allowing_risk_acknowledgement(&studio.url(), TOKEN).await;
 
     let mut covered = BTreeSet::new();
     for (tool, args) in cases() {
@@ -566,7 +568,7 @@ async fn every_tool_renders_the_servers_refusal() {
     studio
         .mount_refusing(403, "forbidden", "your role is too low for this")
         .await;
-    let client = connect(&studio.url(), TOKEN).await;
+    let client = connect_allowing_risk_acknowledgement(&studio.url(), TOKEN).await;
     for (tool, args) in cases() {
         let result = call(&client, tool, args.clone()).await;
         assert_eq!(result.is_error, Some(true), "{tool} {args}");
@@ -1199,4 +1201,64 @@ async fn job_tools_return_the_job_instead_of_waiting_past_the_cap() {
         text(&refused)
     );
     assert_eq!(long_wait.await.unwrap().is_error, Some(false));
+}
+
+#[tokio::test]
+async fn models_cannot_acknowledge_host_risks_unless_a_human_allowed_it() {
+    let studio = Studio::start().await;
+    studio.mount_happy(TOKEN, "alice", "operator").await;
+    let run = json!({"experiment": "e1", "cell": cell(), "options": options(),
+                     "profile": "local", "acknowledge_risks": true});
+    let pipeline = json!({"experiment": "e1", "cell": cell(), "options": options(),
+                          "profile": "local", "acknowledge_risks": true});
+
+    let client = connect(&studio.url(), TOKEN).await;
+    let policy =
+        payload(&call(&client, "server_info", json!({})).await)["mcp_server"]["policy"].clone();
+    assert_eq!(policy["allow_risk_acknowledgement"], false);
+    assert_eq!(policy["max_waits_per_token"], 4);
+    for (tool, args) in [("start_run", &run), ("start_pipeline", &pipeline)] {
+        let refused = call(&client, tool, args.clone()).await;
+        assert_eq!(refused.is_error, Some(true), "{tool}");
+        let t = text(&refused);
+        assert!(
+            t.starts_with("forbidden: this MCP server does not let a model set acknowledge_risks"),
+            "{tool}: {t}"
+        );
+        for way in [
+            "web UI",
+            "pre-acknowledge",
+            "--allow-risk-acknowledgement",
+            "H2S_MCP_ALLOW_RISK_ACK=1",
+        ] {
+            assert!(t.contains(way), "{tool}: no mention of {way}: {t}");
+        }
+    }
+    assert!(
+        requests_to(&studio.received().await, "POST", &api("/jobs")).is_empty(),
+        "refused calls must not reach the server"
+    );
+
+    // Without the acknowledgement the call goes through unchanged; the server decides.
+    let mut plain = run.clone();
+    plain["acknowledge_risks"] = json!(false);
+    let started = call(&client, "start_run", plain).await;
+    assert_eq!(started.is_error, Some(false), "{}", text(&started));
+
+    // With the server-side opt-in, the acknowledgement is passed on.
+    let allowed = connect_allowing_risk_acknowledgement(&studio.url(), TOKEN).await;
+    let policy =
+        payload(&call(&allowed, "server_info", json!({})).await)["mcp_server"]["policy"].clone();
+    assert_eq!(policy["allow_risk_acknowledgement"], true);
+    let started = call(&allowed, "start_pipeline", pipeline).await;
+    assert_eq!(started.is_error, Some(false), "{}", text(&started));
+    let specs: Vec<JobSpec> = requests_to(&studio.received().await, "POST", &api("/jobs"))
+        .into_iter()
+        .map(|r| r.body_json::<JobSpec>().unwrap())
+        .collect();
+    assert!(
+        matches!(&specs[..], [JobSpec::Run(r), JobSpec::Pipeline(p)]
+            if !r.acknowledge_risks && p.acknowledge_risks),
+        "{specs:?}"
+    );
 }

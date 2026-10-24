@@ -31,6 +31,8 @@ as command-line arguments.
   http: streamable HTTP on --listen at path /mcp; every request must carry its own \
 `Authorization: Bearer h2s_...`, which is forwarded to the Studio server.
 
+Models cannot set acknowledge_risks=true unless --allow-risk-acknowledgement is given.
+
 Logs go to stderr (RUST_LOG adjusts them).";
 
 /// How MCP clients connect.
@@ -107,6 +109,17 @@ pub struct Cli {
     )]
     pub max_waits_per_token: u32,
 
+    /// Let MCP clients set acknowledge_risks=true on start_run and start_pipeline, accepting for
+    /// the user that a host-isolation executor gets the server user's files and network. Off by
+    /// default: then a human starts such runs from the web UI, or the Studio server
+    /// pre-acknowledges host risks. Turn it on only if a human reviews every run an agent starts.
+    #[arg(
+        long,
+        env = "H2S_MCP_ALLOW_RISK_ACK",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub allow_risk_acknowledgement: bool,
+
     /// Allow a plain-http --server-url on a non-loopback host (API tokens would cross the
     /// network unencrypted).
     #[arg(long)]
@@ -125,12 +138,20 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let api = ApiClient::new(&cli.server_url, &options)?;
     let env_token = std::env::var(TOKEN_ENV).ok();
     let max_waits = usize::try_from(cli.max_waits_per_token).unwrap_or(usize::MAX);
+    if cli.allow_risk_acknowledgement {
+        tracing::warn!(
+            "--allow-risk-acknowledgement: MCP clients may set acknowledge_risks=true, so a model \
+             can start host-isolation runs that give the executor this server user's files and \
+             network"
+        );
+    }
     match cli.transport {
         TransportKind::Stdio => {
             let token = Token::resolve(env_token.as_deref(), cli.token_file.as_deref())?;
             tracing::info!(server = api.server_url(), "serving MCP over stdio");
             let service = H2sMcp::new(api, Credentials::Fixed(token))
                 .with_wait_limiter(WaitLimiter::new(max_waits))
+                .with_risk_acknowledgement(cli.allow_risk_acknowledgement)
                 .serve(rmcp::transport::stdio())
                 .await?;
             let reason = service.waiting().await?;
@@ -166,6 +187,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 max_concurrent_requests: usize::try_from(cli.max_concurrent_requests)
                     .unwrap_or(usize::MAX),
                 max_waits_per_token: max_waits,
+                allow_risk_acknowledgement: cli.allow_risk_acknowledgement,
             };
             http::serve(listener, api, &http_options, shutdown).await?;
         }
@@ -231,5 +253,11 @@ mod tests {
             (32, 4)
         );
         assert!(Cli::try_parse_from(["h2studio-mcp", "--max-waits-per-token", "0"]).is_err());
+        assert!(
+            !cli.allow_risk_acknowledgement,
+            "off unless a human turns it on"
+        );
+        let on = Cli::try_parse_from(["h2studio-mcp", "--allow-risk-acknowledgement"]).unwrap();
+        assert!(on.allow_risk_acknowledgement);
     }
 }

@@ -56,9 +56,51 @@ async fn the_binary_serves_mcp_over_stdio() {
     assert_eq!(payload(&demo)["status"], "succeeded");
     let refused = call(&client, "get_task", json!({"experiment": EXP})).await;
     assert_eq!(refused.is_error, Some(true));
+    // Off by default: a model cannot acknowledge host-isolation risks.
+    assert_eq!(
+        payload(&info)["mcp_server"]["policy"]["allow_risk_acknowledgement"],
+        false
+    );
+    let run = json!({"experiment": "e1", "cell": {"bench": "lab"},
+                     "options": {"k": 1, "modes": ["parallel"]}, "profile": "local",
+                     "acknowledge_risks": true});
+    let refused = call(&client, "start_run", run).await;
+    assert!(
+        text(&refused).starts_with("forbidden: "),
+        "{}",
+        text(&refused)
+    );
 
     client.cancel().await.unwrap();
     studio.assert_well_formed(TOKEN).await;
+}
+
+#[tokio::test]
+async fn h2s_mcp_allow_risk_ack_turns_the_acknowledgement_on() {
+    let studio = Studio::start().await;
+    studio.mount_happy(TOKEN, "alice", "operator").await;
+    let mut cmd = tokio::process::Command::new(BINARY);
+    cmd.env_clear()
+        .env("H2S_SERVER_URL", studio.url())
+        .env("H2S_TOKEN", TOKEN)
+        .env("H2S_MCP_ALLOW_RISK_ACK", "1")
+        // Its startup warning is expected; keep it out of the test output.
+        .env("RUST_LOG", "error");
+    let client = TestClient::default()
+        .serve(TokioChildProcess::new(cmd).unwrap())
+        .await
+        .unwrap();
+    let info = call(&client, "server_info", json!({})).await;
+    assert_eq!(
+        payload(&info)["mcp_server"]["policy"]["allow_risk_acknowledgement"],
+        true
+    );
+    let run = json!({"experiment": "e1", "cell": {"bench": "lab"},
+                     "options": {"k": 1, "modes": ["parallel"]}, "profile": "local",
+                     "acknowledge_risks": true});
+    let started = call(&client, "start_run", run).await;
+    assert_eq!(started.is_error, Some(false), "{}", text(&started));
+    client.cancel().await.unwrap();
 }
 
 #[test]

@@ -2,12 +2,13 @@
 //! Kept under 1,024 characters each (some clients cut longer descriptions).
 
 pub(crate) const SERVER_INFO: &str = "Check the connection to the Harness² Studio server and who \
-you are. Returns this MCP server's version, the server URL, your principal (name and role: \
-viewer < operator < admin) and the server's system info: Studio version, whether harness2 is \
-installed (commit vs the tested commit), the isolation new jobs use (host or container), auth \
-mode, running/maximum jobs and features. Call it first. Roles: viewer may use the read-only \
-tools; operator also creates experiments and starts or cancels jobs; admin also runs \
-install_harness2, setup_benchmark and start_bridge.";
+you are. Returns this MCP server's version and policy (whether it accepts acknowledge_risks, \
+waits allowed per token), the server URL, your principal (name and role: viewer < operator < \
+admin) and the server's system info: Studio version, whether harness2 is installed (commit vs \
+the tested commit), the isolation new jobs use (host or container), auth mode, running/maximum \
+jobs and features. Call it first. Roles: viewer may use the read-only tools; operator also \
+creates experiments and starts or cancels jobs; admin also runs install_harness2, \
+setup_benchmark and start_bridge.";
 
 pub(crate) const DOCTOR: &str = "Run the environment doctor: one check per prerequisite (uv, \
 Python 3.12, Node 20, git, Docker, Pandoc, Poppler, gcloud and Application Default \
@@ -108,15 +109,17 @@ tool guidance, sub-agents, skills, scripts, plugins), runs the executor and a bl
 adopts one harness. CALLS MODELS AND COSTS MONEY with cloud models (per task and mode up to 4k \
 rollouts and 3k improver sessions). First run preview_run and estimate_cost and get the user's \
 go-ahead; set budget_usd (it caps recorded improver spend; executor spend is not recorded). \
-profile must be the experiment's pinned profile. acknowledge_risks=true is required under host \
-isolation (the executor gets the server user's files and network); set it only with the \
-user's informed consent. Operator role. Returns the queued job; follow with wait_for_job, then \
+profile must be the experiment's pinned profile. Under host isolation the server needs \
+acknowledge_risks=true (the executor gets the server user's files and network); this MCP server \
+accepts it only when started with --allow-risk-acknowledgement, otherwise the user starts such \
+runs in the web UI. Operator role. Returns the queued job; follow with wait_for_job, then \
 start_judge with the same cell, k, seed and modes — or use start_pipeline.";
 
 pub(crate) const START_PIPELINE: &str = "Start the whole workflow as one job: preview, check, \
 run, judge (and judge the base executions when judge_bases=true), report; it stops at the \
-first step that neither succeeds nor ends partial. Same inputs and same COST WARNING as \
-start_run (executor, improver and judge models are called): get the user's go-ahead after \
+first step that neither succeeds nor ends partial. Same inputs, COST WARNING and \
+acknowledge_risks rule as start_run (executor, improver and judge models are called): get the \
+user's go-ahead after \
 preview_run and estimate_cost, set budget_usd, and set judge_bases=true so the report can \
 compare against the unmodified harness. Operator role. Returns the queued job; follow with \
 wait_for_job (pipelines run for a long time), then get_report for the sweep (the run step's \
@@ -320,6 +323,10 @@ get_job, wait_for_job, get_job_log, cancel_job); results (list_tasks, get_task, 
 diff_harnesses, list_rollout_files, read_rollout_file, get_scores, get_report, get_library, \
 list_audit_sessions, read_audit_session, compare_sweeps); adoption (export_harness, \
 validate_harness).
+
+Policy: acknowledge_risks=true is accepted only when this MCP server runs with \
+--allow-risk-acknowledgement (see server_info); otherwise the user starts host-isolation runs in \
+the web UI.
 
 Safe order: server_info -> doctor -> list_benchmarks / check_benchmark -> preview_run -> \
 estimate_cost -> the user's go-ahead -> start_pipeline (or start_run then start_judge) with \
