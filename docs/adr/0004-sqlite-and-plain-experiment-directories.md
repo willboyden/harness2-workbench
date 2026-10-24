@@ -6,8 +6,8 @@
 ## Context
 
 The server must remember who may sign in, which jobs ran and how they ended, which experiments exist
-and which model profile each is pinned to, the model profiles and secrets, and a tamper-evident audit
-chain. It also produces large, append-only job logs, and it fronts results that harness2 itself
+and which model profile each is pinned to, the model profiles and secrets, and a hash-chained audit
+log. It also produces large, append-only job logs, and it fronts results that harness2 itself
 writes as thousands of files. It is a single-node tool, run by one team on one machine, often
 started and stopped by hand.
 

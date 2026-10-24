@@ -16,7 +16,7 @@ later tasks ([the ideas in five minutes](docs/CONCEPTS.md)). It is a research fr
 terminal: you set environment variables, start long runs by hand, watch them scroll, and read results
 as files. **Harness² Studio is what you put around it when more than one person, or one AI agent, needs
 to use it safely**: sign-in and roles, a job queue with live logs, cancellation and cost guards, write-only
-secrets that never reach logs, a tamper-evident audit trail, browsing of everything harness2 writes
+secrets with best-effort log redaction, a hash-chained audit trail, browsing of everything harness2 writes
 (task summaries, harness trees and diffs, rollouts, experience libraries, reports), optional container
 isolation with an egress allowlist, and an MCP server so coding agents can run and analyse sweeps
 under the same rules as people.
