@@ -1,7 +1,7 @@
 # ADR 0008: API tokens `h2s_<id>_<secret>`, stored as a SHA-256, with cookie sessions for browsers
 
 - **Status:** Accepted. Part of the v1.0 contract ([ARCHITECTURE.md](../ARCHITECTURE.md) §2, §9).
-- **Applies to:** `h2s-daemon` (`auth.rs`, `db/tokens.rs`, `db/sessions.rs`, `http/extract.rs`, `http/routes/auth.rs`).
+- **Applies to:** `h2s-daemon` (`auth.rs`, `db/tokens.rs`, `db/sessions.rs`, `http/extract.rs`, `http/routes/auth.rs`, `ratelimit.rs`).
 
 ## Context
 
@@ -23,9 +23,14 @@ and must not leak information through timing or error text.
   can be **revoked** at once; a check against the database happens on every request, so revocation
   needs no cache invalidation.
 - **Browsers** exchange a token for a **session**: a 256-bit random id in an `HttpOnly`,
-  `SameSite=Strict` cookie (`Secure` when the public URL is https), stored only as its hash, with a
-  lifetime that never exceeds the token's. Revoking a token ends its sessions. Login is rate-limited
-  per client address.
+  `SameSite=Strict` cookie, stored only as its hash, with a lifetime that never exceeds the token's.
+  When the public URL is https the cookie is `Secure` and named `__Host-h2s_session` (`Path=/`, no
+  `Domain`, so a sibling subdomain cannot plant one); over plain http it is `h2s_session`, because a
+  `__Host-` cookie needs `Secure`, which browsers drop on http. Revoking a token ends its sessions,
+  and an open event stream notices at its next heartbeat. Login is rate-limited per client address.
+- **Failed authentication is throttled per client address** (60 a minute, then `429`), and at most 10
+  of those failures a minute per client reach the audit log, so presenting junk tokens can neither
+  guess nor flood. Valid credentials from the same address are not affected.
 - There are **no passwords** and no user table. A proxy mode accepts a user and groups asserted by a
   trusted reverse proxy instead, behind a shared secret, for deployments with SSO.
 - `h2studio init` mints the first admin token and prints it once.
@@ -53,6 +58,10 @@ Bad, and how it is managed:
   single sign-on of its own; proxy mode is the answer for teams.
 - **Three roles and nothing finer**: no scopes, no per-experiment permissions.
 - Sessions are not bound to an address or user agent.
+- **Throttling is per client address**: an attacker with many addresses has an allowance on each, and
+  behind a proxy that is not listed in `server.trusted_proxies` every user shares one allowance.
+  Guessing 256 bits is infeasible either way; the throttle protects the audit log and the server's
+  work, not the secret.
 
 ## Alternatives considered
 
@@ -65,8 +74,11 @@ Bad, and how it is managed:
 `crates/h2s-daemon/src/auth.rs` (format, `mint`, `secret_matches`, `ct_eq`), `http/extract.rs`
 (`verify_token`, `proxy_principal`), `http/routes/auth.rs`, `ratelimit.rs`, `db/tokens.rs`,
 `db/sessions.rs`. Tests: `auth.rs` (bearer, expiry and revocation, cookie attributes, session end,
-rate limit, proxy mode). Exercised live for this documentation: login, cookie attributes, the 401
-messages, revocation, the 429.
+rate limit, proxy mode, and `failed_authentication_cannot_flood_the_audit_log`,
+`https_deployments_use_a_host_prefixed_session_cookie`, `non_ascii_tokens_are_refused_with_401`,
+`repeated_proxy_identity_headers_are_refused`); `ratelimit.rs::a_full_table_shares_one_overflow_bucket_instead_of_failing_open`.
+Exercised live for this documentation: login, the cookie attributes under both names, the 401
+messages, revocation, and the 429s (sign-in, and 75 junk tokens: 60 `401`, then `429`).
 
 ## Revisit when
 
