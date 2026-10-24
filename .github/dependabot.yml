@@ -43,5 +43,9 @@ updates:
       # an odd line past its end of life. New digests of the pinned line still arrive.
       - dependency-name: "library/node"
         update-types: ["version-update:semver-major"]
+      # uv's image is on ghcr.io, which gives Dependabot no publication date, so the cooldown
+      # cannot apply (it offered uv 0.13.5 two days after its release). uv is bumped by hand:
+      # docs/SUPPLY-CHAIN.md, "Bumping uv by hand".
+      - dependency-name: "astral-sh/uv"
     commit-message:
       prefix: "build(docker)"
