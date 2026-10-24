@@ -1,4 +1,5 @@
-//! The tamper-evident audit log: a SHA-256 hash chain.
+//! The audit log: a SHA-256 hash chain. It shows edits by anyone who cannot rewrite the whole
+//! chain; whoever can write the data directory can (SECURITY.md).
 //!
 //! `hash = sha256(prev_hash || canonical JSON of the record without "hash")`, hex encoded.
 //! The canonical JSON is built here field by field (keys sorted, absent optionals omitted,

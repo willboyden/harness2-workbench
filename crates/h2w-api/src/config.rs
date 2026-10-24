@@ -254,7 +254,7 @@ pub enum AuditOutcome {
     Error,
 }
 
-/// One tamper-evident audit record: `hash = sha256(prev_hash || canonical JSON of the
+/// One hash-chained audit record: `hash = sha256(prev_hash || canonical JSON of the
 /// record without `hash`)`. `GET /api/v1/audit/verify` re-walks the chain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
