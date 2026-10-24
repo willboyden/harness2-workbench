@@ -202,6 +202,10 @@ Keys beyond §11 (all optional, defaults shown):
   the data directory").
 - A runner that panics (a bug) fails its job ("internal error in the job runner"), terminates
   its recorded process group and frees its slot.
+- **Result files** a job leaves for the server (`demo.json`, a split's `split.json`, a stored
+  split copied into a job) are read with `util::read_job_file`: a symlink is not followed, a
+  FIFO or device is refused without blocking, and files over 16 MiB are refused; the job then
+  fails with "demo.json is a symbolic link; it is not followed" and the like.
 - **Restart recovery** signals a recorded process group only after positive identification:
   the job row records the leader's pid, its start time (`/proc/<pid>/stat` field 22) and the
   boot id (`/proc/sys/kernel/random/boot_id`); every step process gets `H2S_JOB_ID=<job id>` in

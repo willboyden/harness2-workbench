@@ -443,9 +443,12 @@ async fn prepare<'a>(
             }
             let src = settings.paths.splits_dir.join(format!("{name}.json"));
             let dst = job_dir.join("split.json");
-            let bytes = tokio::fs::read(&src)
-                .await
-                .map_err(|e| format!("split {name}: {e}"))?;
+            let bytes = tokio::task::spawn_blocking(move || {
+                crate::util::read_job_file(&src, crate::util::MAX_RESULT_FILE)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| crate::util::job_file_error(&format!("split {name}"), &e))?;
             crate::util::write_private_new(&dst, &bytes).map_err(|e| format!("split copy: {e}"))?;
             Some(dst)
         }
@@ -561,7 +564,13 @@ async fn register_split(
         .paths
         .splits_dir
         .join(format!("{}.json", p.name));
-    let bytes = tokio::fs::read(&src).await.map_err(|e| e.to_string())?;
+    // The job wrote this file: no symlinks, FIFOs or devices, bounded size.
+    let bytes = tokio::task::spawn_blocking(move || {
+        crate::util::read_job_file(&src, crate::util::MAX_RESULT_FILE)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| crate::util::job_file_error("the split file", &e))?;
     crate::util::write_private_new(&dst, &bytes).map_err(|e| e.to_string())?;
     let info = SplitInfo {
         name: p.name.clone(),

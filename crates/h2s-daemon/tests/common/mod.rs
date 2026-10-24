@@ -44,7 +44,21 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
+# The production backend sets no FAKE_SCENARIO: these come from the experiment's name.
+if [ -z "$FAKE_SCENARIO" ]; then
+  case "$out" in
+    */fifo-*) FAKE_SCENARIO=fifo ;;
+    */symlink-*) FAKE_SCENARIO=symlink ;;
+  esac
+fi
 case "$FAKE_SCENARIO" in
+  fifo)
+    mkfifo "$out/demo.json"
+    exit 0 ;;
+  symlink)
+    printf '{"domain":"accounting","n_tasks":2,"seed":null,"done":2,"failed":0,"tasks":[],"execution_count":28,"editor_calls":32}\n' > "$out/real.json"
+    ln -s "$out/real.json" "$out/demo.json"
+    exit 0 ;;
   fail)
     echo "starting"
     echo "error: the deterministic editor crashed" >&2

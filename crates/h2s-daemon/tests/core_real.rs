@@ -67,6 +67,27 @@ async fn demo_runs_through_the_core_backend() {
     t.stop().await;
 }
 
+/// The result files a job leaves are read without following a symlink and without blocking
+/// on a FIFO: a demo that plants either fails with a clear message instead of hanging the
+/// runner or reading another file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn planted_result_files_fail_the_job_instead_of_hanging_it() {
+    let t = core_server().await;
+    for (exp, why) in [
+        ("fifo-x", "demo.json is not a regular file"),
+        ("symlink-x", "demo.json is a symbolic link"),
+    ] {
+        let r = t.create_job(&t.operator, demo_spec(exp)).await;
+        assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+        let j: Job = r.json().await.unwrap();
+        let done = t.wait_terminal(&j.id, 30).await;
+        assert_terminal(&done, JobStatus::Failed);
+        let error = done.error.unwrap_or_default();
+        assert!(error.contains(why), "{exp}: {error}");
+    }
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn check_jobs_parse_harness2_check_output() {
     let t = core_server().await;

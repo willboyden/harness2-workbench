@@ -170,6 +170,57 @@ pub fn open_private_append(path: &Path) -> std::io::Result<File> {
     Ok(f)
 }
 
+/// Largest result file a job leaves for the server to read (`demo.json`, `split.json`).
+pub const MAX_RESULT_FILE: u64 = 16 * 1024 * 1024;
+
+/// Read a regular file a job may have written, at most `max` bytes: the last component is
+/// never followed when it is a symlink, a FIFO or device is refused without blocking (it is
+/// opened non-blocking and checked before any read), and a larger file is refused.
+///
+/// # Errors
+/// I/O errors (`NotFound` passes through), or `InvalidData` for a symlink, a file that is
+/// not regular, or one over `max`.
+pub fn read_job_file(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let refused = |why: String| std::io::Error::new(std::io::ErrorKind::InvalidData, why);
+    let flags = nix::fcntl::OFlag::O_NOFOLLOW | nix::fcntl::OFlag::O_NONBLOCK;
+    let f = match OpenOptions::new()
+        .read(true)
+        .custom_flags(flags.bits())
+        .open(path)
+    {
+        Ok(f) => f,
+        Err(e) if e.raw_os_error() == Some(nix::errno::Errno::ELOOP as i32) => {
+            return Err(refused("is a symbolic link; it is not followed".to_owned()));
+        }
+        Err(e) => return Err(e),
+    };
+    let meta = f.metadata()?;
+    if !meta.is_file() {
+        return Err(refused("is not a regular file".to_owned()));
+    }
+    if meta.len() > max {
+        return Err(refused(format!("is larger than {max} bytes")));
+    }
+    let mut buf = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or(0));
+    f.take(max.saturating_add(1)).read_to_end(&mut buf)?;
+    if u64::try_from(buf.len()).unwrap_or(u64::MAX) > max {
+        return Err(refused(format!("is larger than {max} bytes")));
+    }
+    Ok(buf)
+}
+
+/// `"<name> is a symbolic link; ..."` for [`read_job_file`]'s refusals, `"<name>: <error>"`
+/// for other I/O errors.
+#[must_use]
+pub fn job_file_error(name: &str, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::InvalidData {
+        format!("{name} {e}")
+    } else {
+        format!("{name}: {e}")
+    }
+}
+
 /// Set `path`'s mode when it exists (used to tighten files other code created).
 ///
 /// # Errors
@@ -279,6 +330,32 @@ mod tests {
             String::from_utf8_lossy(&out.stdout)
         );
         assert!(nix::sys::prctl::get_dumpable().unwrap());
+    }
+
+    #[test]
+    fn job_files_are_read_safely() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("demo.json");
+        std::fs::write(&file, b"{}").unwrap();
+        assert_eq!(read_job_file(&file, 16).unwrap(), b"{}");
+        // Over the cap.
+        std::fs::write(&file, vec![b'x'; 17]).unwrap();
+        let e = read_job_file(&file, 16).unwrap_err();
+        assert!(e.to_string().contains("larger than 16"), "{e}");
+        // A symlink is not followed, whatever it points at.
+        let link = dir.path().join("link.json");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let e = read_job_file(&link, 1024).unwrap_err();
+        assert!(e.to_string().contains("symbolic link"), "{e}");
+        // A FIFO is refused at once instead of blocking the reader forever.
+        let fifo = dir.path().join("fifo.json");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
+        let e = read_job_file(&fifo, 1024).unwrap_err();
+        assert!(e.to_string().contains("not a regular file"), "{e}");
+        // A directory, and a missing file.
+        assert!(read_job_file(dir.path(), 1024).is_err());
+        let missing = read_job_file(&dir.path().join("none"), 1024).unwrap_err();
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test]

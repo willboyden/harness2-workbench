@@ -77,6 +77,14 @@ pub fn history(dir: &Path, kind: ExperimentKind) -> Option<h2s_core::estimate::H
     })
 }
 
+/// A UTF-8 result file the job wrote (`util::read_job_file`: no symlinks, FIFOs or
+/// devices, at most `MAX_RESULT_FILE`).
+fn read_text(path: &Path) -> std::io::Result<String> {
+    let bytes = crate::util::read_job_file(path, crate::util::MAX_RESULT_FILE)?;
+    String::from_utf8(bytes)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "is not valid UTF-8"))
+}
+
 /// A path as text for argv/env; refuses non-UTF-8 paths.
 fn text(p: &Path) -> Result<String, String> {
     p.to_str()
@@ -654,12 +662,12 @@ impl JobBackend for CoreBackend {
                 let Some((dir, _)) = out.experiment else {
                     return Ok(None);
                 };
-                match std::fs::read_to_string(dir.join("demo.json")) {
+                match read_text(&dir.join("demo.json")) {
                     Ok(t) => parse::demo_json(&t)
                         .map(|d| Some(JobResult::Demo(d)))
                         .map_err(|e| e.to_string()),
                     Err(_) if !ok => Ok(None),
-                    Err(e) => Err(format!("demo.json: {e}")),
+                    Err(e) => Err(crate::util::job_file_error("demo.json", &e)),
                 }
             }
             ParseKind::Setup { dry_run } => Ok(Some(JobResult::Setup(parse::setup_output(
@@ -718,8 +726,8 @@ impl JobBackend for CoreBackend {
                 let JobSpec::Split(p) = out.spec else {
                     return Ok(None);
                 };
-                let t = std::fs::read_to_string(out.job_dir.join(SPLIT_OUT_DIR).join(SPLIT_FILE))
-                    .map_err(|e| format!("split file: {e}"))?;
+                let t = read_text(&out.job_dir.join(SPLIT_OUT_DIR).join(SPLIT_FILE))
+                    .map_err(|e| crate::util::job_file_error("the split file", &e))?;
                 let (train, test) = parse::split_file(&t).map_err(|e| e.to_string())?;
                 Ok(Some(JobResult::Split(SplitResult {
                     name: p.name.clone(),
