@@ -43,6 +43,13 @@ impl SweepRef {
         format!("{}/{}/{}", self.experiment, self.sweep, self.mode.as_cli())
     }
 
+    /// A `?a=`/`?b=` value in canonical form (`agg` -> `parallel`, `seq` -> `sequential`, as
+    /// the server reads them), so it matches the pickers' option values; anything that does
+    /// not parse is kept as it is.
+    pub(crate) fn normalize_param(s: &str) -> String {
+        SweepRef::parse(s).map_or_else(|| s.to_owned(), |r| r.to_param())
+    }
+
     /// Parse `exp/sweep/mode` (mode as `parallel`/`sequential` or `agg`/`seq`).
     pub(crate) fn parse(s: &str) -> Option<SweepRef> {
         let mut parts = s.split('/');
@@ -436,6 +443,15 @@ mod tests {
         assert!(SweepRef::parse("exp/sweep").is_none());
         assert!(SweepRef::parse("exp/sweep/both").is_none());
         assert!(SweepRef::parse("a/b/parallel/x").is_none());
+        // Deep links may use the namespace tokens; the pickers use the long names.
+        assert_eq!(
+            SweepRef::normalize_param("demo/demo-oc-agg2/agg"),
+            "demo/demo-oc-agg2/parallel"
+        );
+        assert_eq!(SweepRef::normalize_param("e/s/seq"), "e/s/sequential");
+        assert_eq!(SweepRef::normalize_param("e/s/parallel"), "e/s/parallel");
+        assert_eq!(SweepRef::normalize_param("not a ref"), "not a ref");
+        assert_eq!(SweepRef::normalize_param(""), "");
         let b = SweepRef::parse("x/y/sequential").unwrap();
         assert_eq!(
             api::compare(&r, &b),

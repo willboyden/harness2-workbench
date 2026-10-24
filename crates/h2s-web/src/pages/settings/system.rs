@@ -128,7 +128,7 @@ pub(crate) fn System() -> impl IntoView {
                                 .then(|| {
                                     view! {
                                         <p class="small muted">
-                                            "Jobs run directly on this host as the server's user, as upstream does. Starting a run asks for an explicit acknowledgement. An administrator can switch to container isolation in h2studio.toml."
+                                            "Jobs run directly on this host as the server's user, as upstream does, so an executor can also read and change the Studio's own data (it is effectively an administrator). Starting a run asks for an explicit acknowledgement. Container isolation, set in h2studio.toml, is the boundary."
                                         </p>
                                     }
                                 })}

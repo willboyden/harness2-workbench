@@ -261,7 +261,7 @@ pub(crate) const TERMS: &[Term] = &[
         id: "isolation",
         term: "Isolation",
         short: "Where jobs run: directly on the server host (upstream behaviour) or in a hardened container.",
-        long: "Host isolation gives the executor the server user's files and network, so starting a run requires an explicit acknowledgement. Container isolation runs each job in a locked-down container with an egress allowlist. WorkBuddy and the Codex bridge refuse container isolation in this version.",
+        long: "Host isolation gives the executor the server user's files and network, including the Studio's own database (stored secrets, token hashes): a malicious or prompt-injected executor is effectively a Studio administrator, so starting a run requires an explicit acknowledgement. Container isolation runs each job in a locked-down container with an egress allowlist; it is the boundary. WorkBuddy and the Codex bridge refuse container isolation in this version.",
         see_also: &["executor"],
     },
     Term {
@@ -329,11 +329,11 @@ pub(crate) const FAQ: &[Faq] = &[
     },
     Faq {
         q: "Can I change an experiment's model profile?",
-        a: "No. harness2 refuses to resume or judge a namespace under different models, so the profile is pinned when the experiment is created. Create a new experiment for another profile.",
+        a: "No. harness2 refuses to resume or judge a namespace under different models, so an experiment keeps one profile: the one chosen when it was created or, without one, the profile of its first job that writes into it (a run, pipeline or judge job). Create a new experiment for another profile.",
     },
     Faq {
         q: "Is it safe to run jobs on the host?",
-        a: "Host isolation is how upstream works: the executor agent can read and write what the server user can, and reach the network. Use container isolation (configured by an administrator) for anything you would not run on your own machine.",
+        a: "Host isolation is how upstream works: the executor agent can read and write what the server user can, and reach the network. That includes the Studio's own database (stored secrets, token hashes), so a malicious or prompt-injected executor is effectively a Studio administrator. Container isolation, configured by an administrator, is the boundary: use it for anything you would not run on your own machine.",
     },
     Faq {
         q: "How do I reproduce an experiment?",
