@@ -79,9 +79,10 @@ pids_limit = 2048
 user = ""
 
 [egress]
-# Used only by `h2studio egress-proxy`. Hostnames, exact or "*.suffix". Private, loopback,
-# link-local and metadata addresses are always refused unless an entry allows them, e.g.
-#   allow = ["aiplatform.googleapis.com", { host = "litellm", allow_private = true }]
+# Used only by `h2studio egress-proxy`. Hostnames, exact or "*.suffix", reachable on ports 443
+# and 80 unless the entry lists others. Private, loopback, link-local and metadata addresses
+# are always refused unless an entry allows them, e.g.
+#   allow = ["aiplatform.googleapis.com", { host = "litellm", allow_private = true, ports = [4000] }]
 listen = "0.0.0.0:3128"
 allow = ["aiplatform.googleapis.com", "oauth2.googleapis.com"]
 

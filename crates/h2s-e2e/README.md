@@ -26,9 +26,12 @@ missing tool **fails** the suite with an explanation; nothing is skipped silentl
 ## Run
 
 ```bash
-cargo xtask e2e --harness2-home ~/harness2            # everything
-cargo xtask e2e --harness2-home ~/harness2 --filter security   # one test by name
+cargo xtask e2e --harness2-home ~/harness2                     # everything
+cargo xtask e2e --harness2-home ~/harness2 --suite browser     # one file: server_demo, browser, mcp
+cargo xtask e2e --harness2-home ~/harness2 --filter security   # tests whose NAME contains "security"
 ```
+
+A run in which no test matched fails instead of reporting success.
 
 Each test starts its own server on a free loopback port with a throwaway data directory, and
 stops it afterwards. No model credentials and no network are needed: the harness2 demo uses

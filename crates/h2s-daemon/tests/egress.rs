@@ -106,11 +106,13 @@ async fn proxy(rules: Vec<AllowRule>, tweak: impl FnOnce(&mut ProxySettings)) ->
     Proxy { addr, _stop: tx }
 }
 
-fn rule(host: &str, allow_private: bool) -> AllowRule {
+/// A rule for `host` on exactly `port` (the upstreams listen on random ports).
+fn rule(host: &str, allow_private: bool, port: u16) -> AllowRule {
     AllowRule {
         host: host.into(),
         wildcard: false,
         allow_private,
+        ports: vec![port],
     }
 }
 
@@ -141,7 +143,7 @@ async fn request(addr: SocketAddr, raw: &str) -> String {
 #[tokio::test]
 async fn connect_tunnels_to_an_allowlisted_private_host() {
     let port = echo_upstream().await;
-    let p = proxy(vec![rule("localhost", true)], |_| {}).await;
+    let p = proxy(vec![rule("localhost", true, port)], |_| {}).await;
     let mut s = TcpStream::connect(p.addr).await.unwrap();
     s.write_all(
         format!("CONNECT localhost:{port} HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n").as_bytes(),
@@ -162,7 +164,7 @@ async fn connect_tunnels_to_an_allowlisted_private_host() {
 #[tokio::test]
 async fn loopback_is_refused_without_allow_private() {
     let port = echo_upstream().await;
-    let p = proxy(vec![rule("localhost", false)], |_| {}).await;
+    let p = proxy(vec![rule("localhost", false, port)], |_| {}).await;
     let resp = request(
         p.addr,
         &format!("CONNECT localhost:{port} HTTP/1.1\r\nHost: x\r\n\r\n"),
@@ -173,9 +175,24 @@ async fn loopback_is_refused_without_allow_private() {
 }
 
 #[tokio::test]
+async fn ports_outside_the_rule_are_refused() {
+    let port = echo_upstream().await;
+    // The host is allowlisted, but on another port.
+    let other = if port == u16::MAX { port - 1 } else { port + 1 };
+    let p = proxy(vec![rule("localhost", true, other)], |_| {}).await;
+    let resp = request(
+        p.addr,
+        &format!("CONNECT localhost:{port} HTTP/1.1\r\nHost: x\r\n\r\n"),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 403"), "{resp}");
+    assert!(resp.contains("port not allowed"), "{resp}");
+}
+
+#[tokio::test]
 async fn ip_literals_and_unlisted_hosts_are_refused() {
     let port = echo_upstream().await;
-    let p = proxy(vec![rule("localhost", true)], |_| {}).await;
+    let p = proxy(vec![rule("localhost", true, port)], |_| {}).await;
     for target in [
         format!("127.0.0.1:{port}"),
         format!("[::1]:{port}"),
@@ -202,7 +219,7 @@ async fn ip_literals_and_unlisted_hosts_are_refused() {
 #[tokio::test]
 async fn absolute_form_http_is_forwarded_in_origin_form() {
     let (port, seen) = http_upstream().await;
-    let p = proxy(vec![rule("localhost", true)], |_| {}).await;
+    let p = proxy(vec![rule("localhost", true, port)], |_| {}).await;
     let resp = request(
         p.addr,
         &format!(
@@ -226,7 +243,7 @@ async fn absolute_form_http_is_forwarded_in_origin_form() {
 
 #[tokio::test]
 async fn only_proxy_requests_are_accepted() {
-    let p = proxy(vec![rule("localhost", true)], |_| {}).await;
+    let p = proxy(vec![rule("localhost", true, 1)], |_| {}).await;
     let resp = request(p.addr, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
     assert!(resp.starts_with("HTTP/1.1 400"), "{resp}");
     let resp = request(
@@ -240,7 +257,7 @@ async fn only_proxy_requests_are_accepted() {
 #[tokio::test]
 async fn idle_tunnels_are_closed() {
     let port = echo_upstream().await;
-    let p = proxy(vec![rule("localhost", true)], |s| {
+    let p = proxy(vec![rule("localhost", true, port)], |s| {
         s.idle_timeout = Duration::from_millis(400);
     })
     .await;
@@ -261,7 +278,7 @@ async fn idle_tunnels_are_closed() {
 
 #[tokio::test]
 async fn connections_beyond_the_cap_are_closed() {
-    let p = proxy(vec![rule("localhost", true)], |s| s.max_connections = 1).await;
+    let p = proxy(vec![rule("localhost", true, 1)], |s| s.max_connections = 1).await;
     let _held = TcpStream::connect(p.addr).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     let mut second = TcpStream::connect(p.addr).await.unwrap();

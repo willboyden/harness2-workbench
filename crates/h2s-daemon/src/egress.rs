@@ -2,10 +2,10 @@
 //! through (ARCHITECTURE.md §9).
 //!
 //! - `CONNECT host:port` tunnels and absolute-form `http://` requests; nothing else.
-//! - Hostname allowlist: exact names or `*.suffix` (subdomains only). IP literals never
-//!   match.
-//! - Resolve, check every address, then connect to the address that was checked (no second
-//!   lookup an attacker could race).
+//! - Hostname allowlist: exact names or `*.suffix` (subdomains only), each on its own
+//!   ports (443 and 80 unless the entry lists others). IP literals never match.
+//! - Resolve, check every address, then connect only to addresses that were checked (no
+//!   second lookup an attacker could race), trying the next one when one is unreachable.
 //! - Loopback, private, link-local (cloud metadata), CGNAT and unique-local addresses are
 //!   refused unless the matching entry has `allow_private`; unspecified, multicast,
 //!   broadcast, documentation and other reserved addresses are always refused.
@@ -160,17 +160,42 @@ pub fn normalize_host(h: &str) -> Option<String> {
     labels_ok.then_some(h)
 }
 
+fn host_matches(r: &AllowRule, host: &str) -> bool {
+    if r.wildcard {
+        host.len() > r.host.len() + 1
+            && host.ends_with(&r.host)
+            && host.as_bytes()[host.len() - r.host.len() - 1] == b'.'
+    } else {
+        host == r.host
+    }
+}
+
 /// The first rule matching `host` (already normalized).
 #[must_use]
 pub fn matching_rule<'a>(rules: &'a [AllowRule], host: &str) -> Option<&'a AllowRule> {
-    rules.iter().find(|r| {
-        if r.wildcard {
-            host.len() > r.host.len() + 1
-                && host.ends_with(&r.host)
-                && host.as_bytes()[host.len() - r.host.len() - 1] == b'.'
-        } else {
-            host == r.host
+    rules.iter().find(|r| host_matches(r, host))
+}
+
+/// The first rule matching `host` that also allows `port`.
+///
+/// # Errors
+/// Why no rule applies: the host is not listed, or not on that port.
+pub fn rule_for<'a>(
+    rules: &'a [AllowRule],
+    host: &str,
+    port: u16,
+) -> Result<&'a AllowRule, &'static str> {
+    let mut listed = false;
+    for r in rules.iter().filter(|r| host_matches(r, host)) {
+        if r.ports.contains(&port) {
+            return Ok(r);
         }
+        listed = true;
+    }
+    Err(if listed {
+        "port not allowed for this host"
+    } else {
+        "not on the allowlist"
     })
 }
 
@@ -197,35 +222,52 @@ fn text_response(status: StatusCode, msg: &str) -> Response<ProxyBody> {
     r
 }
 
-/// Resolve `host`, check every address, and connect to the first (pinned) one.
+/// Resolve `host`, check every address, then connect to the checked addresses in order
+/// (the next one when one is unreachable, e.g. IPv6 without a route), all within
+/// `connect_timeout`. Only checked addresses are ever dialled.
 async fn resolve_and_connect(
     s: &ProxySettings,
     rule: &AllowRule,
     host: &str,
     port: u16,
 ) -> Result<TcpStream, (StatusCode, String)> {
-    let addrs: Vec<SocketAddr> =
+    let mut addrs: Vec<SocketAddr> =
         match tokio::time::timeout(s.dns_timeout, tokio::net::lookup_host((host, port))).await {
             Ok(Ok(a)) => a.collect(),
             Ok(Err(e)) => return Err((StatusCode::BAD_GATEWAY, format!("cannot resolve: {e}"))),
             Err(_) => return Err((StatusCode::GATEWAY_TIMEOUT, "DNS timeout".to_owned())),
         };
-    let Some(first) = addrs.first().copied() else {
+    if addrs.is_empty() {
         return Err((StatusCode::BAD_GATEWAY, "no address".to_owned()));
-    };
+    }
     for a in &addrs {
         if let Err(why) = check_ip(a.ip(), rule.allow_private) {
             return Err((StatusCode::FORBIDDEN, format!("resolves to a {why}")));
         }
     }
-    match tokio::time::timeout(s.connect_timeout, TcpStream::connect(first)).await {
-        Ok(Ok(stream)) => {
-            let _ = stream.set_nodelay(true);
-            Ok(stream)
+    let mut seen = std::collections::HashSet::new();
+    addrs.retain(|a| seen.insert(*a));
+    connect_any(addrs, s.connect_timeout).await
+}
+
+/// Connect to `addrs` in order, moving on when one fails, all within `timeout`.
+async fn connect_any(
+    addrs: Vec<SocketAddr>,
+    timeout: Duration,
+) -> Result<TcpStream, (StatusCode, String)> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut last = String::from("no address");
+    for a in addrs {
+        match tokio::time::timeout_at(deadline, TcpStream::connect(a)).await {
+            Ok(Ok(stream)) => {
+                let _ = stream.set_nodelay(true);
+                return Ok(stream);
+            }
+            Ok(Err(e)) => last = format!("connect failed: {e}"),
+            Err(_) => return Err((StatusCode::GATEWAY_TIMEOUT, "connect timeout".to_owned())),
         }
-        Ok(Err(e)) => Err((StatusCode::BAD_GATEWAY, format!("connect failed: {e}"))),
-        Err(_) => Err((StatusCode::GATEWAY_TIMEOUT, "connect timeout".to_owned())),
     }
+    Err((StatusCode::BAD_GATEWAY, last))
 }
 
 async fn copy_half<R, W>(r: &mut R, w: &mut W, start: Instant, last: &AtomicU64)
@@ -352,12 +394,15 @@ async fn handle(
             "denied: only allowlisted host names are reachable",
         ));
     };
-    let Some(rule) = matching_rule(&s.rules, &host).cloned() else {
-        log_decision(peer, &host, port, false, "not on the allowlist");
-        return Ok(text_response(
-            StatusCode::FORBIDDEN,
-            "denied: host not allowlisted",
-        ));
+    let rule = match rule_for(&s.rules, &host, port) {
+        Ok(r) => r.clone(),
+        Err(why) => {
+            log_decision(peer, &host, port, false, why);
+            return Ok(text_response(
+                StatusCode::FORBIDDEN,
+                &format!("denied: {why}"),
+            ));
+        }
     };
     let upstream = match resolve_and_connect(&s, &rule, &host, port).await {
         Ok(u) => u,
@@ -490,6 +535,7 @@ mod tests {
             host: host.into(),
             wildcard,
             allow_private,
+            ports: crate::config::DEFAULT_EGRESS_PORTS.to_vec(),
         }
     }
 
@@ -557,6 +603,53 @@ mod tests {
         assert!(normalize_host("[::1]").is_none());
         assert!(normalize_host("a b").is_none());
         assert!(normalize_host("-a.com").is_none());
+    }
+
+    #[tokio::test]
+    async fn connect_falls_back_to_the_next_checked_address() {
+        let good = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let good_addr = good.local_addr().unwrap();
+        let closed_addr = {
+            let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            l.local_addr().unwrap()
+        };
+        let s = connect_any(vec![closed_addr, good_addr], Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(s.peer_addr().unwrap(), good_addr);
+        let (status, why) = connect_any(vec![closed_addr], Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(why.starts_with("connect failed"), "{why}");
+        let (status, _) = connect_any(Vec::new(), Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn ports_are_part_of_a_rule() {
+        let mut litellm = rule("litellm", false, true);
+        litellm.ports = vec![4000];
+        let rules = vec![rule("github.com", false, false), litellm.clone()];
+        assert!(rule_for(&rules, "github.com", 443).is_ok());
+        assert!(rule_for(&rules, "github.com", 80).is_ok());
+        assert_eq!(
+            rule_for(&rules, "github.com", 22),
+            Err("port not allowed for this host")
+        );
+        assert_eq!(rule_for(&rules, "litellm", 4000), Ok(&litellm));
+        assert!(rule_for(&rules, "litellm", 443).is_err());
+        assert_eq!(
+            rule_for(&rules, "example.com", 443),
+            Err("not on the allowlist")
+        );
+        // A later entry for the same host can open another port.
+        let mut ssh = rule("github.com", false, false);
+        ssh.ports = vec![22];
+        let rules = vec![rule("github.com", false, false), ssh.clone()];
+        assert_eq!(rule_for(&rules, "github.com", 22), Ok(&ssh));
     }
 
     #[test]

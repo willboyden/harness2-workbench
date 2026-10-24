@@ -567,9 +567,9 @@ struct StepOutcome {
 }
 
 fn passthrough_env(cmd: &mut tokio::process::Command, runtime_env: bool) {
-    for name in h2s_core::env::BASE_ENV_PASSTHROUGH {
-        if let Some(v) = std::env::var_os(name) {
-            cmd.env(name, v);
+    for (name, value) in std::env::vars_os() {
+        if name.to_str().is_some_and(h2s_core::env::is_passed_through) {
+            cmd.env(name, value);
         }
     }
     if runtime_env {

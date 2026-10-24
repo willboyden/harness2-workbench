@@ -25,12 +25,14 @@ pub async fn run_probe(p: &Probe) -> ProbeResult {
         .stderr(std::process::Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
-    for name in h2s_core::env::BASE_ENV_PASSTHROUGH
-        .iter()
-        .chain(crate::jobs::container::RUNTIME_ENV_PASSTHROUGH)
-    {
-        if let Some(v) = std::env::var_os(name) {
-            cmd.env(name, v);
+    // The same variables jobs get, so a probe finds what a job would (e.g. uv's managed
+    // Python), plus what the container runtime CLI needs.
+    for (name, value) in std::env::vars_os() {
+        if name.to_str().is_some_and(|n| {
+            h2s_core::env::is_passed_through(n)
+                || crate::jobs::container::RUNTIME_ENV_PASSTHROUGH.contains(&n)
+        }) {
+            cmd.env(name, value);
         }
     }
     let not_found = |found: bool, err: String| ProbeResult {
