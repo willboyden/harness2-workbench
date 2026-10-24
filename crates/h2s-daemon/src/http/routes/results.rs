@@ -16,7 +16,7 @@ use http::{HeaderValue, header};
 use serde::Deserialize;
 
 use super::experiments::{locate, open_dir};
-use super::{blocking, check_name, clamp_limit};
+use super::{check_name, clamp_limit, results_read};
 use crate::error::ApiError;
 use crate::http::AppState;
 use crate::http::extract::{ApiQuery, Auth, ViewerRole};
@@ -139,7 +139,7 @@ pub async fn tasks(
         None => 0,
     };
     let kind = rec.kind;
-    let rows = blocking(move || Ok(open_dir(&path, kind)?.tasks(&ns)?)).await?;
+    let rows = results_read(&state, move || Ok(open_dir(&path, kind)?.tasks(&ns)?)).await?;
     let filtered: Vec<TaskRow> = rows
         .into_iter()
         .filter(|r| q.domain.as_ref().is_none_or(|d| &r.domain == d))
@@ -169,7 +169,10 @@ pub async fn task(
     task_slug(&p.task)?;
     let kind = rec.kind;
     Ok(Json(
-        blocking(move || Ok(open_dir(&path, kind)?.task(&ns, &p.task)?)).await?,
+        results_read(&state, move || {
+            Ok(open_dir(&path, kind)?.task(&ns, &p.task)?)
+        })
+        .await?,
     ))
 }
 
@@ -190,7 +193,10 @@ pub async fn harness(
     label("label", &p.label)?;
     let kind = rec.kind;
     Ok(Json(
-        blocking(move || Ok(open_dir(&path, kind)?.harness(&ns, &p.task, m, &p.label)?)).await?,
+        results_read(&state, move || {
+            Ok(open_dir(&path, kind)?.harness(&ns, &p.task, m, &p.label)?)
+        })
+        .await?,
     ))
 }
 
@@ -221,7 +227,10 @@ pub async fn diff(
     label("to", &q.to)?;
     let kind = rec.kind;
     Ok(Json(
-        blocking(move || Ok(open_dir(&path, kind)?.diff(&ns, &p.task, m, &q.from, &q.to)?)).await?,
+        results_read(&state, move || {
+            Ok(open_dir(&path, kind)?.diff(&ns, &p.task, m, &q.from, &q.to)?)
+        })
+        .await?,
     ))
 }
 
@@ -261,7 +270,7 @@ pub async fn export(
     let kind = rec.kind;
     let target = q.target;
     let lbl = p.label.clone();
-    let bundle = blocking(move || {
+    let bundle = results_read(&state, move || {
         let tree = open_dir(&path, kind)?.harness(&ns, &p.task, m, &p.label)?;
         Ok(h2s_core::export::export(&tree, target)?)
     })
@@ -269,7 +278,8 @@ pub async fn export(
     match q.format {
         ExportFormat::Json => Ok(Json(bundle).into_response()),
         ExportFormat::TarGz => {
-            let bytes = blocking(move || Ok(h2s_core::export::tar_gz(&bundle)?)).await?;
+            let bytes =
+                results_read(&state, move || Ok(h2s_core::export::tar_gz(&bundle)?)).await?;
             let target_name = match target {
                 ExportTarget::Raw => "raw",
                 ExportTarget::Opencode => "opencode",
@@ -317,9 +327,9 @@ pub async fn rollout_files(
     check_name("path", h2s_core::names::relative_path(&sub))?;
     let kind = rec.kind;
     Ok(Json(
-        blocking(
-            move || Ok(open_dir(&path, kind)?.rollout_files(&ns, &p.task, m, &p.label, &sub)?),
-        )
+        results_read(&state, move || {
+            Ok(open_dir(&path, kind)?.rollout_files(&ns, &p.task, m, &p.label, &sub)?)
+        })
         .await?,
     ))
 }
@@ -352,7 +362,7 @@ pub async fn rollout_file(
     }
     let kind = rec.kind;
     Ok(Json(
-        blocking(move || {
+        results_read(&state, move || {
             Ok(open_dir(&path, kind)?.rollout_file(
                 &ns,
                 &p.task,
@@ -379,7 +389,7 @@ pub async fn scores(
     let ns = sweep_ns(&p.sweep)?;
     let kind = rec.kind;
     Ok(Json(
-        blocking(move || Ok(open_dir(&path, kind)?.scores(&ns)?)).await?,
+        results_read(&state, move || Ok(open_dir(&path, kind)?.scores(&ns)?)).await?,
     ))
 }
 
@@ -396,7 +406,7 @@ pub async fn report(
     let ns = sweep_ns(&p.sweep)?;
     let kind = rec.kind;
     Ok(Json(
-        blocking(move || Ok(open_dir(&path, kind)?.report(&ns)?)).await?,
+        results_read(&state, move || Ok(open_dir(&path, kind)?.report(&ns)?)).await?,
     ))
 }
 
@@ -413,7 +423,7 @@ pub async fn library(
     let ns = sweep_ns(&p.sweep)?;
     let kind = rec.kind;
     Ok(Json(
-        blocking(move || Ok(open_dir(&path, kind)?.library(&ns)?)).await?,
+        results_read(&state, move || Ok(open_dir(&path, kind)?.library(&ns)?)).await?,
     ))
 }
 
@@ -430,7 +440,7 @@ pub async fn audit_sessions(
     let ns = sweep_ns(&p.sweep)?;
     let kind = rec.kind;
     Ok(Json(
-        blocking(move || Ok(open_dir(&path, kind)?.audit(&ns)?)).await?,
+        results_read(&state, move || Ok(open_dir(&path, kind)?.audit(&ns)?)).await?,
     ))
 }
 
@@ -466,7 +476,7 @@ pub async fn audit_text(
         ));
     }
     let kind = rec.kind;
-    let text = blocking(move || {
+    let text = results_read(&state, move || {
         Ok(open_dir(&path, kind)?.audit_text(&ns, &p.session, &p.part, DEFAULT_READ_CAP)?)
     })
     .await?;
@@ -513,7 +523,7 @@ pub async fn compare(
     let (na, nb) = (sweep_ns(&sa)?, sweep_ns(&sb)?);
     let (ka, kb) = (ra.kind, rb.kind);
     let (la, lb) = (q.a.clone(), q.b.clone());
-    let cmp = blocking(move || {
+    let cmp = results_read(&state, move || {
         let da = open_dir(&pa, ka)?;
         let db = open_dir(&pb, kb)?;
         let scores_a = da.scores(&na)?;

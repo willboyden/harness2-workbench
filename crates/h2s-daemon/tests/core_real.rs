@@ -814,6 +814,84 @@ async fn results_endpoints_on_real_demo_output() {
     t.stop().await;
 }
 
+/// One sweep that cannot be read (here a judged.json over the reader's row cap) is left out
+/// of the experiment's sweep list, and the others are still listed; its own views say why
+/// (413).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_sweep_that_cannot_be_read_does_not_hide_the_others() {
+    let t = core_server().await;
+    copy_fixture("std", &t.experiment_dir("std-bad"));
+    let row = json!({"task_id": "x", "mode": "agg", "k": 2});
+    let rows: Vec<&serde_json::Value> = std::iter::repeat_n(&row, 100_001).collect();
+    std::fs::write(
+        t.experiment_dir("std-bad")
+            .join("lab/adapt/lab-oc-agg2/judged.json"),
+        serde_json::to_vec(&rows).unwrap(),
+    )
+    .unwrap();
+    let ids = |e: &Experiment| -> Vec<String> { e.sweeps.iter().map(|s| s.id.clone()).collect() };
+    let created = adopt(&t, "std", "std-ok", "standard").await;
+    assert!(
+        ids(&created).contains(&"lab-oc-agg2".to_owned()),
+        "{:?}",
+        ids(&created)
+    );
+    let r = t
+        .post("/api/v1/experiments", Some(&t.operator))
+        .json(&json!({"name": "std-bad", "kind": "standard"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    let bad: Experiment = r.json().await.unwrap();
+    let mut expected = ids(&created);
+    expected.retain(|id| id != "lab-oc-agg2");
+    assert_eq!(ids(&bad), expected);
+    assert!(expected.contains(&"lab-oc-agg1".to_owned()));
+    let one: Experiment = get_json(&t, "/api/v1/experiments/std-bad").await;
+    assert_eq!(ids(&one), expected);
+    let all: Vec<Experiment> = get_json(&t, "/api/v1/experiments").await;
+    let listed = all.iter().find(|e| e.name == "std-bad").unwrap();
+    assert_eq!(ids(listed), expected);
+    let r = t
+        .get(
+            "/api/v1/experiments/std-bad/sweeps/lab-oc-agg2/scores",
+            Some(&t.viewer),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 413);
+    let e: h2s_api::ErrorBody = r.json().await.unwrap();
+    assert_eq!(e.error.code, h2s_api::ErrorCode::PayloadTooLarge);
+    assert!(e.error.message.contains("100000 rows"), "{e:?}");
+    t.stop().await;
+}
+
+/// Results reads take one of the server's `RESULTS_READS` permits: with all of them held,
+/// a read waits; once they are free it is answered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn results_reads_wait_for_a_permit() {
+    let t = core_server().await;
+    adopt(&t, "std", "std-sem", "standard").await;
+    let path = "/api/v1/experiments/std-sem/sweeps/lab-oc-agg1/scores";
+    let n = u32::try_from(h2s_daemon::http::routes::RESULTS_READS).unwrap();
+    let permits = std::sync::Arc::clone(&t.srv().state.results_reads)
+        .acquire_many_owned(n)
+        .await
+        .unwrap();
+    let err = t
+        .get(path, Some(&t.viewer))
+        .timeout(std::time::Duration::from_millis(700))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(err.is_timeout(), "{err}");
+    drop(permits);
+    assert_eq!(status_of(&t, path).await, 200);
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn results_endpoints_on_a_standard_experiment() {
     let t = core_server().await;

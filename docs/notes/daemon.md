@@ -101,7 +101,19 @@ Keys beyond §11 (all optional, defaults shown):
   `ETag` for everything except content-hashed names (`name-<8+ hex>.ext`), which are `immutable`.
 - **Results**: `GET .../sweeps/{sweep}/tasks?status=` takes harness2's statuses (`ok`,
   `skipped`, `partial`, `base-failed`, `running`, `exception`) and the reader's `too-large` and
-  `unreadable` (a `summary.json` over 4 MiB, or not a JSON object); anything else is 422.
+  `unreadable` (a `summary.json` over 4 MiB, or not a JSON object); anything else is 422. Data
+  over one of h2s-core's reader caps (`CoreError::TooLarge`: summaries, judged files, harness
+  trees, sweeps with too many tasks) is 413 `payload_too_large`, naming the limit. At most 4
+  results reads run at once (`http::routes::RESULTS_READS`); more wait for a permit, within the
+  request timeout.
+- **Sweep lists** (`Experiment.sweeps` in every experiment view): read one sweep at a time with
+  `ExperimentDir::sweep_namespaces()` and `ExperimentDir::sweep()` (h2s-core wrappers added for
+  this, additive after contract v1.2), so a sweep that cannot be read (for example a judged
+  file over the row cap) is left out of the list, with one warning naming the experiment, the
+  sweep and the error, and the other sweeps are still listed. Each sweep's summary is cached
+  until its stamp changes (the sweep directory, each task's `summary.json` and the judged
+  files: size, modification time, inode) or for at most 5 minutes, so `GET /experiments` does
+  not parse every summary of every experiment on each call.
 - **Metrics** route labels are matched route templates (`/api/v1/jobs/{id}`), `unmatched` or
   `static`; unknown methods are `OTHER`; at most 50 `experiment` labels, then `other`.
 

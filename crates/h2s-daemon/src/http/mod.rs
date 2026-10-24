@@ -11,6 +11,7 @@ pub mod openapi;
 pub mod routes;
 pub mod server;
 pub mod static_ui;
+pub mod sweeps;
 
 use std::net::SocketAddr;
 use std::ops::Deref;
@@ -52,6 +53,11 @@ pub struct AppInner {
     /// ([`extract::AUDITED_FAILURES_PER_MINUTE`]); further failures are only counted.
     pub failure_audits: RateLimiter,
     pub doctor: DoctorService,
+    /// Bounds the blocking reads of experiment results running at once
+    /// ([`routes::RESULTS_READS`]); more wait for a permit.
+    pub results_reads: Arc<tokio::sync::Semaphore>,
+    /// Sweep summaries for the experiment views (see [`sweeps`]).
+    pub sweep_cache: Arc<sweeps::SweepCache>,
     /// `Host` values this server answers to (configured + loopback forms of the bound port).
     pub hosts: Vec<HostEntry>,
     pub sse_open: AtomicUsize,

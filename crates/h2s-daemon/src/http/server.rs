@@ -176,6 +176,8 @@ impl Server {
             auth_failures: RateLimiter::new(super::extract::AUTH_FAILURES_PER_MINUTE),
             failure_audits: RateLimiter::new(super::extract::AUDITED_FAILURES_PER_MINUTE),
             doctor: DoctorService::default(),
+            results_reads: Arc::new(tokio::sync::Semaphore::new(super::routes::RESULTS_READS)),
+            sweep_cache: Arc::new(super::sweeps::SweepCache::default()),
             hosts,
             sse_open: AtomicUsize::new(0),
             sse_by_principal: std::sync::Mutex::new(std::collections::HashMap::new()),

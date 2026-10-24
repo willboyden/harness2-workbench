@@ -14,7 +14,7 @@ use h2s_core::results::ExperimentDir;
 use http::StatusCode;
 use serde::Deserialize;
 
-use super::{blocking, check_name};
+use super::{blocking, check_name, results_read};
 use crate::db::experiments::ExperimentRecord;
 use crate::error::ApiError;
 use crate::http::AppState;
@@ -60,23 +60,29 @@ pub(crate) async fn locate(
     Ok((rec, path))
 }
 
+/// The API view of an experiment: its record plus the sweeps on disk (one at a time and
+/// cached, see `http::sweeps`; a sweep that cannot be read is left out and logged) and,
+/// with `with_size`, the size of its directory.
 async fn view(
+    state: &AppState,
     rec: ExperimentRecord,
     path: Option<PathBuf>,
     with_size: bool,
 ) -> Result<Experiment, ApiError> {
     let kind = rec.kind;
     let name = rec.name.clone();
+    let cache = std::sync::Arc::clone(&state.sweep_cache);
     let (sweeps, size) = match path {
         Some(p) => {
-            blocking(move || {
-                let Ok(dir) = open_dir(&p, kind) else {
-                    return Ok((Vec::new(), None));
+            results_read(state, move || {
+                let dir = match open_dir(&p, kind) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::warn!(experiment = %name, error = %e.message, "could not open an experiment's directory");
+                        return Ok((Vec::new(), None));
+                    }
                 };
-                let sweeps = dir.sweeps().unwrap_or_else(|e| {
-                    tracing::debug!(experiment = %name, error = %e, "could not list sweeps");
-                    Vec::new()
-                });
+                let sweeps = cache.list(&name, &p, kind, &dir);
                 let size = if with_size {
                     dir.size_bytes().ok()
                 } else {
@@ -128,7 +134,7 @@ pub async fn list(
         let root = state.cfg.paths.experiments_dir.clone();
         let n = rec.name.clone();
         let path = blocking(move || Ok(crate::expdirs::existing(&root, &n).ok())).await?;
-        out.push(view(rec, path, false).await?);
+        out.push(view(&state, rec, path, false).await?);
     }
     Ok(Json(out))
 }
@@ -245,7 +251,7 @@ pub async fn create(
             other => other.into(),
         });
     }
-    let exp = view(rec, Some(path), false).await?;
+    let exp = view(&state, rec, Some(path), false).await?;
     Ok((StatusCode::CREATED, Json(exp)).into_response())
 }
 
@@ -259,7 +265,7 @@ pub async fn get_one(
     Path(exp): Path<String>,
 ) -> Result<Json<Experiment>, ApiError> {
     let (rec, path) = locate(&state, &exp).await?;
-    Ok(Json(view(rec, Some(path), true).await?))
+    Ok(Json(view(&state, rec, Some(path), true).await?))
 }
 
 /// Change description, tags or the archived flag.
@@ -306,7 +312,7 @@ pub async fn update(
         })
         .await?
         .ok_or_else(|| ApiError::not_found(format!("no experiment named {exp}")))?;
-    Ok(Json(view(rec, Some(path), false).await?))
+    Ok(Json(view(&state, rec, Some(path), false).await?))
 }
 
 /// Replace absolute host paths in an argv with placeholders.
@@ -422,7 +428,7 @@ pub async fn manifest(
     let home = state.cfg.paths.harness2_home.clone();
     let managed = state.cfg.paths.harness2_managed;
     let kind = rec.kind;
-    let (identities, digest, status) = blocking(move || {
+    let (identities, digest, status) = results_read(&state, move || {
         let dir = open_dir(&path, kind)?;
         let identities = dir.sweep_identities()?;
         let digest = dir.results_digest()?;
