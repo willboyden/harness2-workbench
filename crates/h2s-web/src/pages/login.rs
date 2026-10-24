@@ -75,6 +75,11 @@ pub(crate) fn Login() -> impl IntoView {
                 Err(e) => {
                     let msg = if e.is_unauthorized() {
                         "The server did not accept this token. Check that it was copied completely and has not been revoked or expired.".to_owned()
+                    } else if e.status == 429 {
+                        format!(
+                            "Too many sign-in attempts from this address. Wait a minute before trying again. ({})",
+                            e.message
+                        )
                     } else {
                         e.to_string()
                     };

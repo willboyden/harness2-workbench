@@ -271,9 +271,10 @@ pub(crate) fn apply_event(job: &mut Job, ev: &JobEvent) -> bool {
     }
 }
 
-/// Operators and admins may cancel a job that has not finished.
+/// A job that has not finished may be cancelled by anyone whose role could have started
+/// it: operators for most kinds, admins for installs, benchmark setup and the bridge.
 pub(crate) fn can_cancel(role: Role, job: &Job) -> bool {
-    role.allows(Role::Operator) && !job.status.is_terminal()
+    role.allows(job.spec.required_role()) && !job.status.is_terminal()
 }
 
 /// The sweep a finished run produced: `(experiment, summary namespace)`.
@@ -466,6 +467,14 @@ mod tests {
         let mut j = job();
         assert!(can_cancel(Role::Operator, &j));
         assert!(!can_cancel(Role::Viewer, &j));
+        let mut install = job();
+        install.spec = JobSpec::InstallHarness2(h2s_api::InstallParams {
+            rev: None,
+            extras: vec![],
+            reinstall: false,
+        });
+        assert!(!can_cancel(Role::Operator, &install));
+        assert!(can_cancel(Role::Admin, &install));
         j.status = JobStatus::Succeeded;
         assert!(!can_cancel(Role::Admin, &j));
     }

@@ -101,6 +101,7 @@ pub(crate) fn Help() -> impl IntoView {
 
             <section id="components" aria-labelledby="components-title" class="card">
                 <h2 id="components-title" class="card-title">"The eight harness components"</h2>
+                <div class="table-wrap">
                 <table class="table">
                     <thead>
                         <tr>
@@ -126,6 +127,7 @@ pub(crate) fn Help() -> impl IntoView {
                             .collect_view()}
                     </tbody>
                 </table>
+                </div>
             </section>
 
             <section id="faq" aria-labelledby="faq-title" class="card">
@@ -145,6 +147,7 @@ pub(crate) fn Help() -> impl IntoView {
 
             <section id="shortcuts" aria-labelledby="shortcuts-title" class="card">
                 <h2 id="shortcuts-title" class="card-title">"Keyboard shortcuts"</h2>
+                <div class="table-wrap">
                 <table class="table">
                     <thead>
                         <tr>
@@ -159,6 +162,7 @@ pub(crate) fn Help() -> impl IntoView {
                             .collect_view()}
                     </tbody>
                 </table>
+                </div>
             </section>
         </div>
     }

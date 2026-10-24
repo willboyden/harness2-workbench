@@ -99,7 +99,11 @@ impl Toasts {
     pub(crate) fn error(&self, title: &str, err: &ApiError) {
         // A 401 already sends the user to sign in; no need for a second message.
         if !err.is_unauthorized() {
-            self.push(Tone::Danger, title, &err.to_string(), None);
+            let body = match &err.request_id {
+                Some(id) => format!("{err} (request id {id})"),
+                None => err.to_string(),
+            };
+            self.push(Tone::Danger, title, &body, None);
         }
     }
 
