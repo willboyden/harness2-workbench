@@ -601,6 +601,44 @@ async fn adopt(t: &TestServer, fixture: &str, name: &str, kind: &str) -> Experim
     r.json().await.unwrap()
 }
 
+/// Tasks whose `summary.json` cannot be used are listed as `too-large` (over 4 MiB, never
+/// read) or `unreadable`, and the status filter accepts both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tasks_filter_by_the_unreadable_summary_statuses() {
+    let t = core_server().await;
+    copy_fixture("demo-k2", &t.experiment_dir("demo-st"));
+    let sweep = t.experiment_dir("demo-st").join("runs/demo-oc-agg2");
+    std::fs::write(sweep.join("ledger-1/summary.json"), "not json").unwrap();
+    let big = format!("{{\"pad\": \"{}\"}}", "x".repeat(5 * 1024 * 1024));
+    std::fs::write(sweep.join("ledger-2/summary.json"), big).unwrap();
+    let r = t
+        .post("/api/v1/experiments", Some(&t.operator))
+        .json(&json!({"name": "demo-st", "kind": "demo"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    let base = "/api/v1/experiments/demo-st/sweeps/demo-oc-agg2";
+    let all: Page<TaskRow> = get_json(&t, &format!("{base}/tasks")).await;
+    let mut statuses: Vec<&str> = all.items.iter().map(|r| r.status.as_str()).collect();
+    statuses.sort_unstable();
+    assert_eq!(statuses, vec!["too-large", "unreadable"]);
+    for (status, task) in [("too-large", "ledger-2"), ("unreadable", "ledger-1")] {
+        let rows: Page<TaskRow> = get_json(&t, &format!("{base}/tasks?status={status}")).await;
+        let ids: Vec<&str> = rows.items.iter().map(|r| r.task_id.as_str()).collect();
+        assert_eq!(ids, vec![task], "{status}");
+    }
+    let r = t
+        .get(&format!("{base}/tasks?status=weird"), Some(&t.viewer))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 422);
+    let e: h2s_api::ErrorBody = r.json().await.unwrap();
+    assert!(e.error.message.contains("too-large or unreadable"), "{e:?}");
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn results_endpoints_on_real_demo_output() {
     let t = core_server().await;

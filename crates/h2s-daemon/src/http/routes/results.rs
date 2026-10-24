@@ -78,12 +78,27 @@ fn task_slug(s: &str) -> Result<(), ApiError> {
     check_name("task", h2s_core::names::task_slug(s))
 }
 
+/// Values of `TaskRow.status`: harness2's own, and the two the reader reports for a
+/// summary it cannot use.
+pub const TASK_STATUSES: &[&str] = &[
+    "ok",
+    "skipped",
+    "partial",
+    "base-failed",
+    "running",
+    "exception",
+    "too-large",
+    "unreadable",
+];
+
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[serde(deny_unknown_fields)]
 pub struct TasksQuery {
     /// Only tasks of this domain.
     pub domain: Option<String>,
-    /// Only tasks with this status (`ok`, `skipped`, `partial`, `base-failed`, `running`).
+    /// Only tasks with this status: as harness2 records it (`ok`, `skipped`, `partial`,
+    /// `base-failed`, `running`, `exception`), or `too-large` / `unreadable` for a
+    /// `summary.json` the server cannot read (over 4 MiB, or not a JSON object).
     pub status: Option<String>,
     /// Page size (1..=1000, default 200).
     pub limit: Option<u32>,
@@ -106,14 +121,12 @@ pub async fn tasks(
         check_name("domain", h2s_core::names::domain(d))?;
     }
     if let Some(s) = &q.status
-        && !matches!(
-            s.as_str(),
-            "ok" | "skipped" | "partial" | "base-failed" | "running" | "exception"
-        )
+        && !TASK_STATUSES.contains(&s.as_str())
     {
         return Err(ApiError::invalid(
             "status",
-            "must be ok, skipped, partial, base-failed, running or exception",
+            "must be ok, skipped, partial, base-failed, running, exception, too-large or \
+             unreadable",
         ));
     }
     let limit = usize::try_from(clamp_limit(q.limit, 200, 1000)).unwrap_or(200);

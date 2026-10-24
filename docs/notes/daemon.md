@@ -99,6 +99,9 @@ Keys beyond §11 (all optional, defaults shown):
   at build time; other non-API GETs return `index.html`. Without `dist/web` the server builds and
   serves a page saying `UI not built — run cargo xtask web`. `Cache-Control: no-cache` with an
   `ETag` for everything except content-hashed names (`name-<8+ hex>.ext`), which are `immutable`.
+- **Results**: `GET .../sweeps/{sweep}/tasks?status=` takes harness2's statuses (`ok`,
+  `skipped`, `partial`, `base-failed`, `running`, `exception`) and the reader's `too-large` and
+  `unreadable` (a `summary.json` over 4 MiB, or not a JSON object); anything else is 422.
 - **Metrics** route labels are matched route templates (`/api/v1/jobs/{id}`), `unmatched` or
   `static`; unknown methods are `OTHER`; at most 50 `experiment` labels, then `other`.
 
