@@ -9,6 +9,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use h2w_api::{
     AnonId, AuditSession, BaseJudgedRow, BaseRun, Comparison, Experience, ExperimentKind,
@@ -73,15 +75,15 @@ pub(crate) const MAX_ROLLOUT_ENTRIES: usize = 20_000;
 pub(crate) const MAX_DIGEST_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// Bytes read so far by one view, refused past `limit`.
-struct Budget {
+struct ViewTotal {
     used: u64,
     limit: u64,
     what: &'static str,
 }
 
-impl Budget {
+impl ViewTotal {
     fn new(limit: u64, what: &'static str) -> Self {
-        Budget {
+        ViewTotal {
             used: 0,
             limit,
             what,
@@ -99,6 +101,132 @@ impl Budget {
             )));
         }
         Ok(())
+    }
+}
+
+/// What one request may read through several [`ExperimentDir`] calls: a number of bytes of
+/// results files, a number of sweeps, and an optional cancellation flag. Additive after
+/// contract v1.2.
+///
+/// Every view keeps its own caps; a budget adds a total across calls. Pass the same budget
+/// to each `*_with` method that serves one request (`sweep_with`, `sweeps_with`,
+/// `tasks_with`, `scores_with`, `report_with`, `spend_usd_with`, `results_digest_with`).
+/// The method without `_with` is the same call with [`ReadBudget::unlimited`].
+///
+/// - Bytes: each results file a `_with` call reads (`summary.json`, `judged.json`,
+///   `base_judged.json`, the sweep record, the files of the results digest) is charged its
+///   size before it is read; a file that does not fit is not read, and the call fails with
+///   [`CoreError::TooLarge`]. A file over its own cap is flagged or recorded by size as
+///   usual, without being read or charged.
+/// - Sweeps: each sweep a call reads costs one (`sweeps_with` and `results_digest_with`
+///   one per sweep); one more than allowed is [`CoreError::TooLarge`].
+/// - Cancellation: once the flag is set, the next check (before each file and each sweep)
+///   fails with [`CoreError::Cancelled`]. A read already started finishes first; each one
+///   is bounded by its file's cap.
+///
+/// What was charged stays charged when a call fails, so a request that keeps going after
+/// an error still cannot read more than its budget.
+#[derive(Debug)]
+pub struct ReadBudget {
+    bytes: u64,
+    bytes_used: u64,
+    sweeps: u32,
+    sweeps_used: u32,
+    cancel: Option<Arc<AtomicBool>>,
+    /// Tests: set the flag once this many more files have been charged.
+    #[cfg(test)]
+    cancel_after_files: Option<u32>,
+}
+
+impl ReadBudget {
+    /// At most `bytes` bytes of results files and `sweeps` sweeps.
+    #[must_use]
+    pub fn new(bytes: u64, sweeps: u32) -> Self {
+        ReadBudget {
+            bytes,
+            bytes_used: 0,
+            sweeps,
+            sweeps_used: 0,
+            cancel: None,
+            #[cfg(test)]
+            cancel_after_files: None,
+        }
+    }
+
+    /// No total beyond each view's own caps: what the methods without `_with` use.
+    #[must_use]
+    pub fn unlimited() -> Self {
+        Self::new(u64::MAX, u32::MAX)
+    }
+
+    /// Also fail with [`CoreError::Cancelled`] once `flag` is set (the caller sets it when
+    /// it gives up on the request, e.g. on a timeout).
+    #[must_use]
+    pub fn with_cancel(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(flag);
+        self
+    }
+
+    /// Bytes charged so far.
+    #[must_use]
+    pub fn bytes_used(&self) -> u64 {
+        self.bytes_used
+    }
+
+    /// Sweeps charged so far.
+    #[must_use]
+    pub fn sweeps_used(&self) -> u32 {
+        self.sweeps_used
+    }
+
+    fn check(&self) -> Result<()> {
+        match &self.cancel {
+            Some(flag) if flag.load(Ordering::Relaxed) => Err(CoreError::Cancelled),
+            _ => Ok(()),
+        }
+    }
+
+    /// Charge a file of `len` bytes that is about to be read.
+    fn take_bytes(&mut self, len: u64) -> Result<()> {
+        self.check()?;
+        let used = self.bytes_used.saturating_add(len);
+        if used > self.bytes {
+            return Err(CoreError::TooLarge(format!(
+                "this request may read at most {} bytes of results files",
+                self.bytes
+            )));
+        }
+        self.bytes_used = used;
+        #[cfg(test)]
+        if let Some(n) = self.cancel_after_files.as_mut() {
+            *n = n.saturating_sub(1);
+            if *n == 0
+                && let Some(flag) = &self.cancel
+            {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
+        Ok(())
+    }
+
+    /// Charge one sweep that is about to be read.
+    fn take_sweep(&mut self) -> Result<()> {
+        self.check()?;
+        if self.sweeps_used >= self.sweeps {
+            return Err(CoreError::TooLarge(format!(
+                "this request may read at most {} sweeps",
+                self.sweeps
+            )));
+        }
+        self.sweeps_used += 1;
+        Ok(())
+    }
+}
+
+impl Default for ReadBudget {
+    /// [`ReadBudget::unlimited`].
+    fn default() -> Self {
+        Self::unlimited()
     }
 }
 
@@ -401,19 +529,25 @@ fn base_row(l: BaseLite) -> (BaseJudgedRow, Option<f64>) {
 
 /// Rows of a judged file (empty when it does not exist), converted while they are read.
 /// More than [`MAX_JUDGED_ROWS`] rows, or a file over [`MAX_JUDGED_BYTES`], is
-/// [`CoreError::TooLarge`].
+/// [`CoreError::TooLarge`]. The file is charged to `budget` before it is read.
 fn read_rows<L, T>(
     dir: &cap_std::fs::Dir,
     rel: &str,
     what: &str,
+    budget: &mut ReadBudget,
     convert: impl FnMut(L) -> Option<T>,
 ) -> Result<Vec<T>>
 where
     L: for<'de> serde::Deserialize<'de>,
 {
-    let Some(bytes) = safefs::read_whole_opt(dir, rel, MAX_JUDGED_BYTES, what)? else {
+    budget.check()?;
+    let Some((file, len)) = safefs::open_file_opt(dir, rel, what)? else {
         return Ok(Vec::new());
     };
+    if len <= MAX_JUDGED_BYTES {
+        budget.take_bytes(len)?;
+    }
+    let bytes = safefs::read_open(file, len, MAX_JUDGED_BYTES, what)?;
     let (rows, more) =
         lite::rows(&bytes, MAX_JUDGED_ROWS, convert).map_err(|e| CoreError::Malformed {
             what: what.to_owned(),
@@ -721,7 +855,11 @@ impl ExperimentDir {
     /// or, over [`MAX_SUMMARY_BYTES`], [`SummaryState::TooLarge`] without being read. More
     /// than [`MAX_SWEEP_TASKS`] task directories, or more than [`MAX_SWEEP_SUMMARY_BYTES`]
     /// of summaries in total, is [`CoreError::TooLarge`].
-    fn summaries(&self, sweep: &Namespace) -> Result<Vec<(String, SummaryState)>> {
+    fn summaries(
+        &self,
+        sweep: &Namespace,
+        budget: &mut ReadBudget,
+    ) -> Result<Vec<(String, SummaryState)>> {
         let dir = self.sweep_dir(sweep)?;
         let slugs: Vec<String> = safefs::list_opt(&self.dir, &dir, "sweep")?
             .into_iter()
@@ -734,22 +872,35 @@ impl ExperimentDir {
                 slugs.len()
             )));
         }
-        let mut budget = Budget::new(MAX_SWEEP_SUMMARY_BYTES, "the sweep's summary.json files");
+        let mut total = ViewTotal::new(MAX_SWEEP_SUMMARY_BYTES, "the sweep's summary.json files");
         let mut out = Vec::with_capacity(slugs.len());
         for slug in slugs {
+            budget.check()?;
             let rel = format!("{dir}/{slug}/summary.json");
-            let state =
-                match safefs::read_whole_opt(&self.dir, &rel, MAX_SUMMARY_BYTES, "summary.json") {
-                    Ok(Some(bytes)) => {
-                        budget.take(bytes.len())?;
-                        lite::object::<SummaryLite>(&bytes)
-                            .map_or(SummaryState::Unreadable, SummaryState::Parsed)
-                    }
-                    Ok(None) => continue,
-                    Err(CoreError::TooLarge(_)) => SummaryState::TooLarge,
-                    Err(CoreError::Refused(_)) => SummaryState::Unreadable,
-                    Err(e) => return Err(e),
-                };
+            let (file, len) = match safefs::open_file(&self.dir, &rel, "summary.json") {
+                Ok(opened) => opened,
+                Err(CoreError::NotFound(_)) => continue,
+                Err(CoreError::Refused(_)) => {
+                    out.push((slug, SummaryState::Unreadable));
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            if len > MAX_SUMMARY_BYTES {
+                out.push((slug, SummaryState::TooLarge));
+                continue;
+            }
+            budget.take_bytes(len)?;
+            let state = match safefs::read_open(file, len, MAX_SUMMARY_BYTES, "summary.json") {
+                Ok(bytes) => {
+                    total.take(bytes.len())?;
+                    lite::object::<SummaryLite>(&bytes)
+                        .map_or(SummaryState::Unreadable, SummaryState::Parsed)
+                }
+                // It grew past the cap while it was read.
+                Err(CoreError::TooLarge(_)) => SummaryState::TooLarge,
+                Err(e) => return Err(e),
+            };
             out.push((slug, state));
         }
         Ok(out)
@@ -773,16 +924,24 @@ impl ExperimentDir {
     }
 
     /// Rows of `judged.json` (empty when not judged yet).
-    fn judged_rows(&self, sweep: &Namespace) -> Result<Vec<JudgedRow>> {
+    fn judged_rows(&self, sweep: &Namespace, budget: &mut ReadBudget) -> Result<Vec<JudgedRow>> {
         let rel = format!("{}/judged.json", self.sweep_dir(sweep)?);
-        read_rows(&self.dir, &rel, "judged.json", judged_row)
+        read_rows(&self.dir, &rel, "judged.json", budget, judged_row)
     }
 
-    fn base_rows(&self, sweep: &Namespace) -> Result<Vec<(BaseJudgedRow, Option<f64>)>> {
+    fn base_rows(
+        &self,
+        sweep: &Namespace,
+        budget: &mut ReadBudget,
+    ) -> Result<Vec<(BaseJudgedRow, Option<f64>)>> {
         let rel = format!("{}/base_judged.json", self.sweep_dir(sweep)?);
-        read_rows(&self.dir, &rel, "base_judged.json", |l: BaseLite| {
-            Some(base_row(l))
-        })
+        read_rows(
+            &self.dir,
+            &rel,
+            "base_judged.json",
+            budget,
+            |l: BaseLite| Some(base_row(l)),
+        )
     }
 
     fn headline(rows: &[JudgedRow], k: u32) -> Vec<ModeScore> {
@@ -799,9 +958,10 @@ impl ExperimentDir {
             .collect()
     }
 
-    fn sweep_summary(&self, sweep: &Namespace) -> Result<SweepSummary> {
+    fn sweep_summary(&self, sweep: &Namespace, budget: &mut ReadBudget) -> Result<SweepSummary> {
+        budget.take_sweep()?;
         let dir = self.sweep_dir(sweep)?;
-        let summaries = self.summaries(sweep)?;
+        let summaries = self.summaries(sweep, budget)?;
         let (mut ok, mut partial, mut failed) = (0_u32, 0_u32, 0_u32);
         let mut modes: Vec<Mode> = Vec::new();
         let mut usd = 0.0_f64;
@@ -830,7 +990,7 @@ impl ExperimentDir {
             }
         }
         modes.sort();
-        let judged = self.judged_rows(sweep)?;
+        let judged = self.judged_rows(sweep, budget)?;
         let headline =
             if safefs::mtime(&self.dir, &format!("{dir}/judged.json"), "judged.json")?.is_some() {
                 Some(Self::headline(&judged, sweep.k))
@@ -868,14 +1028,26 @@ impl ExperimentDir {
     /// [`Self::sweep_namespaces`]), exactly as [`Self::sweeps`] lists it. Additive after
     /// contract v1.2.
     pub fn sweep(&self, sweep: &Namespace) -> Result<SweepSummary> {
-        self.sweep_summary(sweep)
+        self.sweep_with(sweep, &mut ReadBudget::unlimited())
+    }
+
+    /// [`Self::sweep`] within a request's [`ReadBudget`] (one sweep, and the bytes of its
+    /// summaries and judged file). Additive after contract v1.2.
+    pub fn sweep_with(&self, sweep: &Namespace, budget: &mut ReadBudget) -> Result<SweepSummary> {
+        self.sweep_summary(sweep, budget)
     }
 
     /// Every sweep on disk, newest first. Unparseable directory names are skipped.
     pub fn sweeps(&self) -> Result<Vec<SweepSummary>> {
+        self.sweeps_with(&mut ReadBudget::unlimited())
+    }
+
+    /// [`Self::sweeps`] within a request's [`ReadBudget`] (one sweep each). Additive after
+    /// contract v1.2.
+    pub fn sweeps_with(&self, budget: &mut ReadBudget) -> Result<Vec<SweepSummary>> {
         let mut out = Vec::new();
         for ns in self.summary_namespaces()? {
-            out.push(self.sweep_summary(&ns)?);
+            out.push(self.sweep_summary(&ns, budget)?);
         }
         out.sort_by(|a, b| {
             b.updated_at
@@ -888,8 +1060,9 @@ impl ExperimentDir {
     /// Task ids in stream order from the newest sweep record (`demo.json` for a demo).
     ///
     /// The order is only a display hint: a record that cannot be used (missing, over
-    /// [`MAX_RECORD_BYTES`], malformed) gives no order, and the tasks are listed by id.
-    fn stream_order(&self, sweep: &Namespace) -> Result<Vec<String>> {
+    /// [`MAX_RECORD_BYTES`], malformed) gives no order, and the tasks are listed by id. Only
+    /// the budget (and cancellation) can fail it.
+    fn stream_order(&self, sweep: &Namespace, budget: &mut ReadBudget) -> Result<Vec<String>> {
         let rel = match self.kind {
             ExperimentKind::Demo => Some("demo.json".to_owned()),
             ExperimentKind::Standard => {
@@ -905,26 +1078,44 @@ impl ExperimentDir {
                     .map(|(_, name)| format!("{root}/{name}"))
             }
         };
-        let record = rel
-            .and_then(|rel| {
-                safefs::read_whole_opt(&self.dir, &rel, MAX_RECORD_BYTES, "sweep record")
-                    .ok()
-                    .flatten()
-            })
-            .and_then(|bytes| lite::object::<RecordLite>(&bytes).ok());
-        Ok(record.map(RecordLite::order).unwrap_or_default())
+        budget.check()?;
+        let Some((file, len)) = rel.and_then(|rel| {
+            safefs::open_file_opt(&self.dir, &rel, "sweep record")
+                .ok()
+                .flatten()
+        }) else {
+            return Ok(Vec::new());
+        };
+        if len > MAX_RECORD_BYTES {
+            return Ok(Vec::new());
+        }
+        budget.take_bytes(len)?;
+        Ok(
+            safefs::read_open(file, len, MAX_RECORD_BYTES, "sweep record")
+                .ok()
+                .and_then(|bytes| lite::object::<RecordLite>(&bytes).ok())
+                .map(RecordLite::order)
+                .unwrap_or_default(),
+        )
     }
 
     /// Task rows of one sweep (`sweep` is the summary namespace), in stream order when a
     /// sweep record exists, else sorted by task id.
     pub fn tasks(&self, sweep: &Namespace) -> Result<Vec<TaskRow>> {
-        let judged = self.judged_rows(sweep)?;
+        self.tasks_with(sweep, &mut ReadBudget::unlimited())
+    }
+
+    /// [`Self::tasks`] within a request's [`ReadBudget`] (one sweep, and the bytes of its
+    /// summaries, judged file and sweep record). Additive after contract v1.2.
+    pub fn tasks_with(&self, sweep: &Namespace, budget: &mut ReadBudget) -> Result<Vec<TaskRow>> {
+        budget.take_sweep()?;
+        let judged = self.judged_rows(sweep, budget)?;
         let mut scores: HashMap<(&str, Mode), &JudgedRow> = HashMap::new();
         for r in judged.iter().filter(|r| r.k == sweep.k) {
             scores.insert((r.task_id.as_str(), r.mode), r);
         }
         let mut rows: Vec<TaskRow> = Vec::new();
-        for (slug, state) in self.summaries(sweep)? {
+        for (slug, state) in self.summaries(sweep, budget)? {
             let s = match state {
                 SummaryState::Parsed(s) => s,
                 SummaryState::Unreadable | SummaryState::TooLarge => {
@@ -984,7 +1175,7 @@ impl ExperimentDir {
                 task_id,
             });
         }
-        let order = self.stream_order(sweep)?;
+        let order = self.stream_order(sweep, budget)?;
         let position: HashMap<&str, usize> = order
             .iter()
             .enumerate()
@@ -1078,7 +1269,7 @@ impl ExperimentDir {
         let s = self.summary(sweep, slug)?;
         let task_id = s.task_id();
         let judged: Vec<JudgedRow> = self
-            .judged_rows(sweep)?
+            .judged_rows(sweep, &mut ReadBudget::unlimited())?
             .into_iter()
             .filter(|r| r.task_id == task_id && r.k == sweep.k)
             .collect();
@@ -1352,9 +1543,20 @@ impl ExperimentDir {
 
     /// `judged.json` and `base_judged.json` of the sweep (empty when not judged yet).
     pub fn scores(&self, sweep: &Namespace) -> Result<Scores> {
+        self.scores_with(sweep, &mut ReadBudget::unlimited())
+    }
+
+    /// [`Self::scores`] within a request's [`ReadBudget`] (one sweep, and the bytes of its
+    /// judged files). Additive after contract v1.2.
+    pub fn scores_with(&self, sweep: &Namespace, budget: &mut ReadBudget) -> Result<Scores> {
+        budget.take_sweep()?;
         Ok(Scores {
-            rows: self.judged_rows(sweep)?,
-            base_rows: self.base_rows(sweep)?.into_iter().map(|(r, _)| r).collect(),
+            rows: self.judged_rows(sweep, budget)?,
+            base_rows: self
+                .base_rows(sweep, budget)?
+                .into_iter()
+                .map(|(r, _)| r)
+                .collect(),
         })
     }
 
@@ -1364,7 +1566,14 @@ impl ExperimentDir {
     /// `harness2-report --k <k> --modes <those modes>` would; `text` is that command's
     /// stdout. With no judged rows the report is empty and says so.
     pub fn report(&self, sweep: &Namespace) -> Result<ScoreReport> {
-        let rows = self.judged_rows(sweep)?;
+        self.report_with(sweep, &mut ReadBudget::unlimited())
+    }
+
+    /// [`Self::report`] within a request's [`ReadBudget`] (one sweep, and the bytes of its
+    /// judged files and summaries). Additive after contract v1.2.
+    pub fn report_with(&self, sweep: &Namespace, budget: &mut ReadBudget) -> Result<ScoreReport> {
+        budget.take_sweep()?;
+        let rows = self.judged_rows(sweep, budget)?;
         let mut modes: Vec<Mode> = rows.iter().map(|r| r.mode).collect();
         modes.sort();
         modes.dedup();
@@ -1380,7 +1589,7 @@ impl ExperimentDir {
                 .join(",")
         );
         let base_fracs: Vec<f64> = self
-            .base_rows(sweep)?
+            .base_rows(sweep, budget)?
             .into_iter()
             .filter_map(|(_, f)| f)
             .collect();
@@ -1395,7 +1604,7 @@ impl ExperimentDir {
                 text: "nothing to report\n".to_owned(),
             });
         }
-        let (fell_back, usd) = self.spend_and_fallbacks(sweep, &modes)?;
+        let (fell_back, usd) = self.spend_and_fallbacks(sweep, &modes, budget)?;
         let summaries = report::summarise(&rows, &fell_back, &usd);
         let (text, notes) = report_text(&summaries, &title, &sweep.bench_name);
         Ok(ScoreReport {
@@ -1411,10 +1620,15 @@ impl ExperimentDir {
     /// Upstream `cli/report._spend_and_fallbacks` for one sweep: fell-back stage counts and
     /// improver spend keyed by `(mode, k)`, accumulated over the summaries in upstream's
     /// sorted order (the order matters for the float sums).
-    fn spend_and_fallbacks(&self, sweep: &Namespace, modes: &[Mode]) -> Result<(FellBack, Spend)> {
+    fn spend_and_fallbacks(
+        &self,
+        sweep: &Namespace,
+        modes: &[Mode],
+        budget: &mut ReadBudget,
+    ) -> Result<(FellBack, Spend)> {
         let mut fell_back = FellBack::new();
         let mut usd = Spend::new();
-        for (_, s) in self.summaries(sweep)? {
+        for (_, s) in self.summaries(sweep, budget)? {
             let SummaryState::Parsed(s) = s else { continue };
             for &mode in modes {
                 let key = (mode, sweep.k);
@@ -1436,7 +1650,7 @@ impl ExperimentDir {
         let Some(root) = namespace::library_root(self.kind, sweep) else {
             return Ok(Vec::new());
         };
-        let mut budget = Budget::new(MAX_LIBRARY_BYTES, "the library's EXPERIENCE.md files");
+        let mut total = ViewTotal::new(MAX_LIBRARY_BYTES, "the library's EXPERIENCE.md files");
         let mut out = Vec::new();
         for mode in Mode::ALL {
             let mode_root = format!("{root}/{}", mode.token());
@@ -1470,7 +1684,7 @@ impl ExperimentDir {
                         Err(e) => return Err(e),
                     };
                     if let Some(text) = &exp {
-                        budget.take(text.len())?;
+                        total.take(text.len())?;
                     }
                     entries.push(library_entry(&e.name, exp.as_deref().unwrap_or("")));
                 }
@@ -1536,7 +1750,7 @@ impl ExperimentDir {
                 stems.len()
             )));
         }
-        let mut budget = Budget::new(MAX_AUDIT_META_BYTES, "the audit's .meta.json files");
+        let mut total = ViewTotal::new(MAX_AUDIT_META_BYTES, "the audit's .meta.json files");
         let mut out = Vec::new();
         for (stem, (mut parts, has_meta, mtime)) in stems {
             parts.sort_by_key(|p| AUDIT_PARTS.iter().position(|x| x == p));
@@ -1546,7 +1760,7 @@ impl ExperimentDir {
                 .then(|| safefs::read_whole_opt(&self.dir, &meta_rel, MAX_META_BYTES, "meta.json"))
             {
                 Some(Ok(Some(bytes))) => {
-                    budget.take(bytes.len())?;
+                    total.take(bytes.len())?;
                     lite::object(&bytes).unwrap_or_default()
                 }
                 _ => MetaLite::default(),
@@ -1624,8 +1838,15 @@ impl ExperimentDir {
     /// Spend recorded in the sweep's summaries so far (stages + selections), USD. Used by
     /// the budget guard while a run is in progress; tolerant of half-written files.
     pub fn spend_usd(&self, sweep: &Namespace) -> Result<f64> {
+        self.spend_usd_with(sweep, &mut ReadBudget::unlimited())
+    }
+
+    /// [`Self::spend_usd`] within a [`ReadBudget`] (one sweep, and the bytes of its
+    /// summaries). Additive after contract v1.2.
+    pub fn spend_usd_with(&self, sweep: &Namespace, budget: &mut ReadBudget) -> Result<f64> {
+        budget.take_sweep()?;
         let mut total = 0.0;
-        for (_, s) in self.summaries(sweep)? {
+        for (_, s) in self.summaries(sweep, budget)? {
             let SummaryState::Parsed(s) = s else { continue };
             for mode in s.modes_present() {
                 let (_, spend, sel) = s.mode_spend(mode);
@@ -1640,14 +1861,14 @@ impl ExperimentDir {
     /// A `config.json` over [`MAX_CONFIG_BYTES`], or more than [`MAX_IDENTITY_BYTES`] of
     /// them in total, is [`CoreError::TooLarge`].
     pub fn sweep_identities(&self) -> Result<Vec<SweepIdentity>> {
-        let mut budget = Budget::new(MAX_IDENTITY_BYTES, "the sweeps' config.json files");
+        let mut total = ViewTotal::new(MAX_IDENTITY_BYTES, "the sweeps' config.json files");
         let mut out = Vec::new();
         for ns in self.summary_namespaces()? {
             let rel = format!("{}/config.json", self.sweep_dir(&ns)?);
             if let Some(text) =
                 safefs::read_text_opt(&self.dir, &rel, MAX_CONFIG_BYTES, "config.json")?
             {
-                budget.take(text.len())?;
+                total.take(text.len())?;
                 out.push(SweepIdentity {
                     sweep: ns.to_string(),
                     identity_json: text,
@@ -1669,17 +1890,31 @@ impl ExperimentDir {
     /// file, or is gone, when it is opened is recorded as `<unreadable>`. More than 1 GiB in
     /// all, or more than 10,000 summaries in one namespace, is [`CoreError::TooLarge`].
     pub fn results_digest(&self) -> Result<String> {
-        self.results_digest_capped(MAX_DIGEST_BYTES)
+        self.results_digest_with(&mut ReadBudget::unlimited())
     }
 
-    fn results_digest_capped(&self, max_total: u64) -> Result<String> {
+    /// [`Self::results_digest`] within a request's [`ReadBudget`] (one sweep per summary
+    /// namespace, and the bytes of every file it reads). Additive after contract v1.2.
+    pub fn results_digest_with(&self, budget: &mut ReadBudget) -> Result<String> {
+        self.results_digest_capped(MAX_DIGEST_BYTES, budget)
+    }
+
+    fn results_digest_capped(&self, max_total: u64, budget: &mut ReadBudget) -> Result<String> {
         let mut paths: Vec<String> = Vec::new();
         for (bench, root) in self.bench_roots() {
             for e in safefs::list_opt(&self.dir, &root, "namespaces")? {
-                if e.kind != EntryKind::Dir
-                    || Namespace::parse(&e.name).is_none_or(|ns| ns.bench_name != bench)
-                {
+                if e.kind != EntryKind::Dir {
                     continue;
+                }
+                let Some(ns) = Namespace::parse(&e.name).filter(|ns| ns.bench_name == bench) else {
+                    continue;
+                };
+                // A sweep's summary namespace counts as the sweep; its mode namespaces
+                // (harness trees, no results files of their own) do not.
+                if ns.summary().to_string() == e.name {
+                    budget.take_sweep()?;
+                } else {
+                    budget.check()?;
                 }
                 let ns_rel = format!("{root}/{}", e.name);
                 let mut summaries = 0_usize;
@@ -1712,6 +1947,7 @@ impl ExperimentDir {
         let mut h = Sha256::new();
         let mut total = 0_u64;
         for p in paths {
+            budget.check()?;
             let cap = if p.ends_with("/summary.json") {
                 MAX_SUMMARY_BYTES
             } else {
@@ -1727,6 +1963,7 @@ impl ExperimentDir {
                             "the results files total more than {max_total} bytes"
                         )));
                     }
+                    budget.take_bytes(len)?;
                     let n = safefs::stream(file, cap, |b| h.update(b))?;
                     total = total.saturating_add(n);
                 }
@@ -1979,12 +2216,14 @@ mod tests {
         for name in ["lab-oc-agg1", "lab-oc-agg2"] {
             let ns = Namespace::parse(name).unwrap();
             rows.extend(
-                exp.judged_rows(&ns)
+                exp.judged_rows(&ns, &mut ReadBudget::unlimited())
                     .unwrap()
                     .into_iter()
                     .filter(|r| modes.contains(&r.mode)),
             );
-            let (f, u) = exp.spend_and_fallbacks(&ns, &modes).unwrap();
+            let (f, u) = exp
+                .spend_and_fallbacks(&ns, &modes, &mut ReadBudget::unlimited())
+                .unwrap();
             fell_back.extend(f);
             usd.extend(u);
         }
@@ -2175,6 +2414,132 @@ mod tests {
         rows.iter().find(|r| r.slug == slug).unwrap().status.clone()
     }
 
+    fn file_len(lab: &Lab, rel: &str) -> u64 {
+        std::fs::metadata(lab.root.path().join(rel)).unwrap().len()
+    }
+
+    /// One budget across several calls: the second call sees what the first one used, and a
+    /// file that does not fit is not read.
+    #[test]
+    fn a_read_budget_spans_calls() {
+        let lab = Lab::new();
+        // Two summaries of the same size.
+        lab.summary("t1", 0.5);
+        lab.summary("t2", 0.5);
+        let one = file_len(&lab, &format!("{}/t1/summary.json", Lab::SWEEP));
+        assert_eq!(
+            one,
+            file_len(&lab, &format!("{}/t2/summary.json", Lab::SWEEP))
+        );
+        let (exp, ns) = lab.open();
+
+        // Bytes: two summaries fit, a third read of one does not.
+        let mut budget = ReadBudget::new(3 * one, 100);
+        assert_eq!(exp.tasks_with(&ns, &mut budget).unwrap().len(), 2);
+        assert_eq!((budget.bytes_used(), budget.sweeps_used()), (2 * one, 1));
+        let err = exp.spend_usd_with(&ns, &mut budget).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "too large: this request may read at most {} bytes of results files",
+                3 * one
+            )
+        );
+        // The one that fitted stays charged; the one that did not was not.
+        assert_eq!(budget.bytes_used(), 3 * one);
+
+        // Sweeps: each call that reads a sweep costs one.
+        let mut budget = ReadBudget::new(u64::MAX, 3);
+        exp.sweep_with(&ns, &mut budget).unwrap();
+        exp.scores_with(&ns, &mut budget).unwrap();
+        exp.report_with(&ns, &mut budget).unwrap();
+        let err = exp.tasks_with(&ns, &mut budget).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "too large: this request may read at most 3 sweeps"
+        );
+        assert!(matches!(
+            exp.sweeps_with(&mut ReadBudget::new(u64::MAX, 0)),
+            Err(CoreError::TooLarge(_))
+        ));
+        assert!(matches!(
+            exp.results_digest_with(&mut ReadBudget::new(u64::MAX, 0)),
+            Err(CoreError::TooLarge(_))
+        ));
+        // The methods without `_with` are the same calls without a total.
+        let mut unlimited = ReadBudget::unlimited();
+        assert_eq!(
+            exp.sweeps().unwrap(),
+            exp.sweeps_with(&mut unlimited).unwrap()
+        );
+        assert_eq!(
+            exp.results_digest().unwrap(),
+            exp.results_digest_with(&mut ReadBudget::default()).unwrap()
+        );
+    }
+
+    /// The bytes charged are the files read: one over its own cap is flagged or recorded by
+    /// its size without being read, so it costs nothing.
+    #[test]
+    fn files_over_their_cap_are_not_charged() {
+        let lab = Lab::new();
+        lab.summary("t1", 0.5);
+        lab.sparse(
+            &format!("{}/t2/summary.json", Lab::SWEEP),
+            MAX_SUMMARY_BYTES + 1,
+        );
+        let one = file_len(&lab, &format!("{}/t1/summary.json", Lab::SWEEP));
+        let (exp, ns) = lab.open();
+        let mut budget = ReadBudget::new(one, 10);
+        let rows = exp.tasks_with(&ns, &mut budget).unwrap();
+        assert_eq!(status_of(&rows, "t2"), "too-large");
+        assert_eq!(budget.bytes_used(), one);
+        let mut budget = ReadBudget::new(one, 10);
+        exp.results_digest_with(&mut budget).unwrap();
+        assert_eq!(budget.bytes_used(), one);
+    }
+
+    /// A set flag stops every budgeted read at its next check, with `Cancelled`.
+    #[test]
+    fn a_cancelled_budget_stops_reading() {
+        let lab = Lab::new();
+        lab.summary("t1", 0.5);
+        let (exp, ns) = lab.open();
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut budget = ReadBudget::unlimited().with_cancel(Arc::clone(&flag));
+        assert!(exp.tasks_with(&ns, &mut budget).is_ok());
+        flag.store(true, Ordering::Relaxed);
+        let cancelled = |r: Result<()>| matches!(r, Err(CoreError::Cancelled));
+        assert!(cancelled(exp.tasks_with(&ns, &mut budget).map(|_| ())));
+        assert!(cancelled(exp.sweep_with(&ns, &mut budget).map(|_| ())));
+        assert!(cancelled(exp.sweeps_with(&mut budget).map(|_| ())));
+        assert!(cancelled(exp.scores_with(&ns, &mut budget).map(|_| ())));
+        assert!(cancelled(exp.report_with(&ns, &mut budget).map(|_| ())));
+        assert!(cancelled(exp.spend_usd_with(&ns, &mut budget).map(|_| ())));
+        assert!(cancelled(exp.results_digest_with(&mut budget).map(|_| ())));
+        assert_eq!(CoreError::Cancelled.to_string(), "cancelled");
+    }
+
+    /// Cancellation is checked between files, not only when a call starts: a flag set while
+    /// a sweep is being read (here, deterministically, once the fifth summary has been
+    /// charged) stops it before the next file.
+    #[test]
+    fn cancellation_is_checked_between_files() {
+        let lab = Lab::new();
+        for i in 0..20 {
+            lab.summary(&format!("t{i:02}"), 0.5);
+        }
+        let one = file_len(&lab, &format!("{}/t00/summary.json", Lab::SWEEP));
+        let (exp, ns) = lab.open();
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut budget = ReadBudget::unlimited().with_cancel(Arc::clone(&flag));
+        budget.cancel_after_files = Some(5);
+        let err = exp.tasks_with(&ns, &mut budget).unwrap_err();
+        assert!(matches!(err, CoreError::Cancelled), "{err}");
+        assert!(flag.load(Ordering::Relaxed));
+        assert_eq!(budget.bytes_used(), 5 * one);
+    }
+
     fn sha256_hex(parts: &[(&str, &[u8])]) -> String {
         let mut h = Sha256::new();
         for (path, body) in parts {
@@ -2224,8 +2589,9 @@ mod tests {
         lab.write(&format!("{}/t1/summary.json", Lab::SWEEP), b"0123456789");
         lab.write(&format!("{}/t2/summary.json", Lab::SWEEP), b"0123456789");
         let (exp, _) = lab.open();
-        assert!(exp.results_digest_capped(20).is_ok());
-        let err = exp.results_digest_capped(19).unwrap_err();
+        let mut unlimited = ReadBudget::unlimited();
+        assert!(exp.results_digest_capped(20, &mut unlimited).is_ok());
+        let err = exp.results_digest_capped(19, &mut unlimited).unwrap_err();
         assert_eq!(
             err.to_string(),
             "too large: the results files total more than 19 bytes"

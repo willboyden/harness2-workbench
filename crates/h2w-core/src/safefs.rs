@@ -330,6 +330,12 @@ fn over_cap(what: &str, len: u64, cap: u64) -> CoreError {
 /// larger than `cap`. A file that grows past `cap` while it is read is refused too.
 pub(crate) fn read_whole(dir: &Dir, rel: &str, cap: u64, what: &str) -> Result<Vec<u8>> {
     let (file, len) = open_file(dir, rel, what)?;
+    read_open(file, len, cap, what)
+}
+
+/// The reading half of [`read_whole`], for a file [`open_file`] returned with its size `len`
+/// (so a caller can account for the size between the open and the read).
+pub(crate) fn read_open(file: File, len: u64, cap: u64, what: &str) -> Result<Vec<u8>> {
     if len > cap {
         return Err(over_cap(what, len, cap));
     }
@@ -340,6 +346,15 @@ pub(crate) fn read_whole(dir: &Dir, rel: &str, cap: u64, what: &str) -> Result<V
         return Err(over_cap(what, got, cap));
     }
     Ok(buf)
+}
+
+/// [`open_file`], `Ok(None)` when the file (or a parent) does not exist.
+pub(crate) fn open_file_opt(dir: &Dir, rel: &str, what: &str) -> Result<Option<(File, u64)>> {
+    match open_file(dir, rel, what) {
+        Ok(f) => Ok(Some(f)),
+        Err(CoreError::NotFound(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// [`read_whole`], `Ok(None)` when the file (or a parent) does not exist.

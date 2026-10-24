@@ -33,10 +33,18 @@ pub enum CoreError {
 
     /// Data on disk is larger than this crate will hold in memory: an oversized results
     /// file, a harness tree over its byte or file-count budget, a directory with too many
-    /// entries. Nothing was truncated. The message names the limit and is safe to show
-    /// (servers map this to 413). Additive after contract v1.2.
+    /// entries, a request's [`ReadBudget`](crate::results::ReadBudget) used up. Nothing was
+    /// truncated. The message names the limit and is safe to show (servers map this to 413).
+    /// Additive after contract v1.2.
     #[error("too large: {0}")]
     TooLarge(String),
+
+    /// The caller gave up on the read: the cancellation flag of the
+    /// [`ReadBudget`](crate::results::ReadBudget) it passed was set (typically because the
+    /// request it served timed out). Checked between files; nothing partial is returned.
+    /// Additive after contract v1.2.
+    #[error("cancelled")]
+    Cancelled,
 
     /// Interface stub not yet implemented. Never reachable in a release build: the release
     /// gate greps for this variant.
