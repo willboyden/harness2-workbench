@@ -473,9 +473,9 @@ evidence of accidental or casual edits, **not as a tamper-proof record**: anyone
 server's data directory, host-mode jobs included, can rewrite the whole chain and the check will
 still pass. Keep the head hash somewhere the server's user cannot write
 ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#13-audit-log)). Refused credentials are recorded too, but at most
-10 a minute per client address, and calls refused for a role that is too low at most 10 a minute per
-token or proxy user (the rest are only counted), so junk requests and a viewer's refused calls cannot
-flood the log.
+10 a minute per client address, and refused calls (a role that is too low, a job start or cancel the
+server turns down) at most 10 a minute per token or proxy user (the rest are only counted), so junk
+requests and refused calls cannot flood the log.
 
 ### 11.5 System
 

@@ -16,6 +16,7 @@ pub mod token;
 
 mod descriptions;
 mod errors;
+mod logtail;
 mod output;
 mod params;
 mod prompts;

@@ -187,7 +187,7 @@ Unsafe methods (POST/PUT/PATCH/DELETE) require header `x-h2w-request: 1`.
 | POST | `/jobs` | `JobSpec::required_role()` | `JobSpec` | 201 `Job` |
 | GET | `/jobs/{id}` | viewer | | `Job` |
 | POST | `/jobs/{id}/cancel` | operator | | `Job` (409 if terminal) |
-| GET | `/jobs/{id}/log` | viewer | `?from=0&limit=500` (max 5000) | `LogChunk` |
+| GET | `/jobs/{id}/log` | viewer | `?from=0&limit=500` (max 5000 lines; a page also stops near 1 MiB, v1.4) | `LogChunk` |
 | GET | `/jobs/{id}/events` | viewer | | `text/event-stream`, each `data:` is a `JobEvent` |
 | GET | `/openapi.json` | viewer | | OpenAPI 3.1 document |
 
@@ -207,8 +207,9 @@ container isolation in v0.1 (409); host isolation requires `acknowledge_risks: t
 
 **Transport/origin.** Bind loopback by default. `Host` must be in the allowlist (derived from
 `server.public_url` + loopback forms of the listen port + `server.allowed_hosts`) else 421.
-Unsafe methods need `x-h2w-request: 1` and, when an `Origin` header is present, it must equal the
-public origin, else 403. No CORS headers, ever. `X-Forwarded-For`, `x-request-id` and (proxy mode)
+Unsafe methods need `x-h2w-request: 1` and, when an `Origin` header is present, it must be the
+public origin or the request's own Host with the public URL's scheme (`http://` only when the
+public URL is not https; a repeated `Origin` header is refused), else 403. No CORS headers, ever. `X-Forwarded-For`, `x-request-id` and (proxy mode)
 the identity headers are honoured only from `server.trusted_proxies`.
 
 **Authentication.** `Authorization: Bearer h2w_<id>_<secret>` or the `h2w_session` cookie
@@ -396,8 +397,9 @@ spans carry method, matched route, status, request id (never headers or bodies).
 `/metrics`: `h2w_http_requests_total{method,route,status}`, `h2w_http_request_duration_seconds`,
 `h2w_jobs_total{kind,status}`, `h2w_jobs_running`, `h2w_job_duration_seconds{kind}`,
 `h2w_spend_usd_total{experiment}` (bounded label set), `h2w_auth_failures_total{reason}`,
-`h2w_sse_connections`, and since v1.3 `h2w_audit_suppressed_total` (failed-auth audit rows over the
-per-client cap) and `h2w_connections_refused_total{reason}` (per-IP connection cap).
+`h2w_sse_connections`, and since v1.3 `h2w_audit_suppressed_total` (audit records of failed
+authentication or refused requests over the per-client or per-principal share, v1.4) and
+`h2w_connections_refused_total{reason}` (per-IP connection cap).
 
 ## 15. Quality bar (every change)
 
@@ -516,4 +518,24 @@ independent audit (findings F1–F16):
   model's `acknowledge_risks=true` unless started with `--allow-risk-acknowledgement`.
 - The server and the egress proxy are non-dumpable; the egress proxy listens on 127.0.0.1:3128 by
   default. Doctor adds `runner_image` and `container_network` (container mode).
+
+**v1.4 (2026-10-24) — security re-audit fixes (N1–N10).**
+- Results files are opened non-blocking without following links and checked by fstat (a regular
+  file with the device and inode the lstat saw): a FIFO swapped in reads as `unreadable`, never
+  hangs. The harness fingerprint and the manifest digest never read a file over its cap (a size
+  marker) and refuse past their totals (`TooLarge`).
+- `h2w_core::results::ReadBudget` (bytes, sweeps, an optional cancellation flag) and `*_with`
+  variants of the results calls; `CoreError::Cancelled` → 503. The server gives each route a budget
+  (docs/notes/daemon.md), cancels a request's reads when the request is abandoned, lists at most
+  200 sweeps per experiment (newest first; older ones stay reachable by id) and keeps an LRU sweep
+  cache that serves a stale entry while it re-reads.
+- `GET /jobs/{id}/log` pages and event-stream replays stop near 1 MiB (`next` continues). Results
+  responses are serialized inside the read permit and refused past 64 MiB (413). The MCP
+  `get_job_log tail=N` and the `h2w://jobs/{id}/log` resource follow the pages and return the newest
+  lines that fit their output cap (the resource cuts a newest line longer than its cap instead of
+  dropping it).
+- Refusal records (`access.denied`, and `job.create` / `job.cancel` denials) are limited per
+  principal; limiter keys behind trusted proxies are kept per peer (1,024 clients per peer, then
+  that peer's overflow bucket). Audit actors name their kind: `token:<name>`, `proxy:<user>`,
+  `cli`, `server`, `anonymous`. The MCP HTTP Host guard refuses userinfo.
 

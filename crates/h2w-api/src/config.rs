@@ -264,7 +264,8 @@ pub struct AuditEvent {
     pub seq: u64,
     /// Time of the event (RFC 3339, UTC).
     pub ts: String,
-    /// Principal display name, or `anonymous`.
+    /// Who acted, with its kind: `token:<name>`, `proxy:<user>`, `cli`, `server` or
+    /// `anonymous`.
     pub actor: String,
     /// e.g. `job.create`, `job.cancel`, `token.create`, `secret.set`, `auth.login`.
     pub action: String,

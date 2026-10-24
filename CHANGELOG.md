@@ -64,12 +64,13 @@ Each change, its tests and how it was checked are in
   hanging a read; the harness fingerprint and the manifest digest never read a file over its cap (it
   is recorded as `<too large: N bytes>`) and refuse more than 64 MiB and 1 GiB in all.
 - Second review: job-log pages and event-stream replays stop near 1 MiB (`next` says where to go
-  on); results responses are built inside their read permit and refused with `413` past 64 MiB;
-  every route has a read budget of bytes and sweeps; a request that goes away cancels its reads
-  (`503`); at most 200 sweeps are listed per experiment; the sweep cache evicts the least recently
-  used entry and serves a changed sweep as it was while it is read again.
-- Second review: records of refused requests (`access.denied`) are limited to 10 a minute per
-  principal; audit actors name their kind (`token:<name>`, `proxy:<user>`, `cli`, `server`,
+  on), and the MCP `get_job_log tail=N` and job-log resource follow those pages, so they still end
+  at the newest line; results responses are built inside their read permit and refused with `413`
+  past 64 MiB; every route has a read budget of bytes and sweeps; a request that goes away cancels
+  its reads (`503`); at most 200 sweeps are listed per experiment; the sweep cache evicts the least
+  recently used entry and serves a changed sweep as it was while it is read again.
+- Second review: records of refused requests (`access.denied`, and refused job starts and cancels)
+  are limited to 10 a minute per principal, one shared allowance; audit actors name their kind (`token:<name>`, `proxy:<user>`, `cli`, `server`,
   `anonymous`); the rate limiters are kept per trusted-proxy peer (1,024 clients each, then that
   peer's own overflow bucket); behind an `https` `public_url` only https origins are accepted and a
   repeated `Origin` header is `403`; the MCP HTTP guard refuses a `Host` with userinfo.

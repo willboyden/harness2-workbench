@@ -551,6 +551,30 @@ async fn refused_requests_cannot_flood_the_audit_log() {
     t.stop().await;
 }
 
+/// Refused job requests (a kind the role may not start, a cancel of a finished job) share
+/// the principal's quota of refusal records with `access.denied`, so an operator cannot
+/// flood the audit log either.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refused_job_requests_cannot_flood_the_audit_log() {
+    let t = TestServer::start().await;
+    let before = audit_rows(&t).await;
+    for _ in 0..200 {
+        let r = t
+            .create_job(
+                &t.operator,
+                serde_json::json!({"kind": "install_harness2", "params": {}}),
+            )
+            .await;
+        assert_eq!(r.status(), 403);
+    }
+    let audited = audit_rows(&t).await - before;
+    assert!(
+        (1..=u64::from(h2w_daemon::http::extract::AUDITED_FAILURES_PER_MINUTE)).contains(&audited),
+        "{audited} audit rows for 200 refused job requests"
+    );
+    t.stop().await;
+}
+
 /// Behind trusted proxies the client comes from X-Forwarded-For, which any process on the
 /// proxy's network can invent. One peer cannot fill the limiter table that way: past its
 /// quota of clients it only limits itself, and a fresh client behind another peer still

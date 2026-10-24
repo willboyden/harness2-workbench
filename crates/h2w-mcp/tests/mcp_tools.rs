@@ -20,7 +20,7 @@ use rmcp::{
 use serde_json::{Value, json};
 use wiremock::{
     Mock, ResponseTemplate,
-    matchers::{body_partial_json, method, path},
+    matchers::{body_partial_json, method, path, query_param},
 };
 
 /// Every tool, sorted (tools/list sorts by name).
@@ -422,6 +422,46 @@ async fn tools_list_is_complete_described_and_annotated() {
             "{name}"
         );
     }
+}
+
+/// `tail` returns the newest lines even when the server's byte-bounded pages end before the
+/// log does: the page from `total - tail` holds two long lines and stops at line 2, so the tool
+/// jumps to where the rest fits and returns line 9, the newest.
+#[tokio::test]
+async fn get_job_log_tail_reaches_the_newest_lines_of_long_logs() {
+    let workbench = Workbench::start().await;
+    workbench.mount_happy(TOKEN, "alice", "viewer").await;
+    let id = "01a00000-0000-7000-8000-00000000beef";
+    let mut j = job(id, &demo_spec(), "succeeded", None);
+    j["log_lines"] = json!(10);
+    get_route(&api(&format!("/jobs/{id}")), TOKEN)
+        .respond_with(ResponseTemplate::new(200).set_body_json(j))
+        .mount(&workbench.server)
+        .await;
+    let long = "x".repeat(60_000);
+    let line = |n: u64, text: &str| json!({"n": n, "ts": NOW, "stream": "stdout", "text": text});
+    get_route(&api(&format!("/jobs/{id}/log")), TOKEN)
+        .and(query_param("from", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"lines": [line(0, &long), line(1, &long)], "next": 2, "complete": false}),
+        ))
+        .mount(&workbench.server)
+        .await;
+    get_route(&api(&format!("/jobs/{id}/log")), TOKEN)
+        .and(query_param("from", "9"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"lines": [line(9, "the newest line")], "next": 10, "complete": true}),
+        ))
+        .mount(&workbench.server)
+        .await;
+    let client = connect(&workbench.url(), TOKEN).await;
+    let result = call(&client, "get_job_log", json!({"job_id": id, "tail": 10})).await;
+    assert_eq!(result.is_error, Some(false), "{}", text(&result));
+    let p = payload(&result);
+    assert_eq!(p["lines"].as_array().map(Vec::len), Some(1), "{p}");
+    assert_eq!(p["lines"][0]["n"], 9);
+    assert_eq!(p["lines"][0]["text"], "the newest line");
+    assert_eq!(p["complete"], true);
 }
 
 #[tokio::test]
