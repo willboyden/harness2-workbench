@@ -10,7 +10,9 @@ listen = "0.0.0.0:8722"
 # EDIT: the URL people type, the site address in deploy/examples/Caddyfile.
 public_url = "https://studio.example.com"
 # The ingress forwards X-Forwarded-For from its address on the `jobs` network. Docker picks
-# that network's subnet; narrow this to it once known (`docker network inspect`).
+# that network's subnet; narrow this to the ingress container's address once known
+# (`docker network inspect`). Anything on the jobs network inside a trusted range, jobs included,
+# can set the client address the Studio records and rate-limits by.
 trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 
 [paths]
@@ -18,8 +20,9 @@ trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 harness2_managed = true
 
 [isolation]
-# Jobs run inside the studio container, which reaches the network only through the egress
-# proxy below. Every run still needs `acknowledge_risks` unless you set
+# Jobs run inside the studio container as the server's own user: they reach the network only
+# through the egress proxy below, but they can read and change the Studio's data (equivalent to
+# a Studio admin). Every run still needs `acknowledge_risks` unless you set
 # preacknowledge_host_risks = true.
 mode = "host"
 

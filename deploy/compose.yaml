@@ -1,10 +1,16 @@
-# Reference deployment: everything contained, egress allowlisted, TLS at the edge.
+# Reference deployment: the Studio and its jobs contained from your host, egress allowlisted,
+# TLS at the edge.
 #
 #   browser ──https──> ingress (Caddy, TLS) ──> studio ──> egress proxy ──> allowed hosts only
 #                        [edge + jobs nets]     [jobs net, internal]   [jobs + uplink nets]
 #
 # - `studio` sits only on `jobs`, an internal network with no route out. harness2 jobs inherit
 #   HTTP(S)_PROXY and can reach exactly the hosts in `[egress] allow` of the mounted config.
+# - Jobs run in host isolation INSIDE the studio container, as the same user: a malicious or
+#   prompt-injected executor can read and change the Studio's data (/data: database, stored
+#   secrets) and so act as a Studio admin. The container keeps it away from your host and network,
+#   not from the Studio. To isolate jobs from the Studio, run h2studio on a host with container
+#   isolation instead (docs/ADMIN-GUIDE.md).
 # - `ingress` publishes the UI; set your domain in deploy/examples/Caddyfile (or replace it
 #   with your organisation's reverse proxy, adding it to `server.trusted_proxies`).
 #
