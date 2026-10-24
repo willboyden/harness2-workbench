@@ -150,6 +150,13 @@ Keys beyond §11 (all optional, defaults shown):
   and its secrets (422 naming the secret), split file (exists and matches the cell), queue cap.
   The first writing job with a profile pins it to an experiment that has none.
 - `check` without a profile uses the profile named `default` when one exists.
+- Profiles' `extra_env` cannot set the names and prefixes in `h2s_core::env::RESERVED_ENV` /
+  `RESERVED_ENV_PREFIXES`: besides the loader, interpreter and server variables, the container
+  runtime's (`DOCKER_*`, `CONTAINER_HOST`, `CONTAINERS_*`, `REGISTRY_AUTH_FILE`), `XDG_*`,
+  `GIT_*`, `OPENCODE_*`, `NODE_PATH`, `JAVA_TOOL_OPTIONS`, `RUBYOPT`/`RUBYLIB`,
+  `PERL5OPT`/`PERL5LIB` and the CA variables (`SSL_CERT_FILE`, `SSL_CERT_DIR`,
+  `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`). A stored profile that uses one
+  is refused (422) when a job would use it; save it again without that variable.
 - **Processes**: argv only; `env_clear()` + `BASE_ENV_PASSTHROUGH` and the `UV_`/`PIP_`/`NPM_CONFIG_`
   prefixes (`h2s_core::env::is_passed_through`) + the job environment (runtime
   CLIs also get `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `XDG_RUNTIME_DIR`,
