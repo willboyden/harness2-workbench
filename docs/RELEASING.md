@@ -4,6 +4,15 @@ Harness² Studio follows [Semantic Versioning](https://semver.org). Before 1.0, 
 (0.**x**.0) may contain breaking changes; patch versions never do. The REST API and MCP tools are
 versioned with the product.
 
+## Repository visibility
+
+Code scanning (the CodeQL and OpenSSF Scorecard jobs of `.github/workflows/security.yml`) and the
+build-provenance attestations of the release workflow need a public repository on GitHub's free
+plan (private repositories need GitHub Advanced Security or Enterprise Cloud). The two scanning jobs
+therefore run only when the repository variable `CODE_SCANNING_ENABLED` is `true`:
+`gh variable set CODE_SCANNING_ENABLED --body true` once the repository is public. Tag the first
+release only after that.
+
 ## Checklist
 
 1. **Changelog.** Move the *Unreleased* entries of [CHANGELOG.md](../CHANGELOG.md) under a new

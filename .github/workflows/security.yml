@@ -60,6 +60,9 @@ jobs:
 
   codeql:
     name: CodeQL (${{ matrix.language }})
+    # Code scanning needs a public repository (or GitHub Advanced Security): set the repository
+    # variable CODE_SCANNING_ENABLED=true when it is available (docs/RELEASING.md).
+    if: vars.CODE_SCANNING_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -84,7 +87,8 @@ jobs:
 
   scorecard:
     name: OpenSSF Scorecard
-    if: github.event_name != 'pull_request'
+    # Publishing results and uploading SARIF need a public repository (see codeql above).
+    if: github.event_name != 'pull_request' && vars.CODE_SCANNING_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
