@@ -37,5 +37,11 @@ updates:
       day: monday
     cooldown:
       default-days: 14
+    ignore:
+      # Node majors are picked by hand from the LTS lines (even numbers). With the cooldown
+      # alone, the first run skipped 26 (its tags were rebuilt within 14 days) and offered 25,
+      # an odd line past its end of life. New digests of the pinned line still arrive.
+      - dependency-name: "library/node"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "build(docker)"

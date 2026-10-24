@@ -178,7 +178,10 @@ docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.0 .
   `/healthz` health check. It is what [section 10](#10-the-compose-reference-deployment) runs.
 
 Every base image is pinned by digest; Dependabot proposes updates with the same 14-day cooldown as
-the crates.
+the crates, except Node majors, which are chosen by hand from the LTS lines. The all-in-one image
+builds on the runner image named by the `RUNNER_IMAGE` build argument (default
+`harness2-workbench-runner:0.1.0`), so `--build-arg RUNNER_IMAGE=<name:tag>` puts it on your own
+runner image.
 
 ### 3.4 Put the binaries on `PATH`
 

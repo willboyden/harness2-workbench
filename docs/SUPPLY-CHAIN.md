@@ -14,7 +14,8 @@ every crate version in `Cargo.lock` — direct and transitive — must have been
 - Picking versions: `cargo update -p <crate>@<version> --precise <older>` pins a younger
   transitive version back; direct dependencies are declared at a version that passed the cooldown.
 - The same rule applies to GitHub Actions (pinned by full commit SHA to a release at least 14 days
-  old), Dependabot (`cooldown: default-days: 14`), tool versions installed in CI
+  old), Dependabot (`cooldown: default-days: 14`; Node majors are left to a person, because the
+  cooldown alone offered an odd Node line past its end of life), tool versions installed in CI
   (`wasm-bindgen-cli`, `cargo-deny`, `cargo-audit`, `cargo-cyclonedx`, `gitleaks`) and container
   base images (pinned by digest).
 
