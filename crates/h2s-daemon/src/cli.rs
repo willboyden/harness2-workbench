@@ -476,6 +476,8 @@ fn doctor(config: Option<&Path>, json: bool) -> anyhow::Result<ExitCode> {
             isolation: cfg.isolation(),
             data_dir: cfg.paths.data_dir.clone(),
             uses_vertex,
+            container: (cfg.isolation() == h2s_api::Isolation::Container)
+                .then(|| cfg.file.isolation.container.clone()),
         })
         .await
     });

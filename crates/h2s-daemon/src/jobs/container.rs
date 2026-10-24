@@ -124,6 +124,106 @@ pub async fn resolve_user<R: CommandRunner>(
     }
 }
 
+/// The argv that prints whether a network is internal (`true` or `false`); the same Go
+/// template works for Docker and Podman. `network` is validated by the configuration
+/// (`config::network_ok`: it cannot start with `-`).
+#[must_use]
+pub fn network_internal_argv(runtime: RuntimeKind, network: &str) -> Vec<String> {
+    vec![
+        runtime.as_str().to_owned(),
+        "network".to_owned(),
+        "inspect".to_owned(),
+        "--format".to_owned(),
+        "{{.Internal}}".to_owned(),
+        network.to_owned(),
+    ]
+}
+
+/// Whether `network` is internal: without a route out, so container jobs reach the
+/// internet only through the egress proxy.
+///
+/// # Errors
+/// When the runtime cannot be asked or does not know the network.
+pub async fn network_is_internal<R: CommandRunner>(
+    runner: &R,
+    runtime: RuntimeKind,
+    network: &str,
+) -> Result<bool, String> {
+    let (code, out) = runner.run(network_internal_argv(runtime, network)).await?;
+    if code != 0 {
+        return Err(format!(
+            "`{} network inspect {network}` failed (exit {code}); does the network exist?",
+            runtime.as_str()
+        ));
+    }
+    match out.trim() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => Err(format!(
+            "`{} network inspect {network}` answered {:?}",
+            runtime.as_str(),
+            crate::util::truncate_chars(other, 80)
+        )),
+    }
+}
+
+/// The doctor check for `[isolation.container] proxy`: the jobs network must be internal,
+/// or jobs can reach the internet around the proxy. `None` when no proxy is configured
+/// (or isolation is not `container`).
+pub async fn network_check<R: CommandRunner>(
+    runner: &R,
+    c: &crate::config::ContainerSection,
+) -> Option<h2s_api::DoctorCheck> {
+    if c.proxy.is_empty() || c.network == "none" {
+        return None;
+    }
+    let (level, detail, remedy) = match network_is_internal(runner, c.runtime, &c.network).await {
+        Ok(true) => (
+            h2s_api::CheckLevel::Ok,
+            format!(
+                "network {} is internal: container jobs reach the internet only through the \
+                 egress proxy {}",
+                c.network, c.proxy
+            ),
+            None,
+        ),
+        Ok(false) => (
+            h2s_api::CheckLevel::Warn,
+            format!(
+                "network {} is NOT internal: container jobs can reach the internet directly, \
+                 around the egress proxy {}",
+                c.network, c.proxy
+            ),
+            Some(format!(
+                "Recreate it with `{} network create --internal {}` and attach the egress \
+                 proxy to it and to a network with internet access.",
+                c.runtime.as_str(),
+                c.network
+            )),
+        ),
+        Err(e) => (
+            h2s_api::CheckLevel::Warn,
+            format!(
+                "could not tell whether network {} is internal: {e}",
+                c.network
+            ),
+            Some(format!(
+                "Create it with `{} network create --internal {}`.",
+                c.runtime.as_str(),
+                c.network
+            )),
+        ),
+    };
+    Some(h2s_api::DoctorCheck {
+        id: "container_network".to_owned(),
+        label: "Jobs network".to_owned(),
+        level,
+        detail,
+        remedy,
+        needed_for: vec!["container".to_owned()],
+    })
+}
+
 /// Stop the container of `job_id` only if its job label matches. Returns `Ok(true)` when it
 /// was stopped, `Ok(false)` when no matching container exists.
 ///
@@ -238,6 +338,50 @@ mod tests {
 
         let f = Fake::new(vec![(1, "")]);
         assert!(resolve_user(&f, RuntimeKind::Podman, "").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn the_jobs_network_must_be_internal_when_a_proxy_is_set() {
+        let mut c = crate::config::ContainerSection {
+            network: "h2s-egress".into(),
+            proxy: "http://egress:3128".into(),
+            ..crate::config::ContainerSection::default()
+        };
+        let level = |check: Option<h2s_api::DoctorCheck>| check.map(|c| c.level);
+        let f = Fake::new(vec![(0, "true\n")]);
+        assert_eq!(
+            level(network_check(&f, &c).await),
+            Some(h2s_api::CheckLevel::Ok)
+        );
+        assert_eq!(
+            f.calls.lock().unwrap()[0],
+            vec![
+                "docker",
+                "network",
+                "inspect",
+                "--format",
+                "{{.Internal}}",
+                "h2s-egress"
+            ]
+        );
+        let f = Fake::new(vec![(0, "false\n")]);
+        let check = network_check(&f, &c).await.unwrap();
+        assert_eq!(check.level, h2s_api::CheckLevel::Warn);
+        assert!(check.detail.contains("NOT internal"), "{}", check.detail);
+        assert!(check.remedy.unwrap().contains("--internal h2s-egress"));
+        let f = Fake::new(vec![(1, "")]);
+        let check = network_check(&f, &c).await.unwrap();
+        assert_eq!(check.level, h2s_api::CheckLevel::Warn);
+        assert!(
+            check.detail.contains("does the network exist"),
+            "{}",
+            check.detail
+        );
+        // No proxy: nothing to check, nothing run.
+        c.proxy.clear();
+        let f = Fake::new(vec![]);
+        assert!(network_check(&f, &c).await.is_none());
+        assert!(f.calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

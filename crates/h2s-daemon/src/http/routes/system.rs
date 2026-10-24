@@ -129,6 +129,8 @@ pub async fn doctor(
             isolation: st.cfg.isolation(),
             data_dir: st.cfg.paths.data_dir.clone(),
             uses_vertex,
+            container: (st.cfg.isolation() == Isolation::Container)
+                .then(|| st.cfg.file.isolation.container.clone()),
         }
     };
     Ok(Json(state.doctor.report(refresh, facts).await))

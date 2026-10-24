@@ -102,6 +102,8 @@ pub struct ContextFacts {
     pub isolation: Isolation,
     pub data_dir: std::path::PathBuf,
     pub uses_vertex: bool,
+    /// The container settings when isolation is `container` (for the jobs network check).
+    pub container: Option<crate::config::ContainerSection>,
 }
 
 /// A report from fresh probes.
@@ -114,7 +116,15 @@ pub async fn fresh_report(facts: ContextFacts) -> DoctorReport {
         uses_vertex: facts.uses_vertex,
         generated_at: crate::util::now_rfc3339(),
     };
-    h2s_core::doctor::evaluate(&results, &ctx)
+    let mut report = h2s_core::doctor::evaluate(&results, &ctx);
+    if let Some(c) = &facts.container
+        && let Some(check) =
+            crate::jobs::container::network_check(&crate::jobs::container::SystemRunner, c).await
+    {
+        report.ok = report.ok && check.level != h2s_api::CheckLevel::Fail;
+        report.checks.push(check);
+    }
+    report
 }
 
 /// The cached doctor.

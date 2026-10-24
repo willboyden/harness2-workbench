@@ -1370,6 +1370,20 @@ impl JobManager {
                     tracing::warn!(error = %e, "the container runtime did not answer; container jobs will fail until it does");
                 }
             }
+            // With a proxy configured, jobs must not have another way out.
+            if let Some(check) =
+                container::network_check(&container::SystemRunner, &me.settings.container).await
+            {
+                if check.level == h2s_api::CheckLevel::Ok {
+                    tracing::info!("{}", check.detail);
+                } else {
+                    tracing::warn!(
+                        remedy = check.remedy.as_deref().unwrap_or(""),
+                        "SECURITY: {}",
+                        check.detail
+                    );
+                }
+            }
         });
     }
 

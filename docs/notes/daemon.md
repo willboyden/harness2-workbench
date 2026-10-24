@@ -253,7 +253,11 @@ Keys beyond §11 (all optional, defaults shown):
   With `isolation.container.proxy` set, each `docker run` gets fixed `-e HTTPS_PROXY=<proxy>`,
   `HTTP_PROXY`, `https_proxy`, `http_proxy` and `NO_PROXY`/`no_proxy` = `localhost,127.0.0.1,::1`
   values; the runtime CLI's own environment does not get them. The install job (git, uv) needs
-  this: with `network = "none"` only the offline demo works.
+  this: with `network = "none"` only the offline demo works. The proxy only helps on an
+  internal network: with a proxy set, the server asks the runtime at startup whether the
+  network is internal (`network inspect --format {{.Internal}}`) and logs a warning starting
+  `SECURITY:` when it is not, or cannot be inspected; the doctor reports the same as check
+  `container_network` (warn).
 - **HOME**: the runner image sets `HOME=/h2s/home` (mode 1777), because container uid 0 without
   capabilities cannot write `/home/node` on a rootless runtime.
 - **Stopping**: the job label of `h2s-job-<id>` is read first and the container is stopped only
