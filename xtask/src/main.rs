@@ -32,6 +32,8 @@ enum Cmd {
     },
     /// Build the web UI, then release binaries of the server and the MCP server.
     Dist,
+    /// Write the third-party licence texts to dist/THIRD-PARTY-LICENSES.md (cargo-about).
+    Licenses,
     /// Check every locked crate version against the dependency cooldown.
     Cooldown {
         /// Minimum age in days.
@@ -61,6 +63,10 @@ enum Cmd {
 /// The end-to-end suites (`crates/h2w-e2e/tests/<name>.rs`).
 const E2E_SUITES: &[&str] = &["server_demo", "browser", "mcp"];
 
+/// The cargo-about release that writes the licence file (pinned, 14-day cooldown; installed with
+/// `cargo install --locked cargo-about --version <it> --features cli`).
+const CARGO_ABOUT: &str = "0.9.2";
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = workspace_root()?;
@@ -74,6 +80,7 @@ fn main() -> Result<()> {
                 &["build", "--release", "-p", "h2w-daemon", "-p", "h2w-mcp"],
             )
         }
+        Cmd::Licenses => licenses(&root),
         Cmd::Cooldown { days } => cooldown::check(&root, days),
         Cmd::Docs => docs::check(&root),
         Cmd::Check => check(&root),
@@ -104,6 +111,42 @@ fn run(cwd: &Path, program: &str, args: &[&str]) -> Result<()> {
     if !status.success() {
         bail!("`{program} {}` failed with {status}", args.join(" "));
     }
+    Ok(())
+}
+
+/// Write `dist/THIRD-PARTY-LICENSES.md`: the licence texts of every crate compiled into the
+/// servers and the web UI, from `supply-chain/about.toml` and `supply-chain/about.hbs`.
+fn licenses(root: &Path) -> Result<()> {
+    let found = Command::new("cargo")
+        .args(["about", "--version"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+    if found.as_deref() != Some(format!("cargo-about {CARGO_ABOUT}").as_str()) {
+        bail!(
+            "cargo-about {CARGO_ABOUT} is needed (found: {}); install it with \
+             `cargo install --locked cargo-about --version {CARGO_ABOUT} --features cli`",
+            found.as_deref().unwrap_or("none")
+        );
+    }
+    std::fs::create_dir_all(root.join("dist")).context("could not create dist/")?;
+    run(
+        root,
+        "cargo",
+        &[
+            "about",
+            "generate",
+            "--config",
+            "supply-chain/about.toml",
+            "--output-file",
+            "dist/THIRD-PARTY-LICENSES.md",
+            "--locked",
+            "supply-chain/about.hbs",
+        ],
+    )?;
+    eprintln!("third-party licences written to dist/THIRD-PARTY-LICENSES.md");
     Ok(())
 }
 

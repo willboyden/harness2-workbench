@@ -279,4 +279,6 @@ link in the Markdown files resolves: `cargo xtask docs`).
 [Apache License 2.0](LICENSE). harness2 is Apache-2.0 as well; the benchmarks it installs keep their own
 licences (WorkBuddy-Bench has a custom licence with a territorial limitation; read it before use).
 Parts of `h2w-core` are translated from harness2 (Copyright 2026 Google LLC, Apache-2.0) and
-the test fixtures contain its output: see [NOTICE](NOTICE).
+the test fixtures contain its output: see [NOTICE](NOTICE). Release archives and the all-in-one
+image also carry `THIRD-PARTY-LICENSES.md`, the licences of the crates compiled in
+(`cargo xtask licenses`).

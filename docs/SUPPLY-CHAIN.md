@@ -16,9 +16,9 @@ every crate version in `Cargo.lock` — direct and transitive — must have been
 - The same rule applies to GitHub Actions (pinned by full commit SHA to a release at least 14 days
   old), Dependabot (`cooldown: default-days: 14`; Node majors are left to a person, because the
   cooldown alone offered an odd Node line past its end of life, and uv entirely, see
-  [Bumping uv by hand](#bumping-uv-by-hand)), tool versions installed in CI
-  (`wasm-bindgen-cli`, `cargo-deny`, `cargo-audit`, `cargo-cyclonedx`, `gitleaks`) and container
-  base images (pinned by digest).
+  [Bumping uv by hand](#bumping-uv-by-hand)), tool versions installed in CI (`wasm-bindgen-cli`,
+  `cargo-deny`, `cargo-audit`, `cargo-cyclonedx`, `cargo-about`, `gitleaks`) and container base
+  images (pinned by digest).
 
 ### Security fixes always win
 
@@ -50,7 +50,9 @@ and a person moves it:
    Digest:    sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a
    ```
 3. Put both in the `FROM ghcr.io/astral-sh/uv:<version>@sha256:<digest> AS uv` line of
-   [`deploy/docker/runner.Dockerfile`](../deploy/docker/runner.Dockerfile).
+   [`deploy/docker/runner.Dockerfile`](../deploy/docker/runner.Dockerfile), and replace
+   `deploy/docker/licenses/uv/` with the `LICENSE-MIT` and `LICENSE-APACHE` of the same tag
+   (`gh api "repos/astral-sh/uv/contents/LICENSE-MIT?ref=<version>" --jq .content | base64 -d`).
 4. Rebuild the runner and all-in-one images
    ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#33-container-images)) and run one container-isolated job (the
    free demo is enough, [ADMIN-GUIDE.md](ADMIN-GUIDE.md#8-container-isolation-step-by-step))

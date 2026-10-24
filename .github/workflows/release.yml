@@ -42,6 +42,11 @@ jobs:
           [ "$want" = "${GITHUB_REF_NAME}" ] || { echo "::error::tag ${GITHUB_REF_NAME} != workspace ${want}"; exit 1; }
       - run: cargo xtask web
       - run: cargo build --release --locked -p h2w-daemon -p h2w-mcp
+      - name: Third-party licences (cargo-about, pinned and cooldown-checked)
+        run: |
+          set -euo pipefail
+          cargo install --locked cargo-about --version 0.9.2 --features cli
+          cargo xtask licenses
       - name: Package
         env:
           TARGET: ${{ matrix.target }}
@@ -50,7 +55,7 @@ jobs:
           name="harness2-workbench-${GITHUB_REF_NAME}-${TARGET}"
           mkdir -p "pkg/${name}/bin"
           cp target/release/h2workbench target/release/h2workbench-mcp "pkg/${name}/bin/"
-          cp LICENSE NOTICE README.md CHANGELOG.md SECURITY.md "pkg/${name}/"
+          cp LICENSE NOTICE README.md CHANGELOG.md SECURITY.md dist/THIRD-PARTY-LICENSES.md "pkg/${name}/"
           cp -r docs deploy "pkg/${name}/"
           tar -C pkg -czf "${name}.tar.gz" "${name}"
       - name: SBOM (CycloneDX)
