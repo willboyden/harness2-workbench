@@ -1,12 +1,12 @@
 # Administrator's guide
 
-How to install, configure, secure, run and maintain a Harness² Studio server (`h2studio`) and its
-MCP server (`h2studio-mcp`). For what the pieces are, start with the [README](../README.md); for
+How to install, configure, secure, run and maintain a Harness² Workbench server (`h2workbench`) and its
+MCP server (`h2workbench-mcp`). For what the pieces are, start with the [README](../README.md); for
 the HTTP interface, [API.md](API.md); for what the security controls do and do not stop,
 [THREAT-MODEL.md](THREAT-MODEL.md); for a message you are looking at, [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 **What was verified, and how.** Commands and output on this page marked as a transcript were run
-against `h2studio` 0.1.0 and harness2 `1cfe254` on Linux x86_64 on 2026-10-23 and 2026-10-24 (the
+against `h2workbench` 0.1.0 and harness2 `1cfe254` on Linux x86_64 on 2026-10-23 and 2026-10-24 (the
 documentation author's runs: init, serve, tokens, doctor, a managed `install_harness2`, the demo,
 proxy authentication with simulated proxy headers, the egress proxy on loopback, OTLP export to a
 local collector, metrics, the MCP server). The container-isolation and compose-deployment
@@ -32,12 +32,12 @@ Dockerfile, not run.
 
 > **Read this first: host isolation is not a security boundary.** In the default `host` isolation,
 > harness2's executors run as the server's user. A malicious or prompt-injected executor can
-> therefore read the Studio's database (stored secrets, token hashes), its files and its
-> environment, and rewrite them: it is, in effect, a Studio administrator plus the server user.
+> therefore read the Workbench's database (stored secrets, token hashes), its files and its
+> environment, and rewrite them: it is, in effect, a Workbench administrator plus the server user.
 > For anything but your own trusted experiments use container isolation
 > ([section 8](#8-container-isolation-step-by-step)); that is what it is for. The compose reference
-> deployment ([section 10](#10-the-compose-reference-deployment)) contains the whole Studio from
-> your host and network, but **the jobs inside it are not isolated from the Studio itself**. The
+> deployment ([section 10](#10-the-compose-reference-deployment)) contains the whole Workbench from
+> your host and network, but **the jobs inside it are not isolated from the Workbench itself**. The
 > server and the egress proxy make themselves non-dumpable, so a same-user job cannot read their
 > `/proc/<pid>/environ` or memory, but it can still open the database file and everything else the
 > user can read: the caveat stands.
@@ -59,20 +59,20 @@ Contents: [1 Architecture](#1-architecture-in-one-page) · [2 Requirements](#2-r
 ```mermaid
 flowchart TB
   user[Browser / curl] -->|HTTPS| proxy[Reverse proxy<br/>TLS, SSO]
-  agent[MCP client] -->|stdio| mcp[h2studio-mcp]
+  agent[MCP client] -->|stdio| mcp[h2workbench-mcp]
   mcp -->|REST + token| srv
-  proxy -->|HTTP, trusted peer| srv[h2studio serve<br/>REST, SSE, UI, /metrics<br/>auth, roles, audit, SQLite]
+  proxy -->|HTTP, trusted peer| srv[h2workbench serve<br/>REST, SSE, UI, /metrics<br/>auth, roles, audit, SQLite]
   srv -->|argv, no shell| jobs{{harness2 job processes}}
   jobs -.->|host mode| host[(server user's files<br/>and network)]
   jobs -.->|container mode| ctr[runner container<br/>no caps, limits, own network]
-  ctr -->|"HTTP(S)_PROXY"| egress[h2studio egress-proxy<br/>hostname allowlist]
+  ctr -->|"HTTP(S)_PROXY"| egress[h2workbench egress-proxy<br/>hostname allowlist]
   egress --> net((allowed hosts))
-  srv --- data[(data dir: studio.db, logs, experiments, harness2)]
+  srv --- data[(data dir: workbench.db, logs, experiments, harness2)]
 ```
 
 *This Mermaid diagram was syntax-checked with the Mermaid 12.1.0 parser (`mermaid.parse`). It has not been rendered to an image, so its layout is unseen.*
 
-- **`h2studio serve`** is the only component with authority. It owns authentication, roles, the
+- **`h2workbench serve`** is the only component with authority. It owns authentication, roles, the
   job queue, the SQLite database and the audit log, and serves the REST API, server-sent events,
   `/metrics` and the web UI from one port (default `127.0.0.1:8722`). It speaks plain HTTP/1.1:
   **there is no native TLS**; put a reverse proxy in front for anything beyond loopback.
@@ -80,11 +80,11 @@ flowchart TB
   process group, with an environment built from scratch. In **host** isolation they run as the
   server's user; in **container** isolation each runs in a hardened container
   ([section 8](#8-container-isolation-step-by-step)).
-- **`h2studio-mcp`** is a thin client that gives AI agents the same operations ([MCP.md](MCP.md)).
-- **`h2studio egress-proxy`** is an allowlisting forward proxy for container jobs
+- **`h2workbench-mcp`** is a thin client that gives AI agents the same operations ([MCP.md](MCP.md)).
+- **`h2workbench egress-proxy`** is an allowlisting forward proxy for container jobs
   ([section 9](#9-the-egress-allowlist)).
 - **Data** lives under one directory: the database, job logs, per-job temporary files, split files,
-  the experiments (each one a plain harness2 results directory) and, when the Studio manages it, the
+  the experiments (each one a plain harness2 results directory) and, when the Workbench manages it, the
   harness2 checkout.
 
 Only Linux is supported for running jobs (harness2's setup guide specifies Linux for benchmark runs,
@@ -94,7 +94,7 @@ and the server uses process groups and `/proc` for cancellation and restart reco
 
 | Needed for | Requirement | Checked by |
 |---|---|---|
-| everything that runs harness2 | `uv`, Python 3.12 available to uv, `git` | `h2studio doctor` rows `uv`, `python312`, `git` |
+| everything that runs harness2 | `uv`, Python 3.12 available to uv, `git` | `h2workbench doctor` rows `uv`, `python312`, `git` |
 | benchmark setup (JobBench, LAB, WorkBuddy) | Node.js 20 or newer and `npm` | `node20`, `npm` |
 | LAB | Pandoc and Poppler (`pdftoppm`) | `pandoc`, `pdftoppm` |
 | WorkBuddy-Bench | Docker with permission to run `docker info`; `curl` | `docker`, `curl` |
@@ -111,15 +111,15 @@ install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Node.j
 ### 3.1 From source (verified)
 
 ```console
-$ git clone https://github.com/willboyden/harness2-studio.git && cd harness2-studio
-$ cargo build --release --locked -p h2s-daemon -p h2s-mcp
+$ git clone https://github.com/willboyden/harness2-workbench.git && cd harness2-workbench
+$ cargo build --release --locked -p h2w-daemon -p h2w-mcp
     Finished `release` profile [optimized] target(s) in 1m 07s
-$ ls -l target/release/h2studio target/release/h2studio-mcp | awk '{print $5, $9}'
-21509776 target/release/h2studio
-13997640 target/release/h2studio-mcp
+$ ls -l target/release/h2workbench target/release/h2workbench-mcp | awk '{print $5, $9}'
+21509776 target/release/h2workbench
+13997640 target/release/h2workbench-mcp
 ```
 
-This builds the two binaries (`h2studio`, `h2studio-mcp`) with SQLite bundled and TLS via rustls
+This builds the two binaries (`h2workbench`, `h2workbench-mcp`) with SQLite bundled and TLS via rustls
 (no OpenSSL). They are self-contained but **dynamically linked against glibc** (`libc`, `libm`,
 `libgcc_s`). A binary needs a glibc at least as new as the one it was built against, so build on the
 oldest distribution you will run it on (or on one with the same glibc). (The
@@ -132,7 +132,7 @@ server still builds and runs**: the API works and `/` shows a page saying `UI no
 - **Release builds notice the UI.** The crate's build script watches `dist/web`, so `cargo xtask web`
   followed by `cargo build --release` recompiles the server with it, with nothing to touch.
   Verified on 2026-10-24: a release server built without `dist/web` served the placeholder
-  (`/app.js` was `404`); after `cargo xtask web` the next release build recompiled `h2s-daemon`
+  (`/app.js` was `404`); after `cargo xtask web` the next release build recompiled `h2w-daemon`
   and served the UI (`/app.js` `200`, the 3.4 MB `.wasm` as `application/wasm`); the build after that
   was fresh.
 - **Debug builds read the files from disk at run time, but only if `dist/web/` existed when the
@@ -148,13 +148,13 @@ a faster debug one (about 150 MB).
 ### 3.2 Release archives (not yet published)
 
 Each tagged release will provide, per Linux target (`x86_64-unknown-linux-gnu`,
-`aarch64-unknown-linux-gnu`), `harness2-studio-<tag>-<target>.tar.gz` holding `bin/h2studio`,
-`bin/h2studio-mcp`, the documentation and the deployment files, plus `SHA256SUMS`, a CycloneDX SBOM
+`aarch64-unknown-linux-gnu`), `harness2-workbench-<tag>-<target>.tar.gz` holding `bin/h2workbench`,
+`bin/h2workbench-mcp`, the documentation and the deployment files, plus `SHA256SUMS`, a CycloneDX SBOM
 and a build-provenance attestation. Verify before use:
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
-gh attestation verify harness2-studio-<tag>-<target>.tar.gz --repo willboyden/harness2-studio
+gh attestation verify harness2-workbench-<tag>-<target>.tar.gz --repo willboyden/harness2-workbench
 ```
 
 See [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md) and [RELEASING.md](RELEASING.md). No release exists yet, so
@@ -166,15 +166,15 @@ Two images are built from the repository root (the CI builds them too; they are 
 to a registry):
 
 ```sh
-docker build -f deploy/docker/runner.Dockerfile -t harness2-studio-runner:0.1.0 .
-docker build -f deploy/docker/Dockerfile        -t harness2-studio:0.1.0 .
+docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.0 .
+docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.0 .
 ```
 
-- **`harness2-studio-runner`**: Node 22, uv with a managed CPython 3.12, git, curl, unzip, Pandoc,
+- **`harness2-workbench-runner`**: Node 22, uv with a managed CPython 3.12, git, curl, unzip, Pandoc,
   Poppler and `tini`; no harness2 code (the checkout is mounted, so a harness2 bump never needs a
   rebuild). It is the image of container-isolated jobs and the base of the next one.
-- **`harness2-studio`**: the runner plus `h2studio` and `h2studio-mcp`, running as user `node`
-  with `H2S_DATA_DIR=/data` and `H2S_CONFIG=/config/h2studio.toml`, listening on 8722, with a
+- **`harness2-workbench`**: the runner plus `h2workbench` and `h2workbench-mcp`, running as user `node`
+  with `H2W_DATA_DIR=/data` and `H2W_CONFIG=/config/h2workbench.toml`, listening on 8722, with a
   `/healthz` health check. It is what [section 10](#10-the-compose-reference-deployment) runs.
 
 Every base image is pinned by digest; Dependabot proposes updates with the same 14-day cooldown as
@@ -183,27 +183,27 @@ the crates.
 ### 3.4 Put the binaries on `PATH`
 
 ```sh
-install -Dm755 target/release/h2studio target/release/h2studio-mcp -t ~/.local/bin
-h2studio version
+install -Dm755 target/release/h2workbench target/release/h2workbench-mcp -t ~/.local/bin
+h2workbench version
 ```
 
 ## 4. First run
 
-All commands take `--config PATH`; without it the server uses `$H2S_CONFIG`, then
-`$XDG_CONFIG_HOME/harness2-studio/h2studio.toml` (normally `~/.config/harness2-studio/`). A
-transcript from a scratch directory (paths shortened to `/tmp/h2s-demo`):
+All commands take `--config PATH`; without it the server uses `$H2W_CONFIG`, then
+`$XDG_CONFIG_HOME/harness2-workbench/h2workbench.toml` (normally `~/.config/harness2-workbench/`). A
+transcript from a scratch directory (paths shortened to `/tmp/h2w-demo`):
 
 ```console
-$ h2studio --config /tmp/h2s-demo/h2studio.toml init --data-dir /tmp/h2s-demo/data
-h2s_xxxxxxxx_<redacted>                  <- stdout: the first admin token, the ONLY line on stdout
-Wrote /tmp/h2s-demo/h2studio.toml.       <- stderr from here on
-Created admin token enn02d72 (also saved to /tmp/h2s-demo/admin.token, mode 0600).
-Start the server with `h2studio serve` and sign in with this token.
+$ h2workbench --config /tmp/h2w-demo/h2workbench.toml init --data-dir /tmp/h2w-demo/data
+h2w_xxxxxxxx_<redacted>                  <- stdout: the first admin token, the ONLY line on stdout
+Wrote /tmp/h2w-demo/h2workbench.toml.       <- stderr from here on
+Created admin token enn02d72 (also saved to /tmp/h2w-demo/admin.token, mode 0600).
+Start the server with `h2workbench serve` and sign in with this token.
 ```
 
 `init` creates the configuration (mode 0600, in a 0700 directory), the data directories and the
 database, then mints a bootstrap token with the **admin** role. The token is printed once on
-standard output (so `TOKEN=$(h2studio init)` works) and also saved to `admin.token` next to the
+standard output (so `TOKEN=$(h2workbench init)` works) and also saved to `admin.token` next to the
 configuration; the saved copy is best effort, and a warning on standard error says when it cannot
 be written (for example a read-only configuration directory in a container).
 
@@ -211,29 +211,29 @@ be written (for example a read-only configuration directory in a container).
   while an active admin token exists:
 
   ```console
-  $ h2studio --config /tmp/h2s-demo/h2studio.toml init
-  Using the existing configuration /tmp/h2s-demo/h2studio.toml (it is not modified).
-  h2studio: already initialised: an admin token exists in /tmp/h2s-demo/data/studio.db. Create more with `h2studio token create`, or pass --force for another bootstrap token
+  $ h2workbench --config /tmp/h2w-demo/h2workbench.toml init
+  Using the existing configuration /tmp/h2w-demo/h2workbench.toml (it is not modified).
+  h2workbench: already initialised: an admin token exists in /tmp/h2w-demo/data/workbench.db. Create more with `h2workbench token create`, or pass --force for another bootstrap token
   ```
 
   `--force` mints another bootstrap admin token (it does not touch the configuration).
-- `--data-dir` is written into a **new** configuration only; otherwise `$H2S_DATA_DIR`, else the XDG
-  data directory (`~/.local/share/harness2-studio`).
+- `--data-dir` is written into a **new** configuration only; otherwise `$H2W_DATA_DIR`, else the XDG
+  data directory (`~/.local/share/harness2-workbench`).
 
 Then check the configuration, look at the environment, and start the server:
 
 ```console
-$ h2studio config check
+$ h2workbench config check
 configuration OK
-  config file: /tmp/h2s-demo/h2studio.toml
-  data dir: /tmp/h2s-demo/data
-  database: /tmp/h2s-demo/data/studio.db
-  experiments: /tmp/h2s-demo/data/experiments
-  harness2 home: /tmp/h2s-demo/data/harness2 (managed)
+  config file: /tmp/h2w-demo/h2workbench.toml
+  data dir: /tmp/h2w-demo/data
+  database: /tmp/h2w-demo/data/workbench.db
+  experiments: /tmp/h2w-demo/data/experiments
+  harness2 home: /tmp/h2w-demo/data/harness2 (managed)
   listen: 127.0.0.1:8722
   public url: http://127.0.0.1:8722/
 
-$ h2studio doctor
+$ h2workbench doctor
 FAIL  harness2           harness2 is not installed
       remedy: Install harness2 (Settings → System → Install harness2, an install_harness2 job).
 OK    uv                 uv 0.11.25 (x86_64-unknown-linux-gnu)
@@ -257,23 +257,23 @@ problems found
 
 `doctor` exits 1 while any check is `FAIL`. Check levels: `ok`, `warn` (works, but something
 deserves attention or only some benchmarks are affected), `fail` (something you asked for cannot
-work), `skip` (does not apply). `h2studio doctor --json` prints the same report as JSON. The same
+work), `skip` (does not apply). `h2workbench doctor --json` prints the same report as JSON. The same
 report is served at `GET /api/v1/system/doctor` (cached for 60 s). The checks are in
-[section 16](#16-command-reference) and [TROUBLESHOOTING.md](TROUBLESHOOTING.md#h2studio-doctor-checks).
+[section 16](#16-command-reference) and [TROUBLESHOOTING.md](TROUBLESHOOTING.md#h2workbench-doctor-checks).
 
 **Start the server.** It prints exactly one line on standard output once the socket is bound, and
 logs to standard error:
 
 ```console
-$ h2studio serve
-h2studio listening on http://127.0.0.1:8722
+$ h2workbench serve
+h2workbench listening on http://127.0.0.1:8722
 ```
 
 (`listen = "127.0.0.1:0"` picks a free port; the line shows which.) Stop it with Ctrl-C or
 `SIGTERM`: it stops accepting connections, ends event streams, stops running jobs (`SIGTERM`,
 `SIGKILL` after 10 s, marked `failed: server stopped`), and leaves queued jobs queued.
 
-**Install harness2.** The Studio can manage the harness2 checkout (the default) or use one you
+**Install harness2.** The Workbench can manage the harness2 checkout (the default) or use one you
 already have.
 
 - *Managed:* sign in as an admin and start an `install_harness2` job (web UI: Settings → System).
@@ -283,26 +283,26 @@ already have.
   real run took a few seconds with a warm uv cache:
 
   ```console
-  $ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'x-h2s-request: 1' -H 'content-type: application/json' \
+  $ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'x-h2w-request: 1' -H 'content-type: application/json' \
          -d '{"kind":"install_harness2","params":{}}' http://127.0.0.1:8722/api/v1/jobs
   {"id": "01a16c2f-2130-70af-8585-5a8a65343ca3", "kind": "install_harness2", "status": "queued", ...}
   $ # a few seconds later, GET /api/v1/jobs/<id> (summarised):
   steps: init=succeeded, remote=succeeded, fetch=succeeded, checkout=succeeded, verify-commit=succeeded, venv=succeeded, install=succeeded, import=succeeded
   result: {"kind": "install", "commit": "1cfe254e8d25b15f37048c3730134686abe60335", "version": "0.1.0", "python": "3.12", "extras": ["render"]}
-  $ h2studio doctor | head -1
+  $ h2workbench doctor | head -1
   OK    harness2           harness2 0.1.0 at 1cfe254e8d25, Python 3.12
   ```
 
   The `install` step runs `uv pip install --python .venv/bin/python --exclude-newer
   2026-10-14T02:22:49Z -e .[render]` (seen in the job log; the same run, repeated on 2026-10-24 with
-  warm caches, took 2 seconds). harness2 has no lock file, so the Studio resolves its Python
+  warm caches, took 2 seconds). harness2 has no lock file, so the Workbench resolves its Python
   dependencies as of the tested commit's date: a commit that needs newer packages fails to install
   instead of pulling releases nobody tested.
 
   Options: `rev` (a full 40-hex commit of google-research/harness2), `extras` (`bridge` adds the
   LiteLLM proxy the Codex bridge needs), `reinstall` (re-create the virtual environment).
 - *Existing checkout:* set `paths.harness2_home` to it and `paths.harness2_managed = false`. The
-  Studio **never modifies** such a checkout (an `install_harness2` job is refused with `409`
+  Workbench **never modifies** such a checkout (an `install_harness2` job is refused with `409`
   `harness2_home is an existing checkout (paths.harness2_managed = false); the server does not
   modify it`). It must contain `.venv/bin/harness2`; install harness2 into it yourself:
 
@@ -313,15 +313,15 @@ already have.
   uv pip install --python .venv/bin/python --exclude-newer 2026-10-14T02:22:49Z -e '.[render]'
   ```
 
-  (`--exclude-newer` gives you the dependency versions the Studio's own install uses.) `doctor` warns when the installed commit differs from the tested one, and warns about a `.env`
+  (`--exclude-newer` gives you the dependency versions the Workbench's own install uses.) `doctor` warns when the installed commit differs from the tested one, and warns about a `.env`
   file in the checkout: harness2 loads it for every variable a job does not set, bypassing the
-  Studio's profiles and secrets.
+  Workbench's profiles and secrets.
 
 **Run the free demo** to prove the whole path works (no model, no network, about a second). With
 the tokens created above:
 
 ```console
-$ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'x-h2s-request: 1' -H 'content-type: application/json' \
+$ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'x-h2w-request: 1' -H 'content-type: application/json' \
        -d '{"kind":"demo","params":{"experiment":"demo","k":2}}' http://127.0.0.1:8722/api/v1/jobs
 ```
 
@@ -333,38 +333,38 @@ then follow [API.md](API.md#10-a-curl-walkthrough) or open the web UI.
 
 ## 5. Configuration reference
 
-`h2studio.toml` is TOML with seven tables. **Unknown keys are errors**, so a typo cannot silently
+`h2workbench.toml` is TOML with seven tables. **Unknown keys are errors**, so a typo cannot silently
 fall back to a default, and a key outside its table is an error too. Every value is validated once
 at start-up and **all problems are reported together**. `~` and `~/` are expanded in paths (other
 `~user` forms are refused).
 
 ```console
-$ h2studio config check
-h2studio: invalid configuration (/tmp/h2s-demo/bad/h2studio.toml):
+$ h2workbench config check
+h2workbench: invalid configuration (/tmp/h2w-demo/bad/h2workbench.toml):
   - server.listen: "localhost" is not an address like 127.0.0.1:8722
   - server.public_url: scheme must be http or https; query and fragment are not allowed; serving under a path prefix is not supported
   - server.trusted_proxies[1]: "not-an-ip" is not an IP address or CIDR
   - server.max_body_bytes: 10 is outside 1024..=1073741824
   - jobs.timeout_hours: -1 must be > 0 and <= 8760
-  - isolation.container.image: "harness2-studio-runner:latest" must be pinned as name:tag (not latest) or name@sha256:<digest>
+  - isolation.container.image: "harness2-workbench-runner:latest" must be pinned as name:tag (not latest) or name@sha256:<digest>
   - isolation.container.network: "host" must be "none" or a user-defined network (never host)
   - isolation.container.user: "root" must be a numeric uid or uid:gid
   - egress.allow[0]: "192.0.2.5" must be a host name or *.suffix (IP literals are not allowed)
   - egress.allow[2].ports: 0 is not a port
 ```
 
-**Where the file is.** `--config PATH`, else `$H2S_CONFIG`, else
-`$XDG_CONFIG_HOME/harness2-studio/h2studio.toml` (an absolute `XDG_CONFIG_HOME`, else
+**Where the file is.** `--config PATH`, else `$H2W_CONFIG`, else
+`$XDG_CONFIG_HOME/harness2-workbench/h2workbench.toml` (an absolute `XDG_CONFIG_HOME`, else
 `~/.config`). A missing file at the *default* location means the built-in defaults; a missing file
 at an *explicit* location is an error. Values pointing into a snap or Flatpak sandbox are logged as
 warnings at start-up, as are the resolved paths.
 
-**Environment overrides** (a non-empty value wins over the file): `H2S_LISTEN` (`server.listen`),
-`H2S_DATA_DIR` (`paths.data_dir`), `H2S_PUBLIC_URL` (`server.public_url`), `H2S_LOG_FORMAT`
-(`telemetry.log_format`: `pretty` or `json`), `H2S_OTLP_ENDPOINT` (`telemetry.otlp_endpoint`).
-Other environment variables the server reads: `H2S_CONFIG` (the configuration path),
-`H2S_SECRET_<NAME>` (secret values, [section 6.4](#64-secrets)), the variable named by
-`auth.proxy.secret_env` (default `H2S_PROXY_SECRET`), and `HOME`, `XDG_CONFIG_HOME`,
+**Environment overrides** (a non-empty value wins over the file): `H2W_LISTEN` (`server.listen`),
+`H2W_DATA_DIR` (`paths.data_dir`), `H2W_PUBLIC_URL` (`server.public_url`), `H2W_LOG_FORMAT`
+(`telemetry.log_format`: `pretty` or `json`), `H2W_OTLP_ENDPOINT` (`telemetry.otlp_endpoint`).
+Other environment variables the server reads: `H2W_CONFIG` (the configuration path),
+`H2W_SECRET_<NAME>` (secret values, [section 6.4](#64-secrets)), the variable named by
+`auth.proxy.secret_env` (default `H2W_PROXY_SECRET`), and `HOME`, `XDG_CONFIG_HOME`,
 `XDG_DATA_HOME` for default locations. The server does **not** read `RUST_LOG`; use
 `telemetry.log_level`.
 
@@ -372,8 +372,8 @@ Other environment variables the server reads: `H2S_CONFIG` (the configuration pa
 
 | Key | Type | Default | Validation | Effect |
 |---|---|---|---|---|
-| `server.listen` | string | `"127.0.0.1:8722"` | `ip:port` (an IP, not a name; `[::1]:8722` for IPv6); port 0 picks a free port | Where the server binds. Loopback by default; the server prints the bound address once listening. Override: `H2S_LISTEN` |
-| `server.public_url` | string | `"http://127.0.0.1:8722"` | `http` or `https` URL with a host; no credentials, query, fragment or path prefix | The URL people type. Its host (and port) join the `Host` allowlist, its origin is the expected `Origin` of browser requests, and `https` makes the session cookie `Secure` and names it `__Host-h2s_session` (`h2s_session` over plain http). Override: `H2S_PUBLIC_URL`. An `https` URL with no `server.trusted_proxies` draws a warning |
+| `server.listen` | string | `"127.0.0.1:8722"` | `ip:port` (an IP, not a name; `[::1]:8722` for IPv6); port 0 picks a free port | Where the server binds. Loopback by default; the server prints the bound address once listening. Override: `H2W_LISTEN` |
+| `server.public_url` | string | `"http://127.0.0.1:8722"` | `http` or `https` URL with a host; no credentials, query, fragment or path prefix | The URL people type. Its host (and port) join the `Host` allowlist, its origin is the expected `Origin` of browser requests, and `https` makes the session cookie `Secure` and names it `__Host-h2w_session` (`h2w_session` over plain http). Override: `H2W_PUBLIC_URL`. An `https` URL with no `server.trusted_proxies` draws a warning |
 | `server.allowed_hosts` | list of strings | `[]` | each `host`, `host:port`, `[v6]` or `[v6]:port` with a valid name or IP | Extra `Host` values answered (a LAN name, or the name a reverse proxy forwards). An entry without a port matches any port. Anything else is `421` |
 | `server.trusted_proxies` | list of strings | `[]` | each an IP address or CIDR | Peers whose `X-Forwarded-For` and `x-request-id` are believed (the client is the right-most address that is not itself trusted) and, in proxy mode, whose identity headers are accepted. They are also exempt from `server.max_connections_per_ip` (a reverse proxy limits its own clients). Empty = none trusted |
 | `server.max_body_bytes` | integer | `1048576` | 1024 to 1073741824 | Largest request body; more is `413` |
@@ -381,7 +381,7 @@ Other environment variables the server reads: `H2S_CONFIG` (the configuration pa
 | `server.sse_max_connections` | integer | `64` | 1 to 10000 | Open job event streams at once; more is `503` |
 | `server.sse_max_per_principal` | integer | `8` | 1 to 10000 | Event streams one principal may hold: a token together with all its browser sessions, or one proxy user. More is `429` `this caller already has N open event streams; close one first` (`Retry-After: 5`) |
 | `server.login_attempts_per_minute` | integer | `10` | 1 to 10000 | Login attempts, successful or not, per client address (IPv6 per /64): a token bucket of that size refilled over a minute; empty is `429` with `Retry-After` |
-| `server.max_connections_per_ip` | integer | `256` | 1 to 1024 | Open connections one client address (IPv6: one /64) may hold, out of the server's 1,024 in total. Further connections are closed at accept, counted in `h2s_connections_refused_total{reason="per_client"}` and logged at most once a minute. Peers in `server.trusted_proxies` are exempt |
+| `server.max_connections_per_ip` | integer | `256` | 1 to 1024 | Open connections one client address (IPv6: one /64) may hold, out of the server's 1,024 in total. Further connections are closed at accept, counted in `h2w_connections_refused_total{reason="per_client"}` and logged at most once a minute. Peers in `server.trusted_proxies` are exempt |
 
 Fixed limits that are not configurable: 1024 concurrent connections in total, 10 s to send request
 headers, SSE heartbeats every 15 s (the caller's credential is checked again at each one), 10 minutes
@@ -396,8 +396,8 @@ idle and 1 hour maximum per event stream. Failed authentication has its own fixe
 | `auth.session_ttl_hours` | integer | `12` | 1 to 8760 | Lifetime of a browser session; never longer than its token |
 | `auth.proxy.user_header` | string | `"x-forwarded-user"` | a valid HTTP header name | Header carrying the authenticated user name |
 | `auth.proxy.groups_header` | string | `"x-forwarded-groups"` | a valid HTTP header name | Header carrying the user's groups, comma-separated (several header lines are merged) |
-| `auth.proxy.secret_header` | string | `"x-h2s-proxy-secret"` | a valid HTTP header name | Header in which the proxy presents the shared secret |
-| `auth.proxy.secret_env` | string | `"H2S_PROXY_SECRET"` | `[A-Z_][A-Z0-9_]*`, at most 128 characters | Name of the environment variable holding the shared secret; its value must be at least 16 characters |
+| `auth.proxy.secret_header` | string | `"x-h2w-proxy-secret"` | a valid HTTP header name | Header in which the proxy presents the shared secret |
+| `auth.proxy.secret_env` | string | `"H2W_PROXY_SECRET"` | `[A-Z_][A-Z0-9_]*`, at most 128 characters | Name of the environment variable holding the shared secret; its value must be at least 16 characters |
 | `auth.proxy.admin_groups` | list of strings | `[]` | | Members become `admin` |
 | `auth.proxy.operator_groups` | list of strings | `[]` | | Members become `operator` (if not admin) |
 | `auth.proxy.viewer_groups` | list of strings | `[]` | | Members become `viewer`. **Empty = every authenticated proxy user is a viewer**; non-empty = users in none of the three lists get `403` |
@@ -406,10 +406,10 @@ idle and 1 hour maximum per event stream. Failed authentication has its own fixe
 
 | Key | Type | Default | Validation | Effect |
 |---|---|---|---|---|
-| `paths.data_dir` | string | `""` = `$XDG_DATA_HOME/harness2-studio` (normally `~/.local/share/harness2-studio`) | absolute or `~/...` | The database `studio.db`, `logs/jobs/`, `jobs/` (per-job temporary files), `splits/`. Created mode 0700. Override: `H2S_DATA_DIR` |
+| `paths.data_dir` | string | `""` = `$XDG_DATA_HOME/harness2-workbench` (normally `~/.local/share/harness2-workbench`) | absolute or `~/...` | The database `workbench.db`, `logs/jobs/`, `jobs/` (per-job temporary files), `splits/`. Created mode 0700. Override: `H2W_DATA_DIR` |
 | `paths.experiments_dir` | string | `""` = `<data_dir>/experiments` | absolute or `~/...` | Each experiment is a directory here, one `HARNESS2_RUNS_DIR` |
 | `paths.harness2_home` | string | `""` = `<data_dir>/harness2` | absolute or `~/...` | The harness2 checkout with its `.venv` and `dependencies/` |
-| `paths.harness2_managed` | boolean | `true` | | `true`: the Studio installs and updates harness2 there. `false`: an existing checkout that is never modified; `install_harness2` is refused |
+| `paths.harness2_managed` | boolean | `true` | | `true`: the Workbench installs and updates harness2 there. `false`: an existing checkout that is never modified; `install_harness2` is refused |
 | `paths.allow_untested_harness2_rev` | boolean | `false` | | `false`: `install_harness2` with a `rev` other than the tested commit is refused, `422` on `params.rev` (`only the tested harness2 commit <sha> can be installed; an administrator can allow others with paths.allow_untested_harness2_rev = true`), because a fork can make any commit fetchable from the upstream repository and installing runs its build code. `true` accepts any 40-hex commit |
 
 ### `[jobs]`: the job engine
@@ -431,7 +431,7 @@ idle and 1 hour maximum per event stream. Failed authentication has its own fixe
 | `isolation.mode` | string | `"host"` | `host` or `container` | `host`: jobs run as the server's user with its files and network (upstream's behaviour). `container`: each job runs in a hardened container ([section 8](#8-container-isolation-step-by-step)) |
 | `isolation.preacknowledge_host_risks` | boolean | `false` | | When `false`, `run` and `pipeline` jobs in host mode must carry `acknowledge_risks: true` or are refused (`422`). `true` accepts every such run without the flag, **including runs started by MCP agents** (their own acknowledgement guard has nothing left to refuse), and the web UI's run wizard then shows a note instead of asking: set it only on a machine where every operator has been told and no agent holds an operator token |
 | `isolation.container.runtime` | string | `"docker"` | `docker` or `podman` | The container CLI |
-| `isolation.container.image` | string | `"harness2-studio-runner:0.1.0"` | pinned: `name:tag` with a tag other than `latest`, or `name@sha256:<64 hex>`; the repository name in lowercase | The runner image |
+| `isolation.container.image` | string | `"harness2-workbench-runner:0.1.0"` | pinned: `name:tag` with a tag other than `latest`, or `name@sha256:<64 hex>`; the repository name in lowercase | The runner image |
 | `isolation.container.network` | string | `"none"` | `none`, or a user-defined network name (`[A-Za-z0-9][A-Za-z0-9_.-]*`, at most 64 characters; never `host`, `bridge` or `default`) | `none`: no network (the demo works; model calls and installs do not). A network name puts jobs on it, normally an internal one behind an egress proxy |
 | `isolation.container.proxy` | string | `""` | empty, or `http://host:port` with an explicit port and no credentials, path or query; needs a `network` other than `none` | The egress proxy as the job containers reach it. Set in each container as `HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy`, `http_proxy`, with `NO_PROXY` and `no_proxy` = `localhost,127.0.0.1,::1`, as fixed `-e NAME=VALUE` arguments (never secrets) |
 | `isolation.container.cpus` | number | `4.0` | greater than 0, at most 1024 | `--cpus` |
@@ -439,7 +439,7 @@ idle and 1 hour maximum per event stream. Failed authentication has its own fixe
 | `isolation.container.pids_limit` | integer | `2048` | 16 to 1000000 | `--pids-limit` |
 | `isolation.container.user` | string | `""` = detected | empty, or numeric `uid` or `uid:gid` | The container user. Empty: `0:0` on a rootless runtime, the server's own `uid:gid` on a rootful one |
 
-### `[egress]`: the allowlisting proxy (used only by `h2studio egress-proxy`)
+### `[egress]`: the allowlisting proxy (used only by `h2workbench egress-proxy`)
 
 | Key | Type | Default | Validation | Effect |
 |---|---|---|---|---|
@@ -452,14 +452,14 @@ An `allow` entry is `"host"`, `"*.suffix"`, or `{ host = "...", allow_private = 
 
 | Key | Type | Default | Validation | Effect |
 |---|---|---|---|---|
-| `telemetry.log_format` | string | `"pretty"` | `pretty` or `json` | Log lines on standard error: human-readable or one JSON object per line. Override: `H2S_LOG_FORMAT` |
-| `telemetry.log_level` | string | `"info"` | a level or filter directive such as `info` or `h2s_daemon=debug,warn` | Log verbosity |
-| `telemetry.otlp_endpoint` | string | `""` | empty, or an `http(s)` URL with a host | OTLP/HTTP trace export. A URL without a path gets `/v1/traces` appended. Empty = no export. Override: `H2S_OTLP_ENDPOINT` |
-| `telemetry.service_name` | string | `"harness2-studio"` | 1 to 128 characters | `service.name` of exported traces |
+| `telemetry.log_format` | string | `"pretty"` | `pretty` or `json` | Log lines on standard error: human-readable or one JSON object per line. Override: `H2W_LOG_FORMAT` |
+| `telemetry.log_level` | string | `"info"` | a level or filter directive such as `info` or `h2w_daemon=debug,warn` | Log verbosity |
+| `telemetry.otlp_endpoint` | string | `""` | empty, or an `http(s)` URL with a host | OTLP/HTTP trace export. A URL without a path gets `/v1/traces` appended. Empty = no export. Override: `H2W_OTLP_ENDPOINT` |
+| `telemetry.service_name` | string | `"harness2-workbench"` | 1 to 128 characters | `service.name` of exported traces |
 | `telemetry.metrics_token_secret` | string | `""` | empty, or a secret name `[A-Z][A-Z0-9_]{0,63}` | The secret whose value is accepted as a bearer token on `/metrics` ([section 11](#11-observability)) |
 
-Two annotated examples ship with the code: `deploy/examples/h2studio.toml` (every key, with
-comments) and `deploy/examples/h2studio.compose.toml` (the compose deployment). `init` writes every
+Two annotated examples ship with the code: `deploy/examples/h2workbench.toml` (every key, with
+comments) and `deploy/examples/h2workbench.compose.toml` (the compose deployment). `init` writes every
 key with its default.
 
 ## 6. Authentication, roles and tokens
@@ -476,27 +476,27 @@ documented role.
 
 ### 6.2 Token mode
 
-A token is `h2s_<id>_<secret>`: an 8-character public id and a 256-bit random secret. The server
+A token is `h2w_<id>_<secret>`: an 8-character public id and a 256-bit random secret. The server
 stores only the SHA-256 of the secret and compares in constant time (ADR
 [0008](adr/0008-api-tokens-and-sessions.md)). Browser users paste a token into the sign-in page,
 which exchanges it for an `HttpOnly`, `SameSite=Strict` session cookie. Over plain http it is
-named `h2s_session`; when `public_url` is `https` it is `Secure` and named `__Host-h2s_session`
+named `h2w_session`; when `public_url` is `https` it is `Secure` and named `__Host-h2w_session`
 (`Path=/`, no `Domain`), so a browser refuses a cookie of that name planted by a sibling subdomain,
-and a plain `h2s_session` cookie is ignored. Verified with `public_url = "https://studio.example.com"`
+and a plain `h2w_session` cookie is ignored. Verified with `public_url = "https://workbench.example.com"`
 and the proxy's headers simulated: the login response carried
-`set-cookie: __Host-h2s_session=<id>; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=43200`.
+`set-cookie: __Host-h2w_session=<id>; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=43200`.
 
 ```console
-$ h2studio token create --name "ci viewer" --role viewer --expires-in-days 30 > viewer.token
+$ h2workbench token create --name "ci viewer" --role viewer --expires-in-days 30 > viewer.token
 Created viewer token ffpqjvis (ci viewer), expires 2026-11-23T04:33:53Z.
-$ h2studio token list
+$ h2workbench token list
 ID         ROLE      STATE    CREATED               EXPIRES               NAME
 ffpqjvis   viewer    active   2026-10-24T04:33:53Z  2026-11-23T04:33:53Z  ci viewer
 jettl84k   admin     active   2026-10-24T04:30:38Z  never                 initial admin
-$ h2studio token revoke ffpqjvis
+$ h2workbench token revoke ffpqjvis
 Revoked token ffpqjvis.
-$ h2studio token revoke nosuchid                      # exit status 1
-h2studio: no active token with id nosuchid
+$ h2workbench token revoke nosuchid                      # exit status 1
+h2workbench: no active token with id nosuchid
 ```
 
 - Names are 1 to 64 characters of letters, digits, space and `._-@`; `--expires-in-days` is 1 to
@@ -506,7 +506,7 @@ h2studio: no active token with id nosuchid
   `GET /api/v1/tokens`.
 - Revoking a token ends its browser sessions at once. The API refuses to revoke the **last active
   admin token** (`409`); the command line does not, and warns:
-  `Warning: no active admin token remains; create one with `h2studio token create --role admin`.`
+  `Warning: no active admin token remains; create one with `h2workbench token create --role admin`.`
 - The command line and a running server share the database safely (SQLite WAL, 10 s busy timeout);
   command-line token actions are audited with the actor `cli`.
 
@@ -518,10 +518,10 @@ creating the new token, switching clients, then revoking the old one.
 ### 6.3 Proxy (SSO) mode
 
 For a team behind an identity-aware proxy (oauth2-proxy, Pomerium, an organisation's gateway), set
-`auth.mode = "proxy"` and describe the headers the proxy sets. The Studio accepts a user from those
+`auth.mode = "proxy"` and describe the headers the proxy sets. The Workbench accepts a user from those
 headers **only when all of these hold**: the connection comes from an address in
 `server.trusted_proxies`; the request carries `auth.proxy.secret_header` with a value equal to the
-shared secret (`$H2S_PROXY_SECRET`, at least 16 characters, compared in constant time); and the user
+shared secret (`$H2W_PROXY_SECRET`, at least 16 characters, compared in constant time); and the user
 header is non-empty, at most 256 characters and has no control characters. The role comes from the
 groups:
 
@@ -533,17 +533,17 @@ groups:
 | otherwise | `403` `your groups do not grant a role on this server` |
 
 Start-up refuses a proxy configuration without the secret (`auth.mode = "proxy" needs the shared
-secret in the environment variable H2S_PROXY_SECRET`) or with a short one (`H2S_PROXY_SECRET must be
+secret in the environment variable H2W_PROXY_SECRET`) or with a short one (`H2W_PROXY_SECRET must be
 at least 16 characters`). A transcript against a server with
 `trusted_proxies = ["127.0.0.1"]` and the headers sent by `curl` standing in for a proxy (**not**
 tested with a real SSO proxy):
 
 ```console
-$ curl -H 'x-forwarded-user: alice' -H 'x-forwarded-groups: h2s-operators,staff' -H "x-h2s-proxy-secret: $SECRET" $BASE/api/v1/auth/me
+$ curl -H 'x-forwarded-user: alice' -H 'x-forwarded-groups: h2w-operators,staff' -H "x-h2w-proxy-secret: $SECRET" $BASE/api/v1/auth/me
 {"id":"alice","name":"alice","role":"operator","kind":"proxy"}
 $ ... -H 'x-forwarded-groups: contractors'            # viewer_groups is set and none matches
 {"error":{"code":"forbidden","message":"your groups do not grant a role on this server", ...}}
-$ ... -H 'x-h2s-proxy-secret: guess'                  # wrong shared secret
+$ ... -H 'x-h2w-proxy-secret: guess'                  # wrong shared secret
 {"error":{"code":"unauthorized","message":"invalid credentials", ...}}
 ```
 
@@ -551,7 +551,7 @@ Configure the proxy to (1) authenticate users, (2) **strip any copy of the ident
 headers sent by the client** and set its own, (3) add the shared-secret header on every request it
 forwards. In proxy mode tokens still work, so scripts keep using bearer tokens; the identity of a
 proxy user is recorded in the audit log by the user header's value. The UI contract is unchanged:
-mutating requests still need `x-h2s-request: 1` and a matching `Origin`.
+mutating requests still need `x-h2w-request: 1` and a matching `Origin`.
 
 **Repeated headers are refused.** A request in which the user, groups or secret header appears more
 than once is `401` (`invalid credentials`; the audit record and the metric say
@@ -560,8 +560,8 @@ the first user, or the union of the groups, would let a client choose its identi
 an administrators group. The proxy must still delete whatever the client sent under those names and
 set each of them exactly once; a single groups header may hold a comma-separated list. Verified: a
 request with a repeated user, groups or secret header got `401` (three audit records, metric
-`h2s_auth_failures_total{reason="proxy_duplicate_header"} 3`); the same request with single headers
-got `200`, and `staff,h2s-operators` in one header gave the operator role.
+`h2w_auth_failures_total{reason="proxy_duplicate_header"} 3`); the same request with single headers
+got `200`, and `staff,h2w-operators` in one header gave the operator role.
 
 **If `trusted_proxies` is broad**, for example all private ranges as in the compose example, any
 host in those ranges can *try* the headers, and only the shared secret stands between it and an
@@ -575,7 +575,7 @@ narrow `trusted_proxies` to the proxy's address as soon as it is known.
 ### 6.4 Secrets
 
 Model-provider keys are **secrets**: write-only values stored either in the database
-(`PUT /api/v1/secrets/{name}`, admin) or supplied as `H2S_SECRET_<NAME>` environment variables of
+(`PUT /api/v1/secrets/{name}`, admin) or supplied as `H2W_SECRET_<NAME>` environment variables of
 the server. An environment value **takes precedence** over a stored one with the same name and never
 touches disk. Names are `[A-Z][A-Z0-9_]{0,63}`; a value is non-empty, at most 64 KiB, with no NUL.
 No endpoint ever returns a value: the API shows only `{"name","set","chars","updated_at"}`, and the
@@ -606,17 +606,17 @@ A client address (IPv6: one /64; behind a reverse proxy, the address found throu
 expired or revoked token or session, or rejected proxy headers) may do so **60 times a minute**
 (a token bucket refilled over the minute). Further failures are answered `429`
 `rate_limited` (`too many attempts; try again in N s`, with `Retry-After`) and counted as
-`h2s_auth_failures_total{reason="rate_limited"}`. **Valid credentials from the same address keep
+`h2w_auth_failures_total{reason="rate_limited"}`. **Valid credentials from the same address keep
 working.** A request with no credentials at all is never throttled or audited (it is counted as
 `missing`). The login endpoint has its own, smaller limit (`server.login_attempts_per_minute`).
 
 Of those failures (and of denied logins) **at most 10 per client and minute are written to the audit
-log**; the rest are counted in `h2s_audit_suppressed_total`, so junk credentials cannot flood the
+log**; the rest are counted in `h2w_audit_suppressed_total`, so junk credentials cannot flood the
 hash-chained log. Verified with 75 requests carrying a made-up bearer token: the first 60 were `401`,
 the other 15 `429` (`too many attempts; try again in 1 s`); a valid token from the same address got
 `200` in between; the audit log held 10 `auth.failed` records (`unknown_token on /api/v1/auth/me`);
-the metrics read `h2s_auth_failures_total{reason="unknown_token"} 60`,
-`h2s_auth_failures_total{reason="rate_limited"} 15` and `h2s_audit_suppressed_total 50`.
+the metrics read `h2w_auth_failures_total{reason="unknown_token"} 60`,
+`h2w_auth_failures_total{reason="rate_limited"} 15` and `h2w_audit_suppressed_total 50`.
 
 Each limiter tracks up to 10,000 clients. When its table is full, clients whose bucket has refilled
 are forgotten first and newcomers that still do not fit share one overflow bucket, so flooding the
@@ -633,7 +633,7 @@ tell the server about it with three settings that must agree:
 ```toml
 [server]
 listen = "127.0.0.1:8722"                       # or 0.0.0.0:8722 inside a container network
-public_url = "https://studio.example.com"        # what people type: Host, Origin and Secure cookies derive from it
+public_url = "https://workbench.example.com"        # what people type: Host, Origin and Secure cookies derive from it
 allowed_hosts = []                               # extra Host values if the proxy forwards another name
 trusted_proxies = ["203.0.113.10"]               # the proxy's address(es): X-Forwarded-For is believed only from here
 ```
@@ -647,7 +647,7 @@ trusted_proxies = ["203.0.113.10"]               # the proxy's address(es): X-Fo
   name an allowed host as well. Verified with raw requests: two allowed `Host` lines `400`; an
   absolute-form target for `evil.example` with an allowed `Host` `421`.
 - **`public_url`** also fixes the expected `Origin` of browser requests and the session cookie:
-  `https` makes it `Secure` and names it `__Host-h2s_session`. The server ignores
+  `https` makes it `Secure` and names it `__Host-h2w_session`. The server ignores
   `X-Forwarded-Proto` and `X-Forwarded-Host`: `public_url` is the only source of truth for the scheme
   and host. With an `https` URL and an empty `trusted_proxies`, `serve` and `config check` warn
   (verified): `server.public_url is https but server.trusted_proxies is empty: when a reverse proxy
@@ -684,10 +684,10 @@ trusted_proxies = ["203.0.113.10"]               # the proxy's address(es): X-Fo
 The shipped `deploy/examples/Caddyfile`:
 
 ```caddyfile
-studio.example.com {
+workbench.example.com {
 	encode zstd gzip
 	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-	reverse_proxy studio:8722 {
+	reverse_proxy workbench:8722 {
 		header_up X-Forwarded-Proto {scheme}
 		flush_interval -1
 	}
@@ -697,7 +697,7 @@ studio.example.com {
 Caddy obtains and renews the certificate for the name in the site address (public DNS reachable on
 ports 80 and 443 for the default ACME flow; for a private name use Caddy's own options, which this
 guide does not cover). **Caddy answers requests for names it does not serve itself**, with an
-empty `200`: the Studio's `421` appears only for a `Host` that Caddy forwards but the Studio does
+empty `200`: the Workbench's `421` appears only for a `Host` that Caddy forwards but the Workbench does
 not allow. Verified by the maintainers through the compose stack. Other proxies (nginx, Traefik,
 cloud load balancers) follow the same rules; none was tested.
 
@@ -711,22 +711,22 @@ fixed hardening. This is the mode to use when executors might run code you do no
 language models writing and running code, is always a question worth asking
 ([THREAT-MODEL.md](THREAT-MODEL.md)).
 
-**What a container job gets.** Always: `--rm`, a name `h2s-job-<id>` and a label
-`io.github.harness2-studio.job=<id>`, `--cap-drop ALL`, `--security-opt no-new-privileges`,
+**What a container job gets.** Always: `--rm`, a name `h2w-job-<id>` and a label
+`io.github.harness2-workbench.job=<id>`, `--cap-drop ALL`, `--security-opt no-new-privileges`,
 `--pids-limit`, `--cpus`, `--memory`, the configured `--network`, and three bind mounts at fixed
 points:
 
 | Mount | Host side | Mode |
 |---|---|---|
-| `/h2s/harness2` | the harness2 checkout | read-only, except for `install_harness2` and `setup` |
-| `/h2s/experiment` | the experiment directory | read-write |
-| `/h2s/job` | a per-job directory with generated files (OpenCode config, a service-account key) | read-only |
+| `/h2w/harness2` | the harness2 checkout | read-only, except for `install_harness2` and `setup` |
+| `/h2w/experiment` | the experiment directory | read-write |
+| `/h2w/job` | a per-job directory with generated files (OpenCode config, a service-account key) | read-only |
 
 **Variables.** Every variable a job needs (profile variables, secret values, `HARNESS2_RUNS_DIR`)
 is written as `NAME=VALUE` lines to `<data_dir>/jobs/<id>/container.env` (mode 0600, deleted with the
 job directory) and given to the runtime with `--env-file`. The runtime CLI itself runs with the
 server's pass-through variables, its own settings (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
-`XDG_RUNTIME_DIR`, `CONTAINER_HOST`, `CONTAINERS_CONF`, `REGISTRY_AUTH_FILE`) and `H2S_JOB_ID` only,
+`XDG_RUNTIME_DIR`, `CONTAINER_HOST`, `CONTAINERS_CONF`, `REGISTRY_AUTH_FILE`) and `H2W_JOB_ID` only,
 so no profile variable (one could steer the CLI, such as `DOCKER_CONTEXT`) and no secret value
 reaches its environment or command line. The proxy settings of `isolation.container.proxy` are fixed
 `-e NAME=VALUE` arguments (never secrets). The file format has no escapes: a value with a line
@@ -748,21 +748,21 @@ the host: prefer rootless.
 set, the server asks the runtime at start-up whether the network is internal
 (`network inspect --format {{.Internal}}`) and logs, when it is not (or cannot be inspected), a
 warning that starts `SECURITY:`; the same finding is the doctor check `container_network`
-(`warn`; `h2studio doctor` exits 1 while any check is `FAIL`, not for a warning). A job on a network
+(`warn`; `h2workbench doctor` exits 1 while any check is `FAIL`, not for a warning). A job on a network
 with a route out can ignore the proxy. Verified with the stand-in runtime answering `true` and then
 `false`:
 
 ```text
-INFO network h2s-jobs is internal: container jobs reach the internet only through the egress proxy http://h2s-egress:3128
-WARN SECURITY: network h2s-jobs is NOT internal: container jobs can reach the internet directly, around the egress proxy http://h2s-egress:3128 remedy="Recreate it with `docker network create --internal h2s-jobs` and attach the egress proxy to it and to a network with internet access."
+INFO network h2w-jobs is internal: container jobs reach the internet only through the egress proxy http://h2w-egress:3128
+WARN SECURITY: network h2w-jobs is NOT internal: container jobs can reach the internet directly, around the egress proxy http://h2w-egress:3128 remedy="Recreate it with `docker network create --internal h2w-jobs` and attach the egress proxy to it and to a network with internet access."
 ```
 
 **The runner image is checked too.** The doctor check `runner_image` asks the runtime
 (`image inspect`) for the configured image: `ok` when present, `fail` (the report is then not ok)
 with the build command when not, `warn` when the runtime cannot be asked. Verified with the stand-in
-runtime: `runner image harness2-studio-runner:0.1.0 is not present for docker (`image inspect` exit
+runtime: `runner image harness2-workbench-runner:0.1.0 is not present for docker (`image inspect` exit
 1); container jobs cannot start`, remedy `docker build -f deploy/docker/runner.Dockerfile -t
-harness2-studio-runner:0.1.0 .`.
+harness2-workbench-runner:0.1.0 .`.
 
 **Rootless and rootful runtimes** need different users. The experiment directory is bind-mounted
 and must be writable by the job:
@@ -773,23 +773,23 @@ and must be writable by the job:
   `Host.Security.Rootless`) and runs jobs as `--user 0:0`, with every capability dropped.
 - *Rootful runtime*: jobs run as the server's own `uid:gid`.
 - Override with `isolation.container.user` (numeric). Because uid 0 without capabilities cannot
-  write `/home/node`, the runner image sets `HOME=/h2s/home`, a sticky world-writable directory in
+  write `/home/node`, the runner image sets `HOME=/h2w/home`, a sticky world-writable directory in
   the throw-away layer; **a custom runner image must give the job user a writable `HOME`** (uv, npm,
   Bun and OpenCode write caches there).
 
 **Steps**, with the egress proxy on an internal network (the configuration the maintainers verified
 on rootless Docker). The commands are from the example configuration's own comments; names
-(`h2s-jobs`, `h2s-uplink`, `h2s-egress`) are yours to choose.
+(`h2w-jobs`, `h2w-uplink`, `h2w-egress`) are yours to choose.
 
 1. *Build the images* ([section 3.3](#33-container-images)).
 2. *Create two networks*: an internal one with no route out for the jobs, and an uplink for the proxy.
 
    ```sh
-   docker network create --internal h2s-jobs
-   docker network create h2s-uplink
+   docker network create --internal h2w-jobs
+   docker network create h2w-uplink
    ```
 
-3. *Write the configuration* that both the Studio and the proxy read, with the allowlist (everything
+3. *Write the configuration* that both the Workbench and the proxy read, with the allowlist (everything
    the jobs may reach; [section 9](#9-the-egress-allowlist)). It holds no secrets; the proxy
    container's user must be able to read it (`chmod 644`).
 
@@ -799,9 +799,9 @@ on rootless Docker). The commands are from the example configuration's own comme
 
    [isolation.container]
    runtime = "docker"
-   image = "harness2-studio-runner:0.1.0"
-   network = "h2s-jobs"
-   proxy = "http://h2s-egress:3128"
+   image = "harness2-workbench-runner:0.1.0"
+   network = "h2w-jobs"
+   proxy = "http://h2w-egress:3128"
 
    [egress]
    listen = "0.0.0.0:3128"            # the job containers must reach it: not the loopback default
@@ -812,23 +812,23 @@ on rootless Docker). The commands are from the example configuration's own comme
 4. *Start the egress proxy* on the internal network, then give it the uplink:
 
    ```sh
-   docker run -d --name h2s-egress --network h2s-jobs \
-     -v "$PWD/h2studio.toml:/config/h2studio.toml:ro" \
-     harness2-studio:0.1.0 egress-proxy --config /config/h2studio.toml
-   docker network connect h2s-uplink h2s-egress
+   docker run -d --name h2w-egress --network h2w-jobs \
+     -v "$PWD/h2workbench.toml:/config/h2workbench.toml:ro" \
+     harness2-workbench:0.1.0 egress-proxy --config /config/h2workbench.toml
+   docker network connect h2w-uplink h2w-egress
    ```
 
-5. *Start the Studio* (on the host, as usual) with that configuration. `h2studio doctor` should show
+5. *Start the Workbench* (on the host, as usual) with that configuration. `h2workbench doctor` should show
    `container_runtime`, `runner_image` and `container_network` ok, and `GET /api/v1/system/info`
    should report `"isolation": "container"` and `"container_runtime": "docker"`.
 6. *Install harness2 in container mode.* A harness2 environment created on the host points at the
    **host's** Python and cannot run inside the runner image (see below), so run the `install_harness2`
-   job (admin) **while the Studio is in container mode**: the install then runs in the runner image
+   job (admin) **while the Workbench is in container mode**: the install then runs in the runner image
    and the virtual environment points at the image's interpreter. It needs `github.com`,
-   `pypi.org` and `files.pythonhosted.org` on the allowlist. (Do not point a container-mode Studio
+   `pypi.org` and `files.pythonhosted.org` on the allowlist. (Do not point a container-mode Workbench
    at a host-installed checkout.)
-7. *Run the demo* as a container job and check `isolation` in the job, the `h2s-job-<id>` container
-   while it runs, and the proxy's log (`docker logs h2s-egress`: `decision="allow"` and
+7. *Run the demo* as a container job and check `isolation` in the job, the `h2w-job-<id>` container
+   while it runs, and the proxy's log (`docker logs h2w-egress`: `decision="allow"` and
    `decision="deny"` lines).
 
 Restrictions in this version: WorkBuddy-Bench and the Codex bridge refuse container isolation
@@ -847,13 +847,13 @@ server and Docker's read-only commands only: that `isolation.mode = "container"`
 `none` network with the install job.
 
 **The failure you will meet if you skip step 6.** With a harness2 installed on the host
-(managed or not) and the Studio switched to container mode, a job fails like this (real output):
+(managed or not) and the Workbench switched to container mode, a job fails like this (real output):
 
 ```text
 status: failed
-error: exited with code 127: [FATAL tini (7)] exec /h2s/harness2/.venv/bin/harness2-demo failed: No such file or directory
-log: system  ▶ demo: harness2-demo --output /h2s/experiment --k 1 --mode both
-     stderr  [FATAL tini (7)] exec /h2s/harness2/.venv/bin/harness2-demo failed: No such file or directory
+error: exited with code 127: [FATAL tini (7)] exec /h2w/harness2/.venv/bin/harness2-demo failed: No such file or directory
+log: system  ▶ demo: harness2-demo --output /h2w/experiment --k 1 --mode both
+     stderr  [FATAL tini (7)] exec /h2w/harness2/.venv/bin/harness2-demo failed: No such file or directory
 ```
 
 The script exists, but its first line names the host's Python, which the image does not have.
@@ -862,7 +862,7 @@ host mode.
 
 ## 9. The egress allowlist
 
-`h2studio egress-proxy` is a forward proxy that lets job containers reach **only** the hosts and
+`h2workbench egress-proxy` is a forward proxy that lets job containers reach **only** the hosts and
 ports you list. It speaks `CONNECT host:port` tunnels (HTTPS and anything else over TCP) and
 absolute-form `http://` requests; every other request is `400`
 `only CONNECT and absolute http:// requests are proxied`.
@@ -938,7 +938,7 @@ connections.
 
 **The allowlist is one list for install and for evaluation.** harness2's setup needs hosts that its
 experiment guide says an evaluating executor should *not* reach, because public benchmark rubrics sit
-there: the Studio's own catalogue records the setup hosts (`github.com`, `codeload.github.com`,
+there: the Workbench's own catalogue records the setup hosts (`github.com`, `codeload.github.com`,
 `registry.npmjs.org`, `huggingface.co`, `cdn-lfs.huggingface.co`, `astral.sh`, `pypi.org`,
 `files.pythonhosted.org`) and the hosts upstream recommends blocking during evaluation
 (`huggingface.co`, `hf.co`, `*.hf.co`, `github.com`, `raw.githubusercontent.com`). Allow what setup
@@ -948,58 +948,58 @@ alongside any published result.
 
 ## 10. The compose reference deployment
 
-`deploy/compose.yaml` runs the whole Studio contained **from your host and network**: three
-services, three networks. **It does not isolate the jobs from the Studio**: they run in host
+`deploy/compose.yaml` runs the whole Workbench contained **from your host and network**: three
+services, three networks. **It does not isolate the jobs from the Workbench**: they run in host
 isolation inside the same container, as the same user, so a malicious or prompt-injected executor
-can read and change the Studio's data volume (the database, stored secrets, token hashes, the audit
-chain) and, through the image's PID 1, the container's environment, and so can act as a Studio
+can read and change the Workbench's data volume (the database, stored secrets, token hashes, the audit
+chain) and, through the image's PID 1, the container's environment, and so can act as a Workbench
 administrator. (The server makes itself non-dumpable, but the image starts it under `tini`
-(`ENTRYPOINT ["/usr/bin/tini", "--", "h2studio"]`), which stays dumpable and holds the container's
+(`ENTRYPOINT ["/usr/bin/tini", "--", "h2workbench"]`), which stays dumpable and holds the container's
 environment; a job of the same user can read `/proc/1/environ`. Read from the Dockerfile and the
 Linux rules, not run.) What the container does is keep that executor away from your host's files,
-your other containers and any network except the hosts on the allowlist. To isolate jobs from the Studio, run `h2studio` on a host with
+your other containers and any network except the hosts on the allowlist. To isolate jobs from the Workbench, run `h2workbench` on a host with
 container isolation ([section 8](#8-container-isolation-step-by-step)).
 
 ```text
-browser --https--> ingress (Caddy, TLS) --> studio --> egress proxy --> allowed hosts only
+browser --https--> ingress (Caddy, TLS) --> workbench --> egress proxy --> allowed hosts only
                    [edge + jobs nets]       [jobs net, internal]   [jobs + uplink nets]
 ```
 
-- **`studio`** (the all-in-one image) sits only on the `jobs` network, which is `internal: true`
+- **`workbench`** (the all-in-one image) sits only on the `jobs` network, which is `internal: true`
   (no route out). Its jobs inherit `HTTP(S)_PROXY` and can reach exactly the hosts in `[egress]
   allow`. It runs as `node`, with `cap_drop: [ALL]`, `no-new-privileges`, 4096 pids, 16 GB and 8
-  CPUs, and the volume `studio-data` at `/data`.
+  CPUs, and the volume `workbench-data` at `/data`.
 - **`egress`** (the same image, command `egress-proxy`) is on `jobs` and `uplink`, read-only, with
-  its own health check on port 3128 (the image's default check probes the Studio's port). Its
+  its own health check on port 3128 (the image's default check probes the Workbench's port). Its
   configuration sets `[egress] listen = "0.0.0.0:3128"` explicitly: the default is loopback.
 - **`ingress`** (Caddy, pinned by digest) publishes 443 and 80 on **loopback by default**
-  (`H2S_INGRESS_BIND=0.0.0.0` on a real server) and terminates TLS using `deploy/examples/Caddyfile`.
+  (`H2W_INGRESS_BIND=0.0.0.0` on a real server) and terminates TLS using `deploy/examples/Caddyfile`.
 
-Jobs here run in **host** isolation *inside* the studio container: the container is the boundary
-around the Studio and its jobs together, and the egress proxy is the only way out. That differs from
+Jobs here run in **host** isolation *inside* the workbench container: the container is the boundary
+around the Workbench and its jobs together, and the egress proxy is the only way out. That differs from
 [section 8](#8-container-isolation-step-by-step), where each job gets its own container; see
 [THREAT-MODEL.md](THREAT-MODEL.md) for what it means that a job and the server share a user and the
 data volume. The example configuration's `trusted_proxies` covers the private ranges, which include
-the jobs network: a job can therefore set the client address that the Studio records in the audit
+the jobs network: a job can therefore set the client address that the Workbench records in the audit
 log and rate-limits by (narrow the list to the ingress's address once Docker has assigned it).
 
 **Commands** (from the repository root; they are in the usage comment at the top of
 `deploy/compose.yaml`):
 
 ```sh
-cp deploy/examples/h2studio.compose.toml deploy/h2studio.toml   # then edit the EDIT lines
-chmod 644 deploy/h2studio.toml     # it holds no secrets; the container user (uid 1000) must read it
-docker compose -f deploy/compose.yaml run --rm studio init      # prints the first admin token
+cp deploy/examples/h2workbench.compose.toml deploy/h2workbench.toml   # then edit the EDIT lines
+chmod 644 deploy/h2workbench.toml     # it holds no secrets; the container user (uid 1000) must read it
+docker compose -f deploy/compose.yaml run --rm workbench init      # prints the first admin token
 docker compose -f deploy/compose.yaml up -d
-docker compose -f deploy/compose.yaml exec studio h2studio doctor
+docker compose -f deploy/compose.yaml exec workbench h2workbench doctor
 ```
 
-`deploy/examples/h2studio.compose.toml` sets `listen = "0.0.0.0:8722"` (inside the container), your
+`deploy/examples/h2workbench.compose.toml` sets `listen = "0.0.0.0:8722"` (inside the container), your
 `public_url` (the site address in the Caddyfile), `trusted_proxies` covering the private ranges
 (narrow it to the ingress's subnet once known: `docker network inspect`), `isolation.mode = "host"`
 and the egress allowlist, which **must include `github.com`, `pypi.org` and
 `files.pythonhosted.org`** so harness2 can be installed, plus your model endpoints. Edit the domain
-in `deploy/examples/Caddyfile` too. The image sets `H2S_CONFIG=/config/h2studio.toml`, so `init`,
+in `deploy/examples/Caddyfile` too. The image sets `H2W_CONFIG=/config/h2workbench.toml`, so `init`,
 `doctor`, `audit verify` and `token create` work in the container without `--config`.
 
 Notes:
@@ -1029,9 +1029,9 @@ Notes:
   hosts than installing harness2 does.
 
 **Verified live by the maintainers** (rootless Docker, loopback, Caddy TLS ingress, 2026-10-23):
-`compose run --rm studio init` printed the token with a warning instead of locking out; through the
+`compose run --rm workbench init` printed the token with a warning instead of locking out; through the
 ingress `/healthz`, the UI page with its Content-Security-Policy, `421` for a Host that Caddy
-forwards but the Studio does not allow, `install_harness2` (git from `github.com`, packages from
+forwards but the Workbench does not allow, `install_harness2` (git from `github.com`, packages from
 PyPI, all through the egress proxy; no Python download), the demo, results, the SSE stream,
 `audit verify` and `doctor` inside the container. Not re-run by the author of this page.
 
@@ -1044,10 +1044,10 @@ as this user. Each request is one line: method, matched route, status, request i
 never headers, cookies or bodies. `healthz`, `readyz` and `metrics` are logged at debug level.
 
 ```json
-{"timestamp":"2026-10-24T03:48:38.983896Z","level":"INFO","fields":{"message":"request","latency_ms":1.0},"target":"h2s_daemon::http::guard","span":{"method":"GET","request_id":"1254656d1fbb421384b784a771f67b33","route":"/api/v1/auth/me","status":200,"name":"http"},"spans":[]}
+{"timestamp":"2026-10-24T03:48:38.983896Z","level":"INFO","fields":{"message":"request","latency_ms":1.0},"target":"h2w_daemon::http::guard","span":{"method":"GET","request_id":"1254656d1fbb421384b784a771f67b33","route":"/api/v1/auth/me","status":200,"name":"http"},"spans":[]}
 ```
 
-Under systemd, `journalctl --user -u h2studio -f`; under compose, `docker compose logs -f studio`.
+Under systemd, `journalctl --user -u h2workbench -f`; under compose, `docker compose logs -f workbench`.
 **Job logs** are files: `<data_dir>/logs/jobs/<job-id>.log`, one JSON object per line, mode 0600, at
 most `jobs.max_log_bytes` each, secrets already redacted (best effort) and server paths masked
 (also inside `file://` URLs, and in the text a result carries from the job's output); also served by
@@ -1078,32 +1078,32 @@ $ curl -s -H "Authorization: Bearer $SCRAPE_SECRET" $BASE/api/v1/auth/me        
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `h2s_http_requests_total` | counter | `method`, `route`, `status` | requests; `route` is the matched template (`/api/v1/jobs/{id}`), `unmatched` or `static` |
-| `h2s_http_request_duration_seconds` | histogram | `method`, `route` | latency until the response head |
-| `h2s_jobs_total` | counter | `kind`, `status` | jobs that reached a terminal status |
-| `h2s_jobs_running` | gauge | | jobs running now |
-| `h2s_job_duration_seconds` | histogram | `kind` | wall-clock duration of finished jobs |
-| `h2s_spend_usd_total` | counter | `experiment` | improver spend recorded while jobs ran (at most 50 experiments are labelled; the rest are `other`) |
-| `h2s_auth_failures_total` | counter | `reason` | refused requests: `missing`, `malformed`, `unknown_token`, `bad_secret`, `expired`, `revoked`, `session_invalid`, `proxy_untrusted`, `proxy_secret`, `proxy_user`, `proxy_duplicate_header`, `proxy_no_role`, `forbidden`, `rate_limited` (login limit, failed-authentication limit), `sse_per_principal`, `host`, `csrf`, `origin`, `unavailable` |
-| `h2s_audit_suppressed_total` | counter | | records of failed authentication not written to the audit log because the client used its 10 per minute |
-| `h2s_connections_refused_total` | counter | `reason` | connections closed at accept: `total` (the server's 1,024) or `per_client` (`server.max_connections_per_ip`) |
-| `h2s_sse_connections` | gauge | | open job event streams |
+| `h2w_http_requests_total` | counter | `method`, `route`, `status` | requests; `route` is the matched template (`/api/v1/jobs/{id}`), `unmatched` or `static` |
+| `h2w_http_request_duration_seconds` | histogram | `method`, `route` | latency until the response head |
+| `h2w_jobs_total` | counter | `kind`, `status` | jobs that reached a terminal status |
+| `h2w_jobs_running` | gauge | | jobs running now |
+| `h2w_job_duration_seconds` | histogram | `kind` | wall-clock duration of finished jobs |
+| `h2w_spend_usd_total` | counter | `experiment` | improver spend recorded while jobs ran (at most 50 experiments are labelled; the rest are `other`) |
+| `h2w_auth_failures_total` | counter | `reason` | refused requests: `missing`, `malformed`, `unknown_token`, `bad_secret`, `expired`, `revoked`, `session_invalid`, `proxy_untrusted`, `proxy_secret`, `proxy_user`, `proxy_duplicate_header`, `proxy_no_role`, `forbidden`, `rate_limited` (login limit, failed-authentication limit), `sse_per_principal`, `host`, `csrf`, `origin`, `unavailable` |
+| `h2w_audit_suppressed_total` | counter | | records of failed authentication not written to the audit log because the client used its 10 per minute |
+| `h2w_connections_refused_total` | counter | `reason` | connections closed at accept: `total` (the server's 1,024) or `per_client` (`server.max_connections_per_ip`) |
+| `h2w_sse_connections` | gauge | | open job event streams |
 
 A family appears once it has a sample. Label sets are bounded by construction. A scrape job (not
 exercised by the author of this page):
 
 ```yaml
 scrape_configs:
-  - job_name: harness2-studio
+  - job_name: harness2-workbench
     metrics_path: /metrics
-    authorization: { credentials_file: /etc/prometheus/h2s-metrics.token }   # the metrics secret's value
-    static_configs: [ { targets: ["studio.internal.example:8722"] } ]
+    authorization: { credentials_file: /etc/prometheus/h2w-metrics.token }   # the metrics secret's value
+    static_configs: [ { targets: ["workbench.internal.example:8722"] } ]
 ```
 
 (Add the target's name to `server.allowed_hosts` if you scrape it by a name other than the ones
-above.) Useful alerts: a rising `h2s_auth_failures_total{reason!="missing"}` or
-`h2s_audit_suppressed_total`, any `h2s_connections_refused_total`,
-`h2s_jobs_total{status="failed"}`, `h2s_sse_connections` near `server.sse_max_connections`, and
+above.) Useful alerts: a rising `h2w_auth_failures_total{reason!="missing"}` or
+`h2w_audit_suppressed_total`, any `h2w_connections_refused_total`,
+`h2w_jobs_total{status="failed"}`, `h2w_sse_connections` near `server.sse_max_connections`, and
 `/readyz` returning `503`.
 
 **Health.** `GET /healthz` is `200 {"status":"ok"}` whenever the process answers. `GET /readyz`
@@ -1114,8 +1114,8 @@ reveals paths or versions.
 ## 12. Data, backups and upgrades
 
 ```text
-<config dir>/h2studio.toml            configuration (0600)   <config dir>/admin.token   bootstrap token (0600)
-<data_dir>/studio.db (+ -wal, -shm)   tokens (hashed), sessions, jobs, experiments, profiles, SECRETS, audit chain
+<config dir>/h2workbench.toml            configuration (0600)   <config dir>/admin.token   bootstrap token (0600)
+<data_dir>/workbench.db (+ -wal, -shm)   tokens (hashed), sessions, jobs, experiments, profiles, SECRETS, audit chain
 <data_dir>/logs/jobs/<id>.log         job logs (0600), at most jobs.max_log_bytes each, deleted after jobs.log_retention_days
 <data_dir>/jobs/<id>/                 per-job generated files (0700): OpenCode config, key file, container.env; deleted when the job ends
 <data_dir>/splits/<name>.json         train/test split files
@@ -1128,32 +1128,32 @@ The data directory and every directory below it that the server writes (`logs`, 
 example a volume mounted at `/data`.
 
 **What to back up.** The database, the experiments directory, the configuration file, and any
-`H2S_SECRET_*` values from wherever you keep them. Not the harness2 checkout (reinstall it; the
+`H2W_SECRET_*` values from wherever you keep them. Not the harness2 checkout (reinstall it; the
 benchmark downloads are large) and not job logs unless you need them. **The database contains
 secrets in plain text**, so a backup must be encrypted and access-controlled like the secrets
 themselves.
 
 **Backing up the database while the server runs.** SQLite's online-backup API gives a consistent
-copy of a WAL database (copying `studio.db` alone does not). This was run, with Python's standard
+copy of a WAL database (copying `workbench.db` alone does not). This was run, with Python's standard
 library, against a live server's database:
 
 ```sh
 python3 - <<'EOF'
 import sqlite3
-src = sqlite3.connect("file:/var/lib/h2studio/studio.db?mode=ro", uri=True)
-dst = sqlite3.connect("/backups/studio-2026-10-24.db")
+src = sqlite3.connect("file:/var/lib/h2workbench/workbench.db?mode=ro", uri=True)
+dst = sqlite3.connect("/backups/workbench-2026-10-24.db")
 with dst:
     src.backup(dst)
 EOF
-chmod 600 /backups/studio-2026-10-24.db
+chmod 600 /backups/workbench-2026-10-24.db
 ```
 
-The `sqlite3` command-line equivalent is `sqlite3 studio.db ".backup 'backup.db'"` (not run here: the
+The `sqlite3` command-line equivalent is `sqlite3 workbench.db ".backup 'backup.db'"` (not run here: the
 test machine had no `sqlite3` binary). Experiments are ordinary directories: `rsync -a` or `tar`
 them; a running job writes into its experiment, so back up between jobs for a consistent copy.
 
-**Restoring**: stop the server, put the database file in place (remove any stale `studio.db-wal`
-and `studio.db-shm`), restore the experiments directory, start, and run `h2studio audit verify`.
+**Restoring**: stop the server, put the database file in place (remove any stale `workbench.db-wal`
+and `workbench.db-shm`), restore the experiments directory, start, and run `h2workbench audit verify`.
 The backup copy above opened and verified (`audit chain OK: 39 entries; head 39 57e6450f...`).
 
 **Upgrading.**
@@ -1165,7 +1165,7 @@ The backup copy above opened and verified (`audit chain OK: 39 entries; head 39 
    copy of an older database: schema 1 became 2, which adds the boot id that restart recovery
    uses, and every row survived).
 3. A database written by a *newer* build is refused: `the database was written by a newer
-   Harness² Studio (schema N, this build knows M)`. To go back, restore the pre-upgrade backup.
+   Harness² Workbench (schema N, this build knows M)`. To go back, restore the pre-upgrade backup.
 4. Each release is tested against one harness2 commit; `doctor` warns when yours differs. To move
    harness2, start `install_harness2` with `reinstall: true` in managed mode, or update your own
    checkout and re-run its setup. A `rev` other than the tested commit is refused (`422` on
@@ -1175,7 +1175,7 @@ The backup copy above opened and verified (`audit chain OK: 39 entries; head 39 
    needs newer packages fails to install in managed mode: install it yourself in an unmanaged
    checkout. Completed sweeps are unaffected, but a resumed sweep should use the harness2 it started
    with.
-5. Restart `h2studio-mcp` and re-check client configuration if the MCP tool list changed.
+5. Restart `h2workbench-mcp` and re-check client configuration if the MCP tool list changed.
 
 ## 13. Audit log
 
@@ -1183,20 +1183,20 @@ Every authentication outcome, job create and cancel, experiment, profile, secret
 and access denial is appended to a **SHA-256 hash chain** in the database: `hash = sha256(prev_hash
 || canonical JSON of the record)`. Records hold the actor, action, target, outcome, client address,
 request id and a short detail (never a secret value or a request body). A request with **no**
-credentials at all is only counted in `h2s_auth_failures_total`. A request that **presents** a
+credentials at all is only counted in `h2w_auth_failures_total`. A request that **presents** a
 credential that is refused (even a junk bearer token) is recorded, but **at most 10 such records
 per client and minute** are written (`auth.failed`, and denied `auth.login`); the rest are counted in
-`h2s_audit_suppressed_total`, and past 60 failures a minute the client gets `429`
+`h2w_audit_suppressed_total`, and past 60 failures a minute the client gets `429`
 ([section 6.5](#65-failed-authentication-is-throttled)). Before this limit, the independent review
 had measured about 33 MB of audit rows for 140,000 junk requests; with it a client adds at most 600
 rows an hour. Distinct client addresses each have their own allowance, so limit who can reach the
 listener, and let the reverse proxy limit request rates.
 
 ```console
-$ h2studio audit verify
+$ h2workbench audit verify
 audit chain OK: 39 entries; head 39 57e6450ff2086c6118b46a3997a5f0356fc80c6e9805131864e512a9aca9adf6
 $ # after editing the actor of record 5 in a copy of the database:
-$ h2studio audit verify
+$ h2workbench audit verify
 audit chain BROKEN: first bad record 5 of 39 entries          # exit status 1
 ```
 
@@ -1208,26 +1208,26 @@ Anyone with write access to the server's data directory (which includes every ho
 it runs as the server's user) can rewrite every record, recompute every hash, and `audit verify`
 will report an intact chain. So record the head hash somewhere the server's user
 cannot write: the server logs `audit chain head seq=... head=...` at every start, and `audit verify`
-prints it. A cron job that runs `h2studio audit verify` and ships its output to your log system is
+prints it. A cron job that runs `h2workbench audit verify` and ships its output to your log system is
 enough. Exit status is 0 for an intact chain and 1 for a broken one.
 
 ## 14. Running as a systemd user service
 
-`deploy/systemd/h2studio.service` runs the server as you (no root) with modest hardening that is safe
+`deploy/systemd/h2workbench.service` runs the server as you (no root) with modest hardening that is safe
 in a *user* unit (`NoNewPrivileges`, `LockPersonality`, `RestrictRealtime`, `RestrictSUIDSGID`,
 `SystemCallArchitectures=native`; `ProtectSystem`, `ProtectHome` and `PrivateTmp` are left out on
 purpose, because in a user unit they can cut the server off from the harness2 checkout, your
 experiments or a container runtime's socket).
 
 ```sh
-install -Dm644 deploy/systemd/h2studio.service ~/.config/systemd/user/h2studio.service
+install -Dm644 deploy/systemd/h2workbench.service ~/.config/systemd/user/h2workbench.service
 systemctl --user daemon-reload
-systemctl --user enable --now h2studio
-journalctl --user -u h2studio -f
+systemctl --user enable --now h2workbench
+journalctl --user -u h2workbench -f
 loginctl enable-linger "$USER"        # keep it running after you log out (needs admin rights)
 ```
 
-`ExecStart=%h/.local/bin/h2studio serve`, `KillMode=mixed`, `TimeoutStopSec=30`, `UMask=0077`,
+`ExecStart=%h/.local/bin/h2workbench serve`, `KillMode=mixed`, `TimeoutStopSec=30`, `UMask=0077`,
 `Restart=on-failure`. The unit parsed without errors under `systemd-analyze verify --user` (systemd
 259); **the service itself was not started** by the author of this page. With container isolation on
 rootless Docker add the runtime's socket to the unit, for example
@@ -1250,7 +1250,7 @@ the runtime CLI); that line is untested. Secrets for the service belong in a fil
       (GitHub, Hugging Face) before evaluation runs.
 - [ ] The egress proxy's port is reachable only from the jobs network (its default bind is
       loopback; you widened it on purpose).
-- [ ] Secrets are supplied as `H2S_SECRET_*` from a secret store where possible; the database and
+- [ ] Secrets are supplied as `H2W_SECRET_*` from a secret store where possible; the database and
       its backups are encrypted and access-controlled; short-lived cloud credentials are preferred.
 - [ ] The head hash of the audit chain is recorded off the server on a schedule.
 - [ ] `/metrics` is scraped with the dedicated bearer secret; alerts exist for auth failures, failed
@@ -1258,7 +1258,7 @@ the runtime CLI); that line is untested. Secrets for the service belong in a fil
 - [ ] MCP clients get viewer tokens unless they must run jobs; an operator token only when the agent
       must start them, short-lived; **never an admin token**; and the cloud account behind the models
       has its own spend limit ([MCP.md](MCP.md#3-safety-rules)).
-- [ ] The jobs network really is `--internal`: `h2studio doctor` shows `container_network` ok (the
+- [ ] The jobs network really is `--internal`: `h2workbench doctor` shows `container_network` ok (the
       server warns at start-up and in the doctor when it is not) and `runner_image` ok.
 - [ ] Proxy mode: the proxy deletes every client-supplied identity and secret header and sets
       exactly one of each (the server refuses repeats with `401`); `trusted_proxies` is the proxy's
@@ -1268,7 +1268,7 @@ the runtime CLI); that line is untested. Secrets for the service belong in a fil
       authentication) but exempts the proxies in `trusted_proxies`, and its global caps (1,024
       connections, 64 event streams) are what is left.
 - [ ] `server.public_url` is `https` only together with `trusted_proxies` (the server warns
-      otherwise); `h2studio config check` prints no warning you have not read.
+      otherwise); `h2workbench config check` prints no warning you have not read.
 - [ ] Every token has an expiry, the bootstrap token included.
 - [ ] `jobs.timeout_hours`, `jobs.max_concurrent`, `jobs.max_log_bytes`, `jobs.min_free_disk_mb` and
       disk space are sized; `doctor` is clean.
@@ -1279,28 +1279,28 @@ the runtime CLI); that line is untested. Secrets for the service belong in a fil
 
 | Command | Standard output | Notes |
 |---|---|---|
-| `h2studio serve` | `h2studio listening on http://<ip>:<port>` once bound | graceful on `SIGINT`/`SIGTERM` (the handlers are installed before that line is printed); makes itself non-dumpable first |
-| `h2studio init [--data-dir P] [--force]` | the new admin token, alone | see [section 4](#4-first-run) |
-| `h2studio token create --name N --role R [--expires-in-days D]` | the new token, alone | `R` is `viewer`, `operator` or `admin`; `TOKEN=$(h2studio token create ...)` works |
-| `h2studio token list [--json]` | a table, or JSON | never secrets |
-| `h2studio token revoke ID` | nothing | exit 1 when no active token has that id |
-| `h2studio doctor [--json]` | the checks | exit 1 while a check is `FAIL` |
-| `h2studio config check` | `configuration OK` and the resolved paths | problems on standard error, exit 1; warns (exit 0) when proxy mode lacks its secret in the environment, or `public_url` is https with no `trusted_proxies` |
-| `h2studio audit verify` | `audit chain OK: N entries; head <seq> <hash>` or `audit chain BROKEN: ...` | exit 1 when broken; `no database at <path>` if absent |
-| `h2studio openapi` | the OpenAPI 3.1 document | needs neither configuration nor a server |
-| `h2studio version` | `h2studio <version>` (and the commit when built with `H2S_BUILD_COMMIT`) | |
-| `h2studio egress-proxy` | `h2studio egress proxy listening on <ip>:<port>` | [section 9](#9-the-egress-allowlist); non-dumpable; logs each allowlist entry with its ports |
-| `h2studio-mcp ...` | | [MCP.md](MCP.md) |
+| `h2workbench serve` | `h2workbench listening on http://<ip>:<port>` once bound | graceful on `SIGINT`/`SIGTERM` (the handlers are installed before that line is printed); makes itself non-dumpable first |
+| `h2workbench init [--data-dir P] [--force]` | the new admin token, alone | see [section 4](#4-first-run) |
+| `h2workbench token create --name N --role R [--expires-in-days D]` | the new token, alone | `R` is `viewer`, `operator` or `admin`; `TOKEN=$(h2workbench token create ...)` works |
+| `h2workbench token list [--json]` | a table, or JSON | never secrets |
+| `h2workbench token revoke ID` | nothing | exit 1 when no active token has that id |
+| `h2workbench doctor [--json]` | the checks | exit 1 while a check is `FAIL` |
+| `h2workbench config check` | `configuration OK` and the resolved paths | problems on standard error, exit 1; warns (exit 0) when proxy mode lacks its secret in the environment, or `public_url` is https with no `trusted_proxies` |
+| `h2workbench audit verify` | `audit chain OK: N entries; head <seq> <hash>` or `audit chain BROKEN: ...` | exit 1 when broken; `no database at <path>` if absent |
+| `h2workbench openapi` | the OpenAPI 3.1 document | needs neither configuration nor a server |
+| `h2workbench version` | `h2workbench <version>` (and the commit when built with `H2W_BUILD_COMMIT`) | |
+| `h2workbench egress-proxy` | `h2workbench egress proxy listening on <ip>:<port>` | [section 9](#9-the-egress-allowlist); non-dumpable; logs each allowlist entry with its ports |
+| `h2workbench-mcp ...` | | [MCP.md](MCP.md) |
 
-Every `h2studio` command accepts `--config PATH` anywhere on the line. Explanations and logs go to
+Every `h2workbench` command accepts `--config PATH` anywhere on the line. Explanations and logs go to
 standard error; standard output is for results you can capture. A failure is one line,
-`h2studio: <what>: <cause>`, with each cause printed once.
+`h2workbench: <what>: <cause>`, with each cause printed once.
 
 The `doctor` checks (id: what it looks for): `harness2` (installed, at the tested commit), `uv`,
 `python312`, `git`, `node20`, `npm`, `curl`, `docker`, `podman`, `pandoc`, `pdftoppm`, `gcloud`,
 `adc`, `container_runtime`, `disk`, `dotenv`, and, in container isolation, `runner_image` and
 `container_network`. What each means and how to fix it:
-[TROUBLESHOOTING.md](TROUBLESHOOTING.md#h2studio-doctor-checks).
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#h2workbench-doctor-checks).
 
 ## 17. What changed with the security review
 
@@ -1311,10 +1311,10 @@ where this guide describes the new behaviour. The exact messages are in
 
 | Area | Before | Now |
 |---|---|---|
-| Failed authentication | every refused credential was audited and answered `401` | 60 a minute per client, then `429`; at most 10 audit records a minute per client; `h2s_audit_suppressed_total` ([6.5](#65-failed-authentication-is-throttled)) |
+| Failed authentication | every refused credential was audited and answered `401` | 60 a minute per client, then `429`; at most 10 audit records a minute per client; `h2w_audit_suppressed_total` ([6.5](#65-failed-authentication-is-throttled)) |
 | Repeated proxy headers | the first user, the union of the groups | `401` ([6.3](#63-proxy-sso-mode)) |
 | Repeated `Host` header | the first was checked | `400`; an absolute-form target must name an allowed host too ([7](#7-reverse-proxy-and-tls)) |
-| Session cookie over https | `h2s_session` | `__Host-h2s_session`, so browsers sign in again after the switch ([6.2](#62-token-mode)) |
+| Session cookie over https | `h2w_session` | `__Host-h2w_session`, so browsers sign in again after the switch ([6.2](#62-token-mode)) |
 | `install_harness2` with a `rev` | any commit | the tested commit only, unless `paths.allow_untested_harness2_rev = true` ([5](#5-configuration-reference), [12](#12-data-backups-and-upgrades)) |
 | harness2's Python dependencies | newest at install time | as of the tested commit's date (`--exclude-newer`) ([4](#4-first-run)) |
 | Egress proxy default bind | `0.0.0.0:3128` | `127.0.0.1:3128`; the compose example sets `0.0.0.0` explicitly ([9](#9-the-egress-allowlist)) |
@@ -1324,7 +1324,7 @@ where this guide describes the new behaviour. The exact messages are in
 | Free disk | not watched | running jobs stopped below `jobs.min_free_disk_mb` (256) ([5](#5-configuration-reference)) |
 | Connections | 1,024 in total | also 256 per client address (`server.max_connections_per_ip`) ([5](#5-configuration-reference)) |
 | Event streams | 64 in total, authorised once | also 8 per principal (`429`), credential checked at every heartbeat ([5](#5-configuration-reference)) |
-| Restart recovery | recorded pid and start time | boot id, and `H2S_JOB_ID` in the group's environment ([THREAT-MODEL.md](THREAT-MODEL.md) D7) |
+| Restart recovery | recorded pid and start time | boot id, and `H2W_JOB_ID` in the group's environment ([THREAT-MODEL.md](THREAT-MODEL.md) D7) |
 | The server's memory and environment | readable by a same-user job through `/proc` | the server and the egress proxy are non-dumpable (the note at the top, [10](#10-the-compose-reference-deployment)) |
 | Results of hostile experiments | per-file read caps | bounded per request, 4 reads at once, `413 too large` ([API.md](API.md#6-paging-filters-and-limits)) |
 | Profile `extra_env` | a short list of names | many more reserved ([MODELS.md](MODELS.md#reserved-environment-variables)); saving a profile that uses one is `422`, and creating a job with a profile stored earlier that uses one is refused (`422` on `params.profile`: `profile <name> no longer passes validation (...); an administrator must update it`) |

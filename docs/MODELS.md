@@ -2,15 +2,15 @@
 
 A harness2 sweep calls language models in four places: the **executor** (the agent being
 improved), the **improver** (which edits harnesses and selects), the **judge** (which grades
-results) and, for Codex, a **Responses-API endpoint**. A Studio **model profile** is the named
+results) and, for Codex, a **Responses-API endpoint**. A Workbench **model profile** is the named
 bundle of settings that tells every job which models to use and how to reach them. This page
 covers how profiles are written, which benchmark and executor each kind can drive, the judge
 rules that decide whether a local model can grade, and what a sweep costs.
 
 > **Read this first.** harness2's own documentation only describes Google Vertex AI. Running it
 > on OpenAI-compatible servers (LiteLLM, vLLM, SGLang, Ollama, a hosted gateway) rests on facts
-> read from the pinned upstream sources and on the Studio's own tests with fakes. **As far as the
-> repository's tests and notes record, no model-backed sweep has been run through the Studio, on
+> read from the pinned upstream sources and on the Workbench's own tests with fakes. **As far as the
+> repository's tests and notes record, no model-backed sweep has been run through the Workbench, on
 > either kind of profile**: the only real harness2 workflow exercised end to end is the offline
 > demo. The compatibility table below says, row by row, how each fact was established.
 
@@ -18,9 +18,9 @@ Terms: [CONCEPTS.md](CONCEPTS.md). Administering profiles and secrets: [ADMIN-GU
 
 ## 1. What a profile contains
 
-A profile is stored in the Studio's database (`PUT /api/v1/profiles/{name}`, admin role) and
+A profile is stored in the Workbench's database (`PUT /api/v1/profiles/{name}`, admin role) and
 holds **no secret values**: keys are referenced by *secret name* and stored separately,
-write-only (`PUT /api/v1/secrets/{name}`), or supplied to the server as `H2S_SECRET_<NAME>`
+write-only (`PUT /api/v1/secrets/{name}`), or supplied to the server as `H2W_SECRET_<NAME>`
 environment variables.
 
 | Field | Meaning |
@@ -28,7 +28,7 @@ environment variables.
 | `name` | `^[a-z0-9][a-z0-9_-]{0,62}$` |
 | `kind` | `vertex`, `openai_compatible` or `custom` (below) |
 | `description` | free text, up to 2000 characters |
-| `solver_model` | the executor model: `provider/model` for `vertex`; the **bare** model id for `openai_compatible` (the server adds the provider prefix `h2s/`) |
+| `solver_model` | the executor model: `provider/model` for `vertex`; the **bare** model id for `openai_compatible` (the server adds the provider prefix `h2w/`) |
 | `improver_model` | optional; defaults to the solver model |
 | `judge_model` | optional bare id (`HARNESS2_JUDGE_MODEL`) |
 | `codex_model` | optional, for the Codex executor |
@@ -52,13 +52,13 @@ profile-derived variables added to it. `HARNESS2_RUNS_DIR` is always set to the 
 
 | Variable | `vertex` | `openai_compatible` | From |
 |---|---|---|---|
-| `HARNESS2_SOLVER_MODEL` | as written | `h2s/<solver_model>` | `solver_model` |
-| `HARNESS2_IMPROVER_MODEL` | improver, else solver | `h2s/<improver or solver>` | `improver_model` |
+| `HARNESS2_SOLVER_MODEL` | as written | `h2w/<solver_model>` | `solver_model` |
+| `HARNESS2_IMPROVER_MODEL` | improver, else solver | `h2w/<improver or solver>` | `improver_model` |
 | `HARNESS2_JUDGE_MODEL` | as written | as written | `judge_model` |
 | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` | set | set when `vertex` is given (a judge on Vertex) | `vertex` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | path of a per-job 0600 key file | same | `vertex.credentials_secret` |
-| `OPENCODE_CONFIG` | n/a | path of a generated config registering provider `h2s` (`@ai-sdk/openai-compatible`, `baseURL`, `apiKey` as `{env:H2S_PROVIDER_API_KEY}`) | `endpoint` |
-| `H2S_PROVIDER_API_KEY` | n/a | the key | `endpoint.api_key_secret` |
+| `OPENCODE_CONFIG` | n/a | path of a generated config registering provider `h2w` (`@ai-sdk/openai-compatible`, `baseURL`, `apiKey` as `{env:H2W_PROVIDER_API_KEY}`) | `endpoint` |
+| `H2W_PROVIDER_API_KEY` | n/a | the key | `endpoint.api_key_secret` |
 | `HARNESS2_JUDGE_BASE_URL`, `HARNESS2_JUDGE_API_KEY` | when `judge_endpoint` is given | `judge_endpoint`, else `endpoint` | `judge_endpoint` |
 | `OPENAI_BASE_URL`, `OPENAI_API_KEY` | when a `judge_endpoint` is given and the judge model starts with `gpt`, `o1`, `o3`, `o4` or `o5` | when the judge model starts with `gpt`, `o1`, `o3`, `o4` or `o5` | the judge endpoint |
 | `HARNESS2_CODEX_BASE_URL`, `_API_KEY`, `HARNESS2_CODEX_MODEL` | from `codex_endpoint` / `codex_model` | same | `codex_endpoint` |
@@ -77,8 +77,8 @@ which certificates jobs trust, or credentials the server manages are **refused**
 `SSH_AUTH_SOCK`, `CONTAINER_HOST`, `REGISTRY_AUTH_FILE`, the proxy variables (`HTTPS_PROXY`,
 `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`) and the certificate variables (`SSL_CERT_FILE`,
 `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`). Prefixes: any name
-starting with `LD_`, `DYLD_`, `PYTHON`, `H2S_`, `UV_`, `PIP_`, `BUN_`, `NPM_CONFIG_`, `DOCKER_`,
-`CONTAINERS_`, `XDG_`, `GIT_` or `OPENCODE_`. The source is `crates/h2s-core/src/env.rs`.
+starting with `LD_`, `DYLD_`, `PYTHON`, `H2W_`, `UV_`, `PIP_`, `BUN_`, `NPM_CONFIG_`, `DOCKER_`,
+`CONTAINERS_`, `XDG_`, `GIT_` or `OPENCODE_`. The source is `crates/h2w-core/src/env.rs`.
 
 The list is a safety net for mistakes, not a security boundary: other variables that change what a
 program does are accepted (`CC`, `MAKEFLAGS` or `CARGO_HOME`, for example), and only an admin can write a
@@ -97,13 +97,13 @@ contains a line break or NUL, ...`); a line (`NAME=value`) is limited to 64 KiB.
 
 Status words: **source-read** means the fact was read from the pinned upstream source (harness2
 `1cfe254`, OpenCode `23fb5e05` / v1.14.18); **upstream docs** means upstream's documentation says
-so; **fakes only** means the Studio's wiring is covered by tests with stub executables, not by a
+so; **fakes only** means the Workbench's wiring is covered by tests with stub executables, not by a
 real model call. Nothing in this table has been exercised against a real model through the
-Studio.
+Workbench.
 
 | Part of harness2 | Reads its model settings from | `vertex` profile | `openai_compatible` profile | Basis |
 |---|---|---|---|---|
-| Improver and selector sessions | OpenCode `--model provider/model`, environment copied from the server's job | yes | yes, through the generated provider `h2s` | source-read |
+| Improver and selector sessions | OpenCode `--model provider/model`, environment copied from the server's job | yes | yes, through the generated provider `h2w` | source-read |
 | Executor, LAB (`oc`) | OpenCode, environment copied | yes | yes, same provider | source-read |
 | Executor, JobBench (`oc`) | OpenCode, `{**os.environ, ...}` | yes | yes, same provider | source-read |
 | Executor, WorkBuddy (`oc`) | Harbor containers; setup refuses anything but `google-vertex/gemini...` | yes | **no** (upstream restriction) | source-read |
@@ -120,7 +120,7 @@ inside network-restricted containers (source-read).
 
 - **LAB accepts only these judge model ids**: those starting with `claude`, `gemini`, `gpt`,
   `o1`, `o3`, `o4`, `o5`, `mistral` or `vertex/`. It sends `gpt*` and `o*` ids to the official
-  OpenAI client, which reads `OPENAI_BASE_URL` and `OPENAI_API_KEY`; the Studio sets both from the
+  OpenAI client, which reads `OPENAI_BASE_URL` and `OPENAI_API_KEY`; the Workbench sets both from the
   judge endpoint when the judge model is such an id. For a local judge on LAB, give the gateway a
   model *alias* that starts with `gpt` (for example `gpt-judge`) and use that as `judge_model`.
 - **JobBench judging needs a judge endpoint with a key, or Vertex.** With a Gemini judge on
@@ -130,7 +130,7 @@ inside network-restricted containers (source-read).
   stored under a secret name (any placeholder string works for servers that ignore the key).
 - **WorkBuddy is Vertex-only**: `setup` requires a `google-vertex/gemini...` executor, a bare
   `gemini...` judge and `GOOGLE_CLOUD_PROJECT`. WorkBuddy also needs Docker on the host, and the
-  Studio refuses WorkBuddy and the Codex bridge under container isolation in this version
+  Workbench refuses WorkBuddy and the Codex bridge under container isolation in this version
   (409; [ADMIN-GUIDE.md](ADMIN-GUIDE.md)).
 - **Changing the judge model changes the measurement.** Keep the judge fixed when you compare
   harnesses or budgets.
@@ -173,7 +173,7 @@ Model ids, hosts and project names are placeholders: use the ids your provider o
 ```bash
 BASE=http://127.0.0.1:8722
 AUTH="Authorization: Bearer $TOKEN"   # an admin token; see ADMIN-GUIDE.md
-put() { curl -s -X PUT -H "$AUTH" -H 'x-h2s-request: 1' -H 'content-type: application/json' \
+put() { curl -s -X PUT -H "$AUTH" -H 'x-h2w-request: 1' -H 'content-type: application/json' \
           -d "$2" "$BASE/api/v1/profiles/$1"; }
 ```
 
@@ -201,7 +201,7 @@ put local-vllm '{
                 "api_key_secret": "VLLM_API_KEY" },
   "egress_hosts": ["vllm.internal.example"]
 }'
-curl -s -X PUT -H "$AUTH" -H 'x-h2s-request: 1' -H 'content-type: application/json' \
+curl -s -X PUT -H "$AUTH" -H 'x-h2w-request: 1' -H 'content-type: application/json' \
      -d '{"value": "the-real-key"}' "$BASE/api/v1/secrets/VLLM_API_KEY"
 ```
 
@@ -223,13 +223,13 @@ put ollama-dev '{
 }'
 ```
 
-`127.0.0.1` in a profile means the host that runs the **job**. When the Studio itself runs in a
+`127.0.0.1` in a profile means the host that runs the **job**. When the Workbench itself runs in a
 container, or jobs run in containers, that is the container, not your workstation; use a name the
 job's network can resolve and add it to the egress allowlist (section 6).
 
 Validation errors name the field. Real examples (`422`): `a vertex profile needs Vertex settings`;
 `use OpenCode's provider/model form, e.g. google-vertex/gemini-3.5-flash`; `use the bare model id;
-the server adds h2s/`; `names starting with LD_ are reserved and cannot be set by a profile`;
+the server adds h2w/`; `names starting with LD_ are reserved and cannot be set by a profile`;
 `HTTPS_PROXY is managed by the server and cannot be set by a profile`; `set exactly one of value or
 secret`. The same wording covers `GIT_*`, `DOCKER_*`, `XDG_*` and the other reserved names.
 
@@ -241,18 +241,18 @@ server's `PATH`: `harness2-check` runs `gcloud auth application-default print-ac
 
 | Method | How |
 |---|---|
-| ADC of the server user | `gcloud auth application-default login` as the user that runs `h2studio serve`; `--no-browser` on a headless host |
+| ADC of the server user | `gcloud auth application-default login` as the user that runs `h2workbench serve`; `--no-browser` on a headless host |
 | Service-account key | store the key's JSON as a secret, set `vertex.credentials_secret` to its name; each job gets it as a 0600 file in its private job directory, deleted when the job ends |
 | Attached service account | on a cloud VM with one attached, ADC picks it up |
 
-`h2studio doctor` shows a `gcloud` check (it fails if a Vertex profile exists and `gcloud` is
+`h2workbench doctor` shows a `gcloud` check (it fails if a Vertex profile exists and `gcloud` is
 missing; it is skipped when no profile uses Vertex) and, while a Vertex profile exists, an `adc`
-check that is always a **warning**: the Studio does not verify ADC itself because the check
+check that is always a **warning**: the Workbench does not verify ADC itself because the check
 would print an access token. `harness2-check` verifies it before every run.
 
 ## 5. Cost
 
-| Source of cost | Counted by the Studio's estimate? |
+| Source of cost | Counted by the Workbench's estimate? |
 |---|---|
 | Executor rollouts: `T * (k + M * 3k)` | counted, in numbers; in dollars only with `prices` |
 | Improver sessions: `T * M * (3k + [k>1] + 1)` | counted; dollars from `prices` or history |
@@ -272,7 +272,7 @@ executor rollout spend, so a sweep whose cost is mostly rollouts can exceed any 
 watches. Judging is a separate job with no guard.
 
 **Self-hosted models may record zero.** harness2 sums the `cost` OpenCode reports in each
-improver session. The provider the Studio generates for an `openai_compatible` profile declares
+improver session. The provider the Workbench generates for an `openai_compatible` profile declares
 no model prices, so OpenCode has nothing to multiply and the recorded cost is most likely 0
 (inferred from upstream's `_opencode_cost` and the generated configuration; not observed in a
 live run). If so, `budget_usd` never trips and `history` estimates read $0. Use wall-clock limits

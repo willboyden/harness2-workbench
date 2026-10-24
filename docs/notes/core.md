@@ -1,6 +1,6 @@
-# h2s-core implementation notes
+# h2w-core implementation notes
 
-Notes from implementing `crates/h2s-core` against harness2 at
+Notes from implementing `crates/h2w-core` against harness2 at
 `1cfe254e8d25b15f37048c3730134686abe60335`. The doc comments in the source are the
 interface; this file records what they rely on and where the port knowingly differs from
 upstream.
@@ -118,9 +118,9 @@ How many of these views run at once is the server's to limit.
 Verified by the coordinator in the pinned sources:
 
 - OpenCode 1.14.18 merges the file named by `OPENCODE_CONFIG` and bundles
-  `@ai-sdk/openai-compatible`, so the generated provider `h2s` works offline and in
+  `@ai-sdk/openai-compatible`, so the generated provider `h2w` works offline and in
   containers. Every OpenCode process harness2 starts (LAB and JobBench runners, the improver)
-  inherits the environment, so `OPENCODE_CONFIG` and `H2S_PROVIDER_API_KEY` reach them all.
+  inherits the environment, so `OPENCODE_CONFIG` and `H2W_PROVIDER_API_KEY` reach them all.
 - JobBench's judge reads `HARNESS2_JUDGE_BASE_URL`/`HARNESS2_JUDGE_API_KEY`. For an
   `openai_compatible` profile with a judge model and no judge endpoint, the profile's own
   endpoint is used.

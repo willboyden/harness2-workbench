@@ -3,7 +3,7 @@
 # Used two ways:
 #   1. as the image for container-isolated jobs (`[isolation] mode = "container"`): the server
 #      mounts the experiment, the harness2 checkout and the job's generated files into it;
-#   2. as the base of the all-in-one Studio image (deploy/docker/Dockerfile), where the whole
+#   2. as the base of the all-in-one Workbench image (deploy/docker/Dockerfile), where the whole
 #      server runs contained and jobs run "host"-mode inside the container.
 #
 # Contents: Node 22 + npm (harness2 setup installs Bun and OpenCode through npm), uv with a
@@ -12,7 +12,7 @@
 # stays generic and a harness2 bump never requires a rebuild.
 #
 # Every base is pinned by digest; Dependabot proposes updates (14-day cooldown).
-# Build: docker build -f deploy/docker/runner.Dockerfile -t harness2-studio-runner:0.1.0 .
+# Build: docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.0 .
 
 FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a AS uv
 
@@ -38,12 +38,12 @@ RUN uv python install 3.12 \
 # id that can write the bind-mounted experiment) and holds no capabilities (`--cap-drop ALL`).
 # Without CAP_DAC_OVERRIDE that user cannot write /home/node, so HOME (uv, npm and Bun caches,
 # OpenCode's state) is a sticky world-writable directory in the throwaway container layer.
-RUN install -d -m 1777 /h2s/home
-ENV HOME=/h2s/home
+RUN install -d -m 1777 /h2w/home
+ENV HOME=/h2w/home
 
 # Manual runs default to the node image's non-root user (uid 1000).
 USER node
-WORKDIR /h2s
+WORKDIR /h2w
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["bash", "-lc", "uv --version && node --version && git --version"]

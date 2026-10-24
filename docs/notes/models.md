@@ -4,7 +4,7 @@ Notes behind the user guide's model chapter. Status of each claim is given expli
 
 harness2's documentation only describes Google Vertex AI. These facts, read from the pinned
 sources, show where an OpenAI-compatible endpoint (LiteLLM, vLLM, SGLang, Ollama, a gateway) can
-replace Vertex, and how a Harness² Studio `openai_compatible` profile wires it.
+replace Vertex, and how a Harness² Workbench `openai_compatible` profile wires it.
 
 | Part | Where it reads its model settings | OpenAI-compatible? | Status |
 |---|---|---|---|

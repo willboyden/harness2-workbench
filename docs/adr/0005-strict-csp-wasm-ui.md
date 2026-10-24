@@ -1,12 +1,12 @@
 # ADR 0005: A strict Content-Security-Policy; WebAssembly loaded by an external script; nothing inline
 
 - **Status:** Accepted. Part of the v1.0 contract ([ARCHITECTURE.md](../ARCHITECTURE.md) §2, §9, §12).
-- **Applies to:** `h2s-daemon` (`http/guard.rs`, `http/static_ui.rs`), `h2s-web`, `xtask web`.
+- **Applies to:** `h2w-daemon` (`http/guard.rs`, `http/static_ui.rs`), `h2w-web`, `xtask web`.
 
 ## Context
 
 The web UI is an administration console: a signed-in page can start processes, change model
-endpoints and read secrets' metadata. It also renders text that nobody at the Studio wrote: model
+endpoints and read secrets' metadata. It also renders text that nobody at the Workbench wrote: model
 transcripts, harness files proposed by an improver, benchmark documents, job output. Any script
 injected into that page has the user's session and the power to start jobs. Defence in depth against
 cross-site scripting is therefore a requirement, not a polish item.
@@ -32,7 +32,7 @@ plus `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame
   served from an **allowlist** (`/`, `/app.js`, `/styles.css`, `/favicon.svg`, `/pkg/*`); any other
   non-API path returns `index.html` for client-side routing. Content-hashed names are cached as
   immutable; everything else is revalidated.
-- UI development without a server uses `tools/h2s-mock-api`, which serves fixture data **with the
+- UI development without a server uses `tools/h2w-mock-api`, which serves fixture data **with the
   production policy**, so a violation shows up while developing.
 
 ## Consequences
@@ -64,10 +64,10 @@ Bad, and how it is managed:
 
 ## Evidence in the repository
 
-`crates/h2s-daemon/src/http/guard.rs` (`SECURITY_HEADERS`), `http/static_ui.rs` (allowlist, caching),
-`xtask/src/main.rs` (`build_web`), `crates/h2s-daemon/tests/security.rs` and `static_ui.rs`,
-`web/index.html` and `web/app.js` (the only script is the external module), `crates/h2s-web`,
-`tools/h2s-mock-api`. The server's side of this decision (headers, allowlist, the `UI not built`
+`crates/h2w-daemon/src/http/guard.rs` (`SECURITY_HEADERS`), `http/static_ui.rs` (allowlist, caching),
+`xtask/src/main.rs` (`build_web`), `crates/h2w-daemon/tests/security.rs` and `static_ui.rs`,
+`web/index.html` and `web/app.js` (the only script is the external module), `crates/h2w-web`,
+`tools/h2w-mock-api`. The server's side of this decision (headers, allowlist, the `UI not built`
 page) was exercised live by the documentation author. The UI source was read for inline scripts,
 `style` attributes and raw-HTML insertion (none found); the UI's behaviour in a browser was **not**
 exercised by the documentation author. The maintainers' notes (`docs/notes/web.md`) record scripted

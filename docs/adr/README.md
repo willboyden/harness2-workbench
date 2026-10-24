@@ -7,13 +7,13 @@ rejected. The one-line summaries of the original eight decisions are in
 | # | Decision | Status |
 |---|---|---|
 | [0001](0001-wrap-the-harness2-cli.md) | Wrap the harness2 CLI (argv, no shell) and read its files; never import its Python | Accepted |
-| [0002](0002-rust-workspace.md) | A Rust workspace: `h2s-api`, `h2s-core`, `h2s-daemon`, `h2s-web` (Leptos to WASM), `h2s-mcp` | Accepted |
+| [0002](0002-rust-workspace.md) | A Rust workspace: `h2w-api`, `h2w-core`, `h2w-daemon`, `h2w-web` (Leptos to WASM), `h2w-mcp` | Accepted |
 | [0003](0003-single-server-thin-mcp-client.md) | One server owns jobs, state and authentication; the MCP server is a thin client forwarding the caller's token | Accepted |
 | [0004](0004-sqlite-and-plain-experiment-directories.md) | SQLite (bundled, WAL) for state; files for logs; experiments stay plain harness2 directories | Accepted |
 | [0005](0005-strict-csp-wasm-ui.md) | A strict Content-Security-Policy; WebAssembly loaded by an external script; nothing inline | Accepted |
 | [0006](0006-isolation-modes.md) | Two isolation modes: `host` (with explicit acknowledgement) and `container` (hardened runner, egress allowlist proxy) | Accepted |
 | [0007](0007-dependency-cooldown.md) | Dependency cooldown: locked versions at least 14 days old, security fixes exempt with an expiry | Accepted |
-| [0008](0008-api-tokens-and-sessions.md) | Tokens `h2s_<id>_<secret>` stored as SHA-256 and compared in constant time; HttpOnly SameSite=Strict cookie sessions | Accepted |
+| [0008](0008-api-tokens-and-sessions.md) | Tokens `h2w_<id>_<secret>` stored as SHA-256 and compared in constant time; HttpOnly SameSite=Strict cookie sessions | Accepted |
 
 ## Format
 

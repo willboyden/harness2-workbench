@@ -1,11 +1,11 @@
 # MCP server: harness2 for AI agents
 
-`h2studio-mcp` exposes every harness2 operation of the Studio as [Model Context
+`h2workbench-mcp` exposes every harness2 operation of the Workbench as [Model Context
 Protocol](https://modelcontextprotocol.io) **tools, resources and prompts**, so an agent in
 Claude Code, opencode, Codex, Cursor, VS Code or any other MCP client can set up, run, wait for and
 analyse harness2 sweeps without a browser.
 
-It is a **thin client of a running Studio server**. It keeps no state, runs no jobs and holds no
+It is a **thin client of a running Workbench server**. It keeps no state, runs no jobs and holds no
 credentials of its own: every call it makes is an ordinary [REST API](API.md) request carrying an
 API token, so the server's roles (viewer < operator < admin), limits and audit log apply to each
 agent exactly as they apply to a person.
@@ -13,20 +13,20 @@ agent exactly as they apply to a person.
 ```mermaid
 flowchart LR
   subgraph stdio [stdio: one client, one token]
-    c1[MCP client] -- "stdin/stdout" --> m1[h2studio-mcp]
+    c1[MCP client] -- "stdin/stdout" --> m1[h2workbench-mcp]
   end
   subgraph http [streamable HTTP: many clients]
-    c2[MCP client A] -- "POST /mcp + own bearer token" --> m2[h2studio-mcp]
+    c2[MCP client A] -- "POST /mcp + own bearer token" --> m2[h2workbench-mcp]
     c3[MCP client B] -- "POST /mcp + own bearer token" --> m2
   end
-  m1 -- "REST + token" --> s[(h2studio server)]
+  m1 -- "REST + token" --> s[(h2workbench server)]
   m2 -- "REST + the caller's token" --> s
 ```
 
 *This Mermaid diagram was syntax-checked with the Mermaid 12.1.0 parser (`mermaid.parse`). It has not been rendered to an image, so its layout is unseen.*
 
 **Status.** Implemented: 42 tools, 3 resource URI forms, 3 prompts, both transports. Verified
-live on 2026-10-23 and 2026-10-24 against a running `h2studio` 0.1.0 and a real harness2 checkout
+live on 2026-10-23 and 2026-10-24 against a running `h2workbench` 0.1.0 and a real harness2 checkout
 (`1cfe254`): a stdio session (initialize, `tools/list`, `server_info`, role refusals, a real demo
 run through `run_demo`) and the HTTP guard. Also covered by tests with a mock server and by an
 end-to-end suite. **Not tried against the real MCP clients named on this page**: the
@@ -45,13 +45,13 @@ and an admin token would let a model, or text that has hijacked it, run them). E
 reads through a tool is untrusted ([section 3](#3-safety-rules)).
 
 ```console
-$ h2studio token create --name "claude code" --role operator --expires-in-days 30 > mcp.token
+$ h2workbench token create --name "claude code" --role operator --expires-in-days 30 > mcp.token
 Created operator token tqj6ch4x (claude code), expires 2026-11-23T04:23:59Z.
 $ chmod 600 mcp.token
 ```
 
-`h2studio-mcp` reads the token from `H2S_TOKEN`, or from a file only you can read
-(`--token-file` / `H2S_TOKEN_FILE`; not both). It never accepts a token as a command-line
+`h2workbench-mcp` reads the token from `H2W_TOKEN`, or from a file only you can read
+(`--token-file` / `H2W_TOKEN_FILE`; not both). It never accepts a token as a command-line
 argument, because that would show in `ps` and shell history.
 
 ### 1.2 stdio (the default)
@@ -60,26 +60,26 @@ The MCP client starts the program. Configuration is by environment:
 
 | Setting | Variable / flag | Default |
 |---|---|---|
-| Studio server | `H2S_SERVER_URL` / `--server-url` | `http://127.0.0.1:8722` |
-| Token | `H2S_TOKEN`, or `H2S_TOKEN_FILE` / `--token-file` (mode 0600) | none: required |
-| Let a model accept host-isolation risks | `--allow-risk-acknowledgement`, or `H2S_MCP_ALLOW_RISK_ACK=1` (both transports) | off |
+| Workbench server | `H2W_SERVER_URL` / `--server-url` | `http://127.0.0.1:8722` |
+| Token | `H2W_TOKEN`, or `H2W_TOKEN_FILE` / `--token-file` (mode 0600) | none: required |
+| Let a model accept host-isolation risks | `--allow-risk-acknowledgement`, or `H2W_MCP_ALLOW_RISK_ACK=1` (both transports) | off |
 
 ```console
-$ H2S_SERVER_URL=http://127.0.0.1:8722 H2S_TOKEN_FILE=mcp.token h2studio-mcp
+$ H2W_SERVER_URL=http://127.0.0.1:8722 H2W_TOKEN_FILE=mcp.token h2workbench-mcp
 ```
 
-Logs go to stderr (`RUST_LOG` adjusts them; default `warn,h2s_mcp=info`). Tokens are never
+Logs go to stderr (`RUST_LOG` adjusts them; default `warn,h2w_mcp=info`). Tokens are never
 logged.
 
 ### 1.3 Streamable HTTP
 
 ```console
-$ h2studio-mcp --transport http --listen 127.0.0.1:8723 --server-url http://127.0.0.1:8722
+$ h2workbench-mcp --transport http --listen 127.0.0.1:8723 --server-url http://127.0.0.1:8722
 ```
 
 The endpoint is `POST /mcp`, **stateless** (no `Mcp-Session-Id`). Every request must carry its own
-`Authorization: Bearer h2s_...`; that caller's token is forwarded to the Studio server, so each
-client is authorised and audited on its own. A token given to the process itself (`H2S_TOKEN`,
+`Authorization: Bearer h2w_...`; that caller's token is forwarded to the Workbench server, so each
+client is authorised and audited on its own. A token given to the process itself (`H2W_TOKEN`,
 `--token-file`) is ignored in this mode, with a warning.
 
 The guard in front of the endpoint refuses, in this order:
@@ -88,14 +88,14 @@ The guard in front of the endpoint refuses, in this order:
 |---|---|---|
 | unknown `Host` (DNS-rebinding defence) | 421 | `this MCP server does not answer to that Host; add it with --allowed-host if it is legitimate` |
 | a browser `Origin` that is not allowed | 403 | `cross-origin requests are not allowed; add the origin with --allowed-origin if it is legitimate` |
-| no well-formed bearer token | 401 | ``send `Authorization: Bearer h2s_...` with a Harness² Studio API token; it is forwarded to the Studio server, which checks it`` (with `WWW-Authenticate: Bearer realm="h2studio-mcp"`) |
+| no well-formed bearer token | 401 | ``send `Authorization: Bearer h2w_...` with a Harness² Workbench API token; it is forwarded to the Workbench server, which checks it`` (with `WWW-Authenticate: Bearer realm="h2workbench-mcp"`) |
 | more than `--max-concurrent-requests` (default 32) in flight | 503 | `this MCP server is already handling N requests, its maximum (--max-concurrent-requests); retry in a moment` (with `Retry-After: 1`) |
 | body over `--max-body-bytes` (1 MiB) | 413 | `Payload Too Large: request body exceeds 1048576 bytes` (plain text) |
 
 Loopback forms of the listen address are always allowed; add other host names with
 `--allowed-host` (repeatable). **Listening beyond loopback needs a TLS reverse proxy in front**:
 the server warns when you do, and bearer tokens must not cross a network in clear text.
-`h2studio-mcp` itself refuses a plain-`http` `--server-url` on a non-loopback host
+`h2workbench-mcp` itself refuses a plain-`http` `--server-url` on a non-loopback host
 (`refusing to send API tokens over plain http to <host>: use an https URL ... or pass
 --allow-insecure-remote`).
 
@@ -105,7 +105,7 @@ A real request, abbreviated:
 $ curl -s -X POST http://127.0.0.1:8723/mcp -H "Authorization: Bearer $TOKEN" \
        -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
-data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"prompts":{},"resources":{},"tools":{}},"serverInfo":{"name":"h2studio-mcp","title":"Harness² Studio","version":"0.1.0", ...},"instructions":"Harness² Studio drives google-research/harness2, which improves an AI agent's harness ... Safe order: server_info -> doctor -> list_benchmarks / check_benchmark -> preview_run -> estimate_cost -> the user's go-ahead -> start_pipeline ..."}}
+data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"prompts":{},"resources":{},"tools":{}},"serverInfo":{"name":"h2workbench-mcp","title":"Harness² Workbench","version":"0.1.0", ...},"instructions":"Harness² Workbench drives google-research/harness2, which improves an AI agent's harness ... Safe order: server_info -> doctor -> list_benchmarks / check_benchmark -> preview_run -> estimate_cost -> the user's go-ahead -> start_pipeline ..."}}
 ```
 
 The `instructions` string is sent to the client at initialisation and tells the model the safe
@@ -121,10 +121,10 @@ they follow each client's documented configuration format.
 **Claude Code**
 
 ```sh
-claude mcp add h2studio \
-  --env H2S_SERVER_URL=http://127.0.0.1:8722 \
-  --env H2S_TOKEN_FILE="$HOME/.config/harness2-studio/mcp.token" \
-  -- h2studio-mcp
+claude mcp add h2workbench \
+  --env H2W_SERVER_URL=http://127.0.0.1:8722 \
+  --env H2W_TOKEN_FILE="$HOME/.config/harness2-workbench/mcp.token" \
+  -- h2workbench-mcp
 ```
 
 or, in a project's `.mcp.json` (Claude Code expands `${VAR}`); the HTTP form takes the token from
@@ -133,17 +133,17 @@ the environment of the shell that starts Claude Code:
 ```json
 {
   "mcpServers": {
-    "h2studio": {
-      "command": "h2studio-mcp",
+    "h2workbench": {
+      "command": "h2workbench-mcp",
       "env": {
-        "H2S_SERVER_URL": "http://127.0.0.1:8722",
-        "H2S_TOKEN_FILE": "${HOME}/.config/harness2-studio/mcp.token"
+        "H2W_SERVER_URL": "http://127.0.0.1:8722",
+        "H2W_TOKEN_FILE": "${HOME}/.config/harness2-workbench/mcp.token"
       }
     },
-    "h2studio-http": {
+    "h2workbench-http": {
       "type": "http",
       "url": "http://127.0.0.1:8723/mcp",
-      "headers": { "Authorization": "Bearer ${H2S_TOKEN}" }
+      "headers": { "Authorization": "Bearer ${H2W_TOKEN}" }
     }
   }
 }
@@ -157,12 +157,12 @@ If calls are cut off, raise `MCP_TOOL_TIMEOUT` (milliseconds).
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "h2studio": {
+    "h2workbench": {
       "type": "local",
-      "command": ["h2studio-mcp"],
+      "command": ["h2workbench-mcp"],
       "environment": {
-        "H2S_SERVER_URL": "http://127.0.0.1:8722",
-        "H2S_TOKEN_FILE": "/absolute/path/to/mcp.token"
+        "H2W_SERVER_URL": "http://127.0.0.1:8722",
+        "H2W_TOKEN_FILE": "/absolute/path/to/mcp.token"
       },
       "enabled": true
     }
@@ -171,31 +171,31 @@ If calls are cut off, raise `MCP_TOOL_TIMEOUT` (milliseconds).
 ```
 
 For HTTP use `"type": "remote"`, `"url": "http://127.0.0.1:8723/mcp"` and
-`"headers": { "Authorization": "Bearer {env:H2S_TOKEN}" }`.
+`"headers": { "Authorization": "Bearer {env:H2W_TOKEN}" }`.
 
 **Codex** (`~/.codex/config.toml`)
 
 ```toml
-[mcp_servers.h2studio]
-command = "h2studio-mcp"
-env = { H2S_SERVER_URL = "http://127.0.0.1:8722", H2S_TOKEN_FILE = "/absolute/path/to/mcp.token" }
+[mcp_servers.h2workbench]
+command = "h2workbench-mcp"
+env = { H2W_SERVER_URL = "http://127.0.0.1:8722", H2W_TOKEN_FILE = "/absolute/path/to/mcp.token" }
 startup_timeout_sec = 20
 tool_timeout_sec = 660   # the default (60 s) is shorter than long waits
 ```
 
 For HTTP (Codex versions with streamable-HTTP support) use `url = "http://127.0.0.1:8723/mcp"`
-and `bearer_token_env_var = "H2S_TOKEN"`.
+and `bearer_token_env_var = "H2W_TOKEN"`.
 
 **Cursor** (`~/.cursor/mcp.json` or `.cursor/mcp.json`)
 
 ```json
 {
   "mcpServers": {
-    "h2studio": {
-      "command": "h2studio-mcp",
+    "h2workbench": {
+      "command": "h2workbench-mcp",
       "env": {
-        "H2S_SERVER_URL": "http://127.0.0.1:8722",
-        "H2S_TOKEN_FILE": "${userHome}/.config/harness2-studio/mcp.token"
+        "H2W_SERVER_URL": "http://127.0.0.1:8722",
+        "H2W_TOKEN_FILE": "${userHome}/.config/harness2-workbench/mcp.token"
       }
     }
   }
@@ -203,19 +203,19 @@ and `bearer_token_env_var = "H2S_TOKEN"`.
 ```
 
 For HTTP use `"url": "http://127.0.0.1:8723/mcp"` and
-`"headers": { "Authorization": "Bearer ${env:H2S_TOKEN}" }`.
+`"headers": { "Authorization": "Bearer ${env:H2W_TOKEN}" }`.
 
 **VS Code** (`.vscode/mcp.json`)
 
 ```json
 {
   "servers": {
-    "h2studio": {
+    "h2workbench": {
       "type": "stdio",
-      "command": "h2studio-mcp",
+      "command": "h2workbench-mcp",
       "env": {
-        "H2S_SERVER_URL": "http://127.0.0.1:8722",
-        "H2S_TOKEN_FILE": "${userHome}/.config/harness2-studio/mcp.token"
+        "H2W_SERVER_URL": "http://127.0.0.1:8722",
+        "H2W_TOKEN_FILE": "${userHome}/.config/harness2-workbench/mcp.token"
       }
     }
   }
@@ -223,11 +223,11 @@ For HTTP use `"url": "http://127.0.0.1:8723/mcp"` and
 ```
 
 For HTTP, declare an `inputs` entry of type `promptString` with `"password": true` and send
-`"headers": { "Authorization": "Bearer ${input:h2s-token}" }`.
+`"headers": { "Authorization": "Bearer ${input:h2w-token}" }`.
 
 ## 2. What an agent gets
 
-42 tools, grouped by purpose. "Role" is the minimum role the Studio server demands; the MCP server
+42 tools, grouped by purpose. "Role" is the minimum role the Workbench server demands; the MCP server
 does not decide it. \* marks tools that **call model endpoints and can cost money** with cloud
 models.
 
@@ -245,12 +245,12 @@ models.
 | Read results | `list_tasks`, `get_task`, `get_harness`, `diff_harnesses`, `list_rollout_files`, `read_rollout_file`, `get_scores`, `get_report`, `get_library`, `list_audit_sessions`, `read_audit_session`, `compare_sweeps` | viewer |
 | Adopt | `export_harness` (to raw, OpenCode or Codex project files) | viewer |
 
-`install_harness2` takes no `rev`: it always installs the commit this Studio release was tested
+`install_harness2` takes no `rev`: it always installs the commit this Workbench release was tested
 against. `server_info` reports the MCP server's own settings under `mcp_server.policy`
-(`allow_risk_acknowledgement`, `max_waits_per_token`) next to who you are and what the Studio is.
+(`allow_risk_acknowledgement`, `max_waits_per_token`) next to who you are and what the Workbench is.
 
-**Resources** (read-only, `resources/read`): `h2s://jobs/{id}/log` (the last 2,000 lines),
-`h2s://experiments/{exp}/sweeps/{sweep}/report` and `h2s://experiments/{exp}/manifest` (JSON).
+**Resources** (read-only, `resources/read`): `h2w://jobs/{id}/log` (the last 2,000 lines),
+`h2w://experiments/{exp}/sweeps/{sweep}/report` and `h2w://experiments/{exp}/manifest` (JSON).
 `resources/list` offers every experiment's manifest, every judged sweep's report and the 20 newest
 jobs' logs.
 
@@ -272,12 +272,12 @@ list_rollout_files, list_splits, list_tasks, preview_run, read_audit_session, re
 run_demo, server_info, setup_benchmark, start_bridge, start_judge, start_pipeline, start_report,
 start_run, update_experiment, validate_harness, wait_for_job
 prompts: ['improve_agent_harness', 'analyze_sweep', 'adopt_best_harness']
-resource templates: ['h2s://jobs/{id}/log', 'h2s://experiments/{exp}/sweeps/{sweep}/report',
-                     'h2s://experiments/{exp}/manifest']
+resource templates: ['h2w://jobs/{id}/log', 'h2w://experiments/{exp}/sweeps/{sweep}/report',
+                     'h2w://experiments/{exp}/manifest']
 ```
 
 The tool list, descriptions and input schemas are frozen in a snapshot test
-(`crates/h2s-mcp/tests/snapshots/tool_schemas.json`), so a change to the tool contract shows up in
+(`crates/h2w-mcp/tests/snapshots/tool_schemas.json`), so a change to the tool contract shows up in
 review. Every tool carries MCP annotations: read-only tools are marked so; `cancel_job`,
 `install_harness2` and `update_experiment` are marked destructive; tools that reach models or the
 network (`setup_benchmark`, `install_harness2`, `start_run`, `start_pipeline`, `start_judge`,
@@ -315,7 +315,7 @@ network (`setup_benchmark`, `install_harness2`, `start_run`, `start_pipeline`, `
 
 ## 3. Safety rules
 
-1. **The server decides, not the MCP server.** Roles are enforced by the Studio server on every
+1. **The server decides, not the MCP server.** Roles are enforced by the Workbench server on every
    call, per token; the MCP layer only turns a refusal into a readable message. A viewer token
    cannot start a job whatever the model says, and the denial is written to the audit log. The one
    rule the MCP server adds itself is rule 3's: it refuses to let a model accept host-isolation
@@ -327,24 +327,24 @@ network (`setup_benchmark`, `install_harness2`, `start_run`, `start_pipeline`, `
    through the REST API, the web UI or the CLI by a person.
 3. **A running agent can still spend and run code.** With an operator token an agent can start
    `run`, `pipeline` and `judge` jobs, which call cloud models, and under host isolation the
-   executors run with the server user's files and network, and so with access to the Studio's own
-   data (a host-mode job is, in effect, a Studio administrator). Under host isolation the Studio
+   executors run with the server user's files and network, and so with access to the Workbench's own
+   data (a host-mode job is, in effect, a Workbench administrator). Under host isolation the Workbench
    refuses `run` and `pipeline` jobs unless `acknowledge_risks` is `true`, and **a model must not
-   accept that for you**: `h2studio-mcp` refuses a `start_run` or `start_pipeline` call that sets
+   accept that for you**: `h2workbench-mcp` refuses a `start_run` or `start_pipeline` call that sets
    `acknowledge_risks=true`, unless whoever starts the MCP server passes
-   `--allow-risk-acknowledgement` (or sets `H2S_MCP_ALLOW_RISK_ACK=1`; it logs a warning when it
+   `--allow-risk-acknowledgement` (or sets `H2W_MCP_ALLOW_RISK_ACK=1`; it logs a warning when it
    is on). Verified live against a scratch server:
 
    ```text
    forbidden: this MCP server does not let a model set acknowledge_risks=true, which accepts for the
    user that the executor runs with the server user's files and network (host isolation). A human can
-   start this run from the Studio web UI; an admin can pre-acknowledge host risks in the server
-   configuration; or the person who runs h2studio-mcp can start it with --allow-risk-acknowledgement
-   (H2S_MCP_ALLOW_RISK_ACK=1). Without acknowledge_risks the call goes through and the Studio server
+   start this run from the Workbench web UI; an admin can pre-acknowledge host risks in the server
+   configuration; or the person who runs h2workbench-mcp can start it with --allow-risk-acknowledgement
+   (H2W_MCP_ALLOW_RISK_ACK=1). Without acknowledge_risks the call goes through and the Workbench server
    decides.
    ```
 
-   With the flag on, the call goes through and the Studio decides (the same call then failed on
+   With the flag on, the call goes through and the Workbench decides (the same call then failed on
    the server's own check, `conflict: demo is a demo experiment; benchmark jobs need a standard
    experiment`, so no job was started). The alternatives to the flag are a person starting the
    run in the web UI, or an administrator setting `isolation.preacknowledge_host_risks` (which
@@ -368,7 +368,7 @@ network (`setup_benchmark`, `install_harness2`, `start_run`, `start_pipeline`, `
      `start_judge`, `setup_benchmark`, `install_harness2`, `start_bridge`).
    - `wait_for_job` waits for `timeout_secs` (default 50, maximum 600) on the server's event
      stream (falling back to polling every `poll_interval_secs`, default 2, whenever the stream cannot
-     be used, for instance when the Studio refuses it with `429` because the token already holds
+     be used, for instance when the Workbench refuses it with `429` because the token already holds
      `server.sse_max_per_principal` open streams; read from the code, not exercised) and, if the client
      sent a progress token, emits progress notifications with finished/total tasks and the current
      task, at least every 10 s. On timeout it returns the job as it is; the job keeps running.
@@ -378,12 +378,12 @@ network (`setup_benchmark`, `install_harness2`, `start_run`, `start_pipeline`, `
      called with `wait_secs` returns the job it created without waiting, with a note.
    - Over HTTP, at most `--max-concurrent-requests` requests are handled at once (`503` beyond).
 6. **Token handling**: never on a command line, files must be mode 0600, never logged, and a
-   token reaches only the Studio server named by `--server-url`.
+   token reaches only the Workbench server named by `--server-url`.
 
 ## 4. Troubleshooting
 
 Real messages and what to do are collected in
-[TROUBLESHOOTING.md](TROUBLESHOOTING.md#mcp-server). The most common: `no API token: set H2S_TOKEN,
-or point --token-file / H2S_TOKEN_FILE ...`, `the token file ... is accessible by group or others
-(mode 644); restrict it first: chmod 600 ...`, and `unavailable: ...` when the Studio server is not
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#mcp-server). The most common: `no API token: set H2W_TOKEN,
+or point --token-file / H2W_TOKEN_FILE ...`, `the token file ... is accessible by group or others
+(mode 644); restrict it first: chmod 600 ...`, and `unavailable: ...` when the Workbench server is not
 reachable at `--server-url`.

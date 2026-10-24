@@ -3,7 +3,7 @@
 Everything here was produced by **harness2 itself** at commit
 `1cfe254e8d25b15f37048c3730134686abe60335` (Python 3.12), offline: no model, no network, no
 benchmark checkout. `golden/regenerate.py` rebuilds the whole directory (see below). The
-`h2s-core` tests read these files; nothing here is executed.
+`h2w-core` tests read these files; nothing here is executed.
 
 The files are harness2's output, including prompt text it rendered (`_audit/*.mission.md`):
 harness2 is Copyright 2026 Google LLC and licensed under the Apache License, Version 2.0

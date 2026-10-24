@@ -1,45 +1,45 @@
-# Reference deployment: the Studio and its jobs contained from your host, egress allowlisted,
+# Reference deployment: the Workbench and its jobs contained from your host, egress allowlisted,
 # TLS at the edge.
 #
-#   browser ──https──> ingress (Caddy, TLS) ──> studio ──> egress proxy ──> allowed hosts only
+#   browser ──https──> ingress (Caddy, TLS) ──> workbench ──> egress proxy ──> allowed hosts only
 #                        [edge + jobs nets]     [jobs net, internal]   [jobs + uplink nets]
 #
-# - `studio` sits only on `jobs`, an internal network with no route out. harness2 jobs inherit
+# - `workbench` sits only on `jobs`, an internal network with no route out. harness2 jobs inherit
 #   HTTP(S)_PROXY and can reach exactly the hosts in `[egress] allow` of the mounted config.
-# - Jobs run in host isolation INSIDE the studio container, as the same user: a malicious or
-#   prompt-injected executor can read and change the Studio's data (/data: database, stored
-#   secrets) and so act as a Studio admin. The container keeps it away from your host and network,
-#   not from the Studio. To isolate jobs from the Studio, run h2studio on a host with container
+# - Jobs run in host isolation INSIDE the workbench container, as the same user: a malicious or
+#   prompt-injected executor can read and change the Workbench's data (/data: database, stored
+#   secrets) and so act as a Workbench admin. The container keeps it away from your host and network,
+#   not from the Workbench. To isolate jobs from the Workbench, run h2workbench on a host with container
 #   isolation instead (docs/ADMIN-GUIDE.md).
 # - `ingress` publishes the UI; set your domain in deploy/examples/Caddyfile (or replace it
 #   with your organisation's reverse proxy, adding it to `server.trusted_proxies`).
 #
 # Usage (from the repository root, after building both images — see deploy/docker/):
-#   cp deploy/examples/h2studio.compose.toml deploy/h2studio.toml   # then edit the EDIT lines
-#   chmod 644 deploy/h2studio.toml    # no secrets in it; the container user must read it
-#   docker compose -f deploy/compose.yaml run --rm studio init   # prints the first admin token
+#   cp deploy/examples/h2workbench.compose.toml deploy/h2workbench.toml   # then edit the EDIT lines
+#   chmod 644 deploy/h2workbench.toml    # no secrets in it; the container user must read it
+#   docker compose -f deploy/compose.yaml run --rm workbench init   # prints the first admin token
 #   docker compose -f deploy/compose.yaml up -d
-#   docker compose -f deploy/compose.yaml exec studio h2studio doctor
+#   docker compose -f deploy/compose.yaml exec workbench h2workbench doctor
 #
 # Rootless Docker cannot publish ports below 1024 unless the host allows it (sysctl
 # net.ipv4.ip_unprivileged_port_start); publish e.g. 8443:443 instead. If `up` fails with "all
 # predefined address pools have been fully subnetted", give the three networks explicit
 # `ipam` subnets in an override file.
 
-name: harness2-studio
+name: harness2-workbench
 
 services:
-  studio:
-    image: harness2-studio:0.1.0
+  workbench:
+    image: harness2-workbench:0.1.0
     restart: unless-stopped
     networks: [jobs]
     environment:
       HTTPS_PROXY: http://egress:3128
       HTTP_PROXY: http://egress:3128
-      NO_PROXY: localhost,127.0.0.1,studio
+      NO_PROXY: localhost,127.0.0.1,workbench
     volumes:
-      - studio-data:/data
-      - ./h2studio.toml:/config/h2studio.toml:ro
+      - workbench-data:/data
+      - ./h2workbench.toml:/config/h2workbench.toml:ro
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 4096
@@ -47,18 +47,18 @@ services:
     cpus: 8
 
   egress:
-    image: harness2-studio:0.1.0
+    image: harness2-workbench:0.1.0
     restart: unless-stopped
-    command: ["egress-proxy", "--config", "/config/h2studio.toml"]
+    command: ["egress-proxy", "--config", "/config/h2workbench.toml"]
     networks: [jobs, uplink]
     volumes:
-      - ./h2studio.toml:/config/h2studio.toml:ro
+      - ./h2workbench.toml:/config/h2workbench.toml:ro
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 256
     mem_limit: 256m
-    # The image's own health check probes the Studio's port; the proxy listens on 3128.
+    # The image's own health check probes the Workbench's port; the proxy listens on 3128.
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
       interval: 30s
@@ -70,10 +70,10 @@ services:
     restart: unless-stopped
     networks: [edge, jobs]
     # Loopback by default, so trying this on a workstation exposes nothing to the network.
-    # On a real server set H2S_INGRESS_BIND=0.0.0.0 (or a specific interface address).
+    # On a real server set H2W_INGRESS_BIND=0.0.0.0 (or a specific interface address).
     ports:
-      - "${H2S_INGRESS_BIND:-127.0.0.1}:443:443"
-      - "${H2S_INGRESS_BIND:-127.0.0.1}:80:80"
+      - "${H2W_INGRESS_BIND:-127.0.0.1}:443:443"
+      - "${H2W_INGRESS_BIND:-127.0.0.1}:80:80"
     volumes:
       - ./examples/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -88,5 +88,5 @@ networks:
   edge: {}
 
 volumes:
-  studio-data: {}
+  workbench-data: {}
   caddy-data: {}

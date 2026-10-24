@@ -1,15 +1,15 @@
-# Web UI notes (`h2s-web`, `tools/h2s-mock-api`)
+# Web UI notes (`h2w-web`, `tools/h2w-mock-api`)
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `crates/h2s-web/src/logic/` | Pure logic, unit-tested natively (`cargo test -p h2s-web`): formatting and RFC 3339 times, mirrors of the server's name rules, URL builders, diff-line classification, trajectory segmentation, the job view-model and live-event application, the ordered log buffer, the run wizard model and presets, the profile form, report and sign-test readings, task timelines, the glossary, the palette matcher, theme handling. |
-| `crates/h2s-web/src/api.rs` | Same-origin `fetch`; `x-h2s-request: 1` on every unsafe method; non-2xx becomes `ApiError` from `ErrorBody`; a 401 sends the user to `/login?next=…`. |
-| `crates/h2s-web/src/browser.rs` | Storage, clipboard, downloads, focus and a `setTimeout` future. Every throwing browser call goes through its `Result` binding. |
-| `crates/h2s-web/src/state.rs` | Root contexts: session, toasts, dialogs/palette/theme, a coarse clock. |
-| `crates/h2s-web/src/components/` | Shell, primitives, forms, portal-rendered modals, toasts, palette and shortcuts, SVG charts, domain widgets. |
-| `crates/h2s-web/src/pages/` | One module per route of ARCHITECTURE.md §12. |
+| `crates/h2w-web/src/logic/` | Pure logic, unit-tested natively (`cargo test -p h2w-web`): formatting and RFC 3339 times, mirrors of the server's name rules, URL builders, diff-line classification, trajectory segmentation, the job view-model and live-event application, the ordered log buffer, the run wizard model and presets, the profile form, report and sign-test readings, task timelines, the glossary, the palette matcher, theme handling. |
+| `crates/h2w-web/src/api.rs` | Same-origin `fetch`; `x-h2w-request: 1` on every unsafe method; non-2xx becomes `ApiError` from `ErrorBody`; a 401 sends the user to `/login?next=…`. |
+| `crates/h2w-web/src/browser.rs` | Storage, clipboard, downloads, focus and a `setTimeout` future. Every throwing browser call goes through its `Result` binding. |
+| `crates/h2w-web/src/state.rs` | Root contexts: session, toasts, dialogs/palette/theme, a coarse clock. |
+| `crates/h2w-web/src/components/` | Shell, primitives, forms, portal-rendered modals, toasts, palette and shortcuts, SVG charts, domain widgets. |
+| `crates/h2w-web/src/pages/` | One module per route of ARCHITECTURE.md §12. |
 | `web/` | `index.html`, `app.js`, `styles.css` (design tokens, light and dark), `favicon.svg`. |
 
 `#[allow(unreachable_pub, clippy::needless_pass_by_value)]` is set on the view modules only
@@ -20,11 +20,11 @@ props are owned by design. Both lints stay on everywhere else.
 
 ```sh
 cargo xtask web --dev          # or without --dev for the release-web profile
-cargo run -p h2s-mock-api -- --port 8790 --dist dist/web
+cargo run -p h2w-mock-api -- --port 8790 --dist dist/web
 ```
 
-Sign in with any token that starts with `h2s_dev_` (`h2s_dev_viewer…` and
-`h2s_dev_operator…` give those roles, anything else is an admin). Mock flags:
+Sign in with any token that starts with `h2w_dev_` (`h2w_dev_viewer…` and
+`h2w_dev_operator…` give those roles, anything else is an admin). Mock flags:
 
 | Flag | Effect |
 |---|---|
@@ -37,7 +37,7 @@ Sign in with any token that starts with `h2s_dev_` (`h2s_dev_viewer…` and
 The mock sends the exact CSP and security headers of §9, enforces the CSRF header, the
 `Origin` check, loopback `Host` names and roles, streams job events over real SSE
 (snapshot first, `id:` on log events, heartbeats and keep-alive comments), and serves
-`dist/web` with the SPA fallback. All fixtures are fictional and built from `h2s_api` types.
+`dist/web` with the SPA fallback. All fixtures are fictional and built from `h2w_api` types.
 
 ## Contract assumptions the UI relies on
 
@@ -99,4 +99,4 @@ hook needs the cell. Clicking anywhere in the row still opens it for mouse users
 - Glossary tooltips open on hover and focus; on touch screens the term links to Help.
 - There are no browser (`wasm-bindgen-test`) tests; behaviour that needs a browser was
   checked with scripted headless Firefox runs against the mock and against a real
-  `h2studio` after the real harness2 demo (plus the `h2s-e2e` browser suite).
+  `h2workbench` after the real harness2 demo (plus the `h2w-e2e` browser suite).

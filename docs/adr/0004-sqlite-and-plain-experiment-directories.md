@@ -1,7 +1,7 @@
 # ADR 0004: SQLite for state, files for logs, plain harness2 directories for experiments
 
 - **Status:** Accepted. Part of the v1.0 contract ([ARCHITECTURE.md](../ARCHITECTURE.md) §2, §7, §10).
-- **Applies to:** `h2s-daemon` (`db/`, `jobs/logs.rs`, `expdirs.rs`), `h2s-core` (`results`).
+- **Applies to:** `h2w-daemon` (`db/`, `jobs/logs.rs`, `expdirs.rs`), `h2w-core` (`results`).
 
 ## Context
 
@@ -33,7 +33,7 @@ Good:
 
 - **Zero operations.** No database server to install, secure, upgrade or back up separately; one
   portable file plus directories. Online backup is the SQLite backup API.
-- harness2's own tools keep working on the same directories; the Studio can be removed without
+- harness2's own tools keep working on the same directories; the Workbench can be removed without
   converting data, and its database rebuilt for existing experiments by adopting them.
 - Logs do not bloat or lock the database.
 
@@ -42,7 +42,7 @@ Bad, and how it is managed:
 - **Single node, no high availability, one writer.** Fine for an administration tool whose write rate
   is a few requests and log lines per second; not a fit for a multi-node scheduler (a stated non-goal).
 - **The database is the secret store, in plain text** ([THREAT-MODEL.md](../THREAT-MODEL.md)). File modes and an
-  environment-variable alternative (`H2S_SECRET_<NAME>`) are the only protection; backups inherit the
+  environment-variable alternative (`H2W_SECRET_<NAME>`) are the only protection; backups inherit the
   exposure.
 - **Metadata and results can disagree** if someone edits directories by hand: an experiment whose
   directory is missing answers `the directory of experiment X is missing`.
@@ -59,7 +59,7 @@ Bad, and how it is managed:
 
 ## Evidence in the repository
 
-`crates/h2s-daemon/src/db/mod.rs` (migrations, pragmas, modes), `db/audit.rs`, `jobs/logs.rs`,
+`crates/h2w-daemon/src/db/mod.rs` (migrations, pragmas, modes), `db/audit.rs`, `jobs/logs.rs`,
 `expdirs.rs`; tests `secrets.rs::state_files_and_directories_are_private`, `cli.rs`,
 `audit.rs`. A restored online backup of a live database was opened and verified for this
 documentation ([ADMIN-GUIDE.md](../ADMIN-GUIDE.md#12-data-backups-and-upgrades)).

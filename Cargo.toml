@@ -1,20 +1,20 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/h2s-api",
-    "crates/h2s-core",
-    "crates/h2s-daemon",
-    "crates/h2s-mcp",
-    "crates/h2s-web",
-    "crates/h2s-e2e",
-    "tools/h2s-mock-api",
+    "crates/h2w-api",
+    "crates/h2w-core",
+    "crates/h2w-daemon",
+    "crates/h2w-mcp",
+    "crates/h2w-web",
+    "crates/h2w-e2e",
+    "tools/h2w-mock-api",
     "xtask",
 ]
 default-members = [
-    "crates/h2s-api",
-    "crates/h2s-core",
-    "crates/h2s-daemon",
-    "crates/h2s-mcp",
+    "crates/h2w-api",
+    "crates/h2w-core",
+    "crates/h2w-daemon",
+    "crates/h2w-mcp",
 ]
 
 [workspace.package]
@@ -22,16 +22,16 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
 license = "Apache-2.0"
-repository = "https://github.com/willboyden/harness2-studio"
-homepage = "https://github.com/willboyden/harness2-studio"
-authors = ["Harness² Studio contributors"]
+repository = "https://github.com/willboyden/harness2-workbench"
+homepage = "https://github.com/willboyden/harness2-workbench"
+authors = ["Harness² Workbench contributors"]
 publish = false
 
 # Direct dependency versions follow the 14-day cooldown policy in docs/SUPPLY-CHAIN.md:
 # each is the newest stable release that had been public for at least 14 days when chosen.
 [workspace.dependencies]
-h2s-api = { path = "crates/h2s-api" }
-h2s-core = { path = "crates/h2s-core" }
+h2w-api = { path = "crates/h2w-api" }
+h2w-core = { path = "crates/h2w-core" }
 
 anyhow = "1.0.104"
 async-stream = "0.3.6"

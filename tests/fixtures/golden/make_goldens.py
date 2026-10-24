@@ -6,7 +6,7 @@
 Every expected value below comes from calling upstream harness2 (tree validation, report
 summarise/render, runmark fingerprint, namespace builder) or CPython (json.loads errors,
 sum, statistics.mean, round, repr, re) on the inputs listed here. The Rust port must
-reproduce each one byte for byte; see crates/h2s-core/tests/golden.rs.
+reproduce each one byte for byte; see crates/h2w-core/tests/golden.rs.
 """
 
 from __future__ import annotations

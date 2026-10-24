@@ -1267,7 +1267,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "h2s-api"
+name = "h2w-api"
 version = "0.1.0"
 dependencies = [
  "schemars",
@@ -1277,12 +1277,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "h2s-core"
+name = "h2w-core"
 version = "0.1.0"
 dependencies = [
  "cap-std",
  "flate2",
- "h2s-api",
+ "h2w-api",
  "hex",
  "proptest",
  "regex",
@@ -1298,7 +1298,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "h2s-daemon"
+name = "h2w-daemon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1312,8 +1312,8 @@ dependencies = [
  "directories",
  "futures",
  "getrandom 0.4.3",
- "h2s-api",
- "h2s-core",
+ "h2w-api",
+ "h2w-core",
  "hex",
  "http 1.5.0",
  "http-body-util",
@@ -1353,12 +1353,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "h2s-e2e"
+name = "h2w-e2e"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "fantoccini",
- "h2s-api",
+ "h2w-api",
  "reqwest",
  "rmcp",
  "serde",
@@ -1369,13 +1369,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "h2s-mcp"
+name = "h2w-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
  "clap",
- "h2s-api",
+ "h2w-api",
  "http 1.5.0",
  "reqwest",
  "rmcp",
@@ -1394,13 +1394,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "h2s-mock-api"
+name = "h2w-mock-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
  "clap",
- "h2s-api",
+ "h2w-api",
  "mime_guess",
  "serde",
  "serde_json",
@@ -1409,13 +1409,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "h2s-web"
+name = "h2w-web"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "gloo-net 0.7.0",
- "h2s-api",
- "h2s-core",
+ "h2w-api",
+ "h2w-core",
  "js-sys",
  "leptos",
  "leptos_router",

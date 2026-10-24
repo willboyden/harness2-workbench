@@ -41,15 +41,15 @@ jobs:
           want="v$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
           [ "$want" = "${GITHUB_REF_NAME}" ] || { echo "::error::tag ${GITHUB_REF_NAME} != workspace ${want}"; exit 1; }
       - run: cargo xtask web
-      - run: cargo build --release --locked -p h2s-daemon -p h2s-mcp
+      - run: cargo build --release --locked -p h2w-daemon -p h2w-mcp
       - name: Package
         env:
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          name="harness2-studio-${GITHUB_REF_NAME}-${TARGET}"
+          name="harness2-workbench-${GITHUB_REF_NAME}-${TARGET}"
           mkdir -p "pkg/${name}/bin"
-          cp target/release/h2studio target/release/h2studio-mcp "pkg/${name}/bin/"
+          cp target/release/h2workbench target/release/h2workbench-mcp "pkg/${name}/bin/"
           cp LICENSE NOTICE README.md CHANGELOG.md SECURITY.md "pkg/${name}/"
           cp -r docs deploy "pkg/${name}/"
           tar -C pkg -czf "${name}.tar.gz" "${name}"
@@ -61,11 +61,11 @@ jobs:
           mkdir -p sbom-out
           find crates -name 'sbom.json' -print0 | while IFS= read -r -d '' f; do
             crate=$(basename "$(dirname "$f")"); cp "$f" "sbom-out/${crate}.cdx.json"; done
-          tar -czf "harness2-studio-${GITHUB_REF_NAME}-sbom.tar.gz" -C sbom-out .
+          tar -czf "harness2-workbench-${GITHUB_REF_NAME}-sbom.tar.gz" -C sbom-out .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}
-          path: harness2-studio-*.tar.gz
+          path: harness2-workbench-*.tar.gz
           retention-days: 7
 
   publish:
@@ -83,10 +83,10 @@ jobs:
           pattern: release-*
           merge-multiple: true
           path: out
-      - run: cd out && sha256sum harness2-studio-*.tar.gz > SHA256SUMS && cat SHA256SUMS
+      - run: cd out && sha256sum harness2-workbench-*.tar.gz > SHA256SUMS && cat SHA256SUMS
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: out/harness2-studio-*.tar.gz
+          subject-path: out/harness2-workbench-*.tar.gz
       - name: Create the draft release (gh CLI, preinstalled on the runner)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -94,6 +94,6 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "${GITHUB_REF_NAME}" --draft --verify-tag \
-            --title "Harness² Studio ${GITHUB_REF_NAME}" \
+            --title "Harness² Workbench ${GITHUB_REF_NAME}" \
             --notes "See CHANGELOG.md. Verify downloads with SHA256SUMS and \`gh attestation verify\`." \
-            out/harness2-studio-*.tar.gz out/SHA256SUMS
+            out/harness2-workbench-*.tar.gz out/SHA256SUMS

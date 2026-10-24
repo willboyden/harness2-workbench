@@ -17,16 +17,16 @@ One Cargo workspace, one language, one set of types:
 
 | Crate | Role |
 |---|---|
-| `h2s-api` | the wire types and the contract constants; compiles for native and `wasm32-unknown-unknown`; data and pure helpers only (no I/O) |
-| `h2s-core` | domain logic: command lines, parsers, results reader, harness trees, estimates, redaction, container argv, doctor checks; no sockets, no processes |
-| `h2s-daemon` | the `h2studio` binary: HTTP server, authentication, job engine, SQLite, egress proxy, command line |
-| `h2s-web` | the UI: Leptos (client-side rendered), compiled to WebAssembly |
-| `h2s-mcp` | the `h2studio-mcp` binary, on the `rmcp` SDK |
+| `h2w-api` | the wire types and the contract constants; compiles for native and `wasm32-unknown-unknown`; data and pure helpers only (no I/O) |
+| `h2w-core` | domain logic: command lines, parsers, results reader, harness trees, estimates, redaction, container argv, doctor checks; no sockets, no processes |
+| `h2w-daemon` | the `h2workbench` binary: HTTP server, authentication, job engine, SQLite, egress proxy, command line |
+| `h2w-web` | the UI: Leptos (client-side rendered), compiled to WebAssembly |
+| `h2w-mcp` | the `h2workbench-mcp` binary, on the `rmcp` SDK |
 
-Around them: `h2s-e2e` (end-to-end suites against real binaries), `tools/h2s-mock-api` (fixture API
+Around them: `h2w-e2e` (end-to-end suites against real binaries), `tools/h2w-mock-api` (fixture API
 for UI work), `xtask` (build orchestration and gates). The toolchain is pinned in
 `rust-toolchain.toml`; `unsafe` is forbidden workspace-wide; `unwrap()` is denied outside tests.
-Wire types live in `h2s-api` and are the contract: changes after the first release are additive.
+Wire types live in `h2w-api` and are the contract: changes after the first release are additive.
 The server generates its OpenAPI 3.1 document from the same structs.
 
 ## Consequences

@@ -1,15 +1,15 @@
 # Build output
 /target/
 /dist/
-/crates/h2s-web/pkg/
+/crates/h2w-web/pkg/
 /web/pkg/
 
-# Local state: never commit a studio data dir, database, logs or secrets
+# Local state: never commit a workbench data dir, database, logs or secrets
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
-/.h2s/
+/.h2w/
 /data/
 secrets.toml
 *.token

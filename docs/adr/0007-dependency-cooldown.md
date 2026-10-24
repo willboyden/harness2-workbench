@@ -5,7 +5,7 @@
 
 ## Context
 
-The Studio holds model-provider credentials and starts processes, so a malicious dependency release
+The Workbench holds model-provider credentials and starts processes, so a malicious dependency release
 is a direct route to those credentials. A release that was published minutes ago has had no time for
 anyone to notice a compromise ([SUPPLY-CHAIN.md](../SUPPLY-CHAIN.md)); a project that adopts new
 releases the moment they appear takes all of that exposure, and one that waits does not. A pure
@@ -42,7 +42,7 @@ Bad, and how it is managed:
   advisories that newer releases had fixed; those four are the current exceptions, each with an expiry.
 - **It does not protect against a compromise that has already aged**, nor against a malicious version
   nobody has noticed in 14 days. It narrows one window; it is not a review.
-- **Its scope is the Studio's own build.** It covers the Rust crates, CI actions, container base
+- **Its scope is the Workbench's own build.** It covers the Rust crates, CI actions, container base
   images and Dependabot updates. It does **not** cover harness2's Python dependencies: harness2 has no
   lock file, so the install job resolves them with `uv pip install -e --exclude-newer <the tested
   commit's date>`, which fixes the versions to what existed then but is a different control (a date,

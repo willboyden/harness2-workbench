@@ -995,12 +995,12 @@ mod tests {
             ("The REST API", "the-rest-api"),
             ("16. Contract addenda", "16-contract-addenda"),
             (
-                "Harness² Studio — Architecture and Build Contract",
-                "harness-studio--architecture-and-build-contract",
+                "Harness² Workbench — Architecture and Build Contract",
+                "harness-workbench--architecture-and-build-contract",
             ),
             (
-                "`h2studio init` and the first token",
-                "h2studio-init-and-the-first-token",
+                "`h2workbench init` and the first token",
+                "h2workbench-init-and-the-first-token",
             ),
             ("What's new?", "whats-new"),
             ("snake_case stays", "snake_case-stays"),
