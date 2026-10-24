@@ -52,6 +52,10 @@ struct Args {
     /// Answer the job event stream with 503, to exercise the UI's polling fallback.
     #[arg(long)]
     sse_off: bool,
+    /// Pretend the server pre-acknowledges host-isolation risks
+    /// (`isolation.preacknowledge_host_risks`): runs need no acknowledgement.
+    #[arg(long)]
+    preack: bool,
 }
 
 #[tokio::main]
@@ -65,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
     if args.container {
         inner.isolation = h2s_api::Isolation::Container;
     }
+    inner.host_risks_preacknowledged = args.preack;
     let st = api::AppState {
         s: Arc::new(Mutex::new(inner)),
         dist: args.dist.clone(),

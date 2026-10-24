@@ -10,6 +10,7 @@ use crate::api::ApiError;
 use crate::browser;
 use crate::logic::jobs::Tone;
 use crate::logic::theme::{self, Theme};
+use crate::logic::wizard::HostRisk;
 
 /// Who is signed in, and what the server is.
 #[derive(Clone, Copy)]
@@ -32,11 +33,14 @@ impl Session {
         self.principal.with(|p| p.as_ref().map(|p| p.role))
     }
 
-    /// Reactive: jobs run on the host (no container isolation), so runs need acknowledgement.
-    pub(crate) fn host_isolation(&self) -> bool {
-        self.system.with(|s| {
-            s.as_ref()
-                .is_none_or(|s| s.isolation == h2s_api::Isolation::Host)
+    /// Reactive: what a run asks about host isolation (an unknown server asks).
+    pub(crate) fn host_risk(&self) -> HostRisk {
+        self.system.with(|s| match s {
+            None => HostRisk::AskUser,
+            Some(s) => HostRisk::from_system(
+                s.isolation == h2s_api::Isolation::Host,
+                s.host_risks_preacknowledged,
+            ),
         })
     }
 }

@@ -126,9 +126,16 @@ pub(crate) fn System() -> impl IntoView {
                             </dl>
                             {(i.isolation == Isolation::Host)
                                 .then(|| {
+                                    let ack = if i.host_risks_preacknowledged {
+                                        "An administrator pre-acknowledged these risks for everyone (isolation.preacknowledge_host_risks), so runs do not ask."
+                                    } else {
+                                        "Starting a run asks for an explicit acknowledgement."
+                                    };
                                     view! {
                                         <p class="small muted">
-                                            "Jobs run directly on this host as the server's user, as upstream does, so an executor can also read and change the Studio's own data (it is effectively an administrator). Starting a run asks for an explicit acknowledgement. Container isolation, set in h2studio.toml, is the boundary."
+                                            "Jobs run directly on this host as the server's user, as upstream does, so an executor can also read and change the Studio's own data (it is effectively an administrator). "
+                                            {ack}
+                                            " Container isolation, set in h2studio.toml, is the boundary."
                                         </p>
                                     }
                                 })}
