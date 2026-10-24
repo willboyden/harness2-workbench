@@ -191,7 +191,9 @@ environment variable `auth.proxy.secret_env` when the server starts.
 
 ## Egress proxy
 
-As §9, with: subdomain-only wildcards (`*.example.com` does not match `example.com`); a host that
+As §9, with: `egress.listen` defaults to `127.0.0.1:3128` (also in the file `init` writes): the
+proxy has no client access list, so listening beyond loopback (`0.0.0.0:3128` on a jobs network,
+as in the compose example) must be configured explicitly; subdomain-only wildcards (`*.example.com` does not match `example.com`); a host that
 resolves to any refused address is refused as a whole; unspecified, multicast, broadcast,
 documentation, benchmarking and other reserved addresses are refused even with `allow_private`;
 IPv4-mapped, NAT64 and 6to4 IPv6 addresses are judged by their IPv4 address; refusals answer

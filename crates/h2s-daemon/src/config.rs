@@ -307,7 +307,9 @@ pub struct EgressSection {
 impl Default for EgressSection {
     fn default() -> Self {
         EgressSection {
-            listen: "0.0.0.0:3128".to_owned(),
+            // Loopback by default: the proxy has no client ACL, so listening on every
+            // interface must be an explicit choice (a deployment's jobs network).
+            listen: "127.0.0.1:3128".to_owned(),
             allow: Vec::new(),
         }
     }
@@ -1610,6 +1612,18 @@ mode = "proxy"
         let text = render_initial(Path::new("/srv/h2s")).unwrap();
         let c = cfg_from(&text).unwrap();
         assert_eq!(c.paths.data_dir, PathBuf::from("/srv/h2s"));
+        assert_eq!(c.egress_listen.to_string(), "127.0.0.1:3128");
+    }
+
+    #[test]
+    fn the_egress_proxy_listens_on_loopback_by_default() {
+        assert_eq!(FileConfig::default().egress.listen, "127.0.0.1:3128");
+        let c = cfg_from("").unwrap();
+        assert!(c.egress_listen.ip().is_loopback());
+        let text = render_initial(Path::new("/srv/h2s")).unwrap();
+        let egress = text.split("[egress]").nth(1).unwrap();
+        assert!(egress.contains("listen = \"127.0.0.1:3128\""), "{text}");
+        assert!(!text.contains("0.0.0.0"), "{text}");
     }
 
     proptest! {
