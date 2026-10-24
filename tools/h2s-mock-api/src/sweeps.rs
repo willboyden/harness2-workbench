@@ -603,8 +603,36 @@ fn judged_frac(spec: &SweepSpec, task: &TaskSpec, mode: Mode) -> Option<(u32, u3
     Some((passed, n))
 }
 
+/// JobBench's weighted judging writes fractional points (addendum v1.2): `n_passed` and
+/// `n_criteria` stay empty and only the raw points are set. One fixed row shows it: the first
+/// JobBench task in parallel mode scores 7.5 of 10 points.
+fn weighted_points(spec: &SweepSpec, task: &TaskSpec, mode: Mode) -> bool {
+    spec.bench_name == "jb"
+        && mode == Mode::Parallel
+        && spec.tasks.first().is_some_and(|t| t.id == task.id)
+}
+
 fn row_for(spec: &SweepSpec, task: &TaskSpec, mode: Mode) -> JudgedRow {
     let (label, is_base) = chosen(spec, task, mode);
+    if weighted_points(spec, task, mode) {
+        return JudgedRow {
+            task_id: task.id.clone(),
+            mode,
+            k: spec.k,
+            run_id: format!("{}-{}", spec.namespace(mode), task.slug()),
+            label,
+            chosen_is_base: is_base,
+            n_passed: None,
+            n_criteria: None,
+            all_pass: false,
+            frac: Some(0.75),
+            graded: true,
+            error: String::new(),
+            metric: Some("points".to_owned()),
+            points_passed: Some(7.5),
+            points_max: Some(10.0),
+        };
+    }
     let judged = judged_frac(spec, task, mode);
     JudgedRow {
         task_id: task.id.clone(),
@@ -1303,6 +1331,24 @@ mod tests {
             updated_at: "2026-10-20T10:00:00Z".into(),
             models: ("solver".into(), "improver".into()),
         }
+    }
+
+    #[test]
+    fn jobbench_weighted_points_row() {
+        let mut s = spec(2);
+        s.bench_name = "jb".into();
+        let row = row_for(&s, &s.tasks[0], Mode::Parallel);
+        assert_eq!((row.n_passed, row.n_criteria), (None, None));
+        assert_eq!((row.points_passed, row.points_max), (Some(7.5), Some(10.0)));
+        assert_eq!(row.frac, Some(0.75));
+        assert!(row.graded && !row.all_pass);
+        // Every other row keeps integer counts with matching points.
+        let other = row_for(&s, &s.tasks[0], Mode::Sequential);
+        if other.graded {
+            assert_eq!(other.points_passed, other.n_passed.map(f64::from));
+        }
+        let lab = row_for(&spec(2), &spec(2).tasks[0], Mode::Parallel);
+        assert!(lab.n_passed.is_some() || !lab.graded);
     }
 
     #[test]

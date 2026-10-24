@@ -22,6 +22,7 @@ use crate::logic::harness::{
     self, BudgetLevel, budget, default_diff_pair, group_files, harness_labels, rollout_labels,
 };
 use crate::logic::jobs::Tone;
+use crate::logic::report::judge_count;
 use crate::logic::tasks::{dim_label, ledger_problems, phases, selection_summary, stage_outcome};
 use crate::logic::trajectory::{self, TrajKind};
 use crate::logic::urls::{api as paths, route};
@@ -273,14 +274,12 @@ fn Timeline(detail: TaskDetail, record: ModeRecord) -> impl IntoView {
                             .iter()
                             .map(|r| {
                                 if r.graded {
-                                    format!(
-                                        "{} scored {}/{} criteria ({}){}",
-                                        r.label,
-                                        r.n_passed.unwrap_or(0),
-                                        r.n_criteria.unwrap_or(0),
-                                        r.frac.map_or_else(|| format::DASH.to_owned(), format::frac_pct),
-                                        if r.all_pass { ", all pass" } else { "" }
-                                    )
+                                    let pct = r.frac.map_or_else(|| format::DASH.to_owned(), format::frac_pct);
+                                    let what = match judge_count(r.n_passed, r.n_criteria, r.points_passed, r.points_max, r.metric.as_deref()) {
+                                        Some(count) => format!("{count} ({pct})"),
+                                        None => pct,
+                                    };
+                                    format!("{} scored {what}{}", r.label, if r.all_pass { ", all pass" } else { "" })
                                 } else {
                                     format!("{} ungraded: {}", r.label, r.error)
                                 }

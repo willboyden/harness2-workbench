@@ -34,6 +34,25 @@ pub(crate) fn int(n: u64) -> String {
     group_digits(&n.to_string())
 }
 
+/// A decimal with at most two places and no trailing zeros: `7.5`, `10`, `0.25`, `1,234.5`.
+pub(crate) fn num(v: f64) -> String {
+    if !v.is_finite() {
+        return DASH.to_owned();
+    }
+    let hundredths = to_u64(v.abs() * 100.0);
+    if hundredths == 0 {
+        return "0".to_owned();
+    }
+    let sign = if v < 0.0 { "-" } else { "" };
+    let (whole, frac) = (hundredths / 100, hundredths % 100);
+    let frac = match frac {
+        0 => String::new(),
+        f if f % 10 == 0 => format!(".{}", f / 10),
+        f => format!(".{f:02}"),
+    };
+    format!("{sign}{}{frac}", int(whole))
+}
+
 /// US dollars as harness2 records them: `$1,234.50`; tiny non-zero amounts read `<$0.01`.
 pub(crate) fn usd(v: f64) -> String {
     if !v.is_finite() {
@@ -309,6 +328,15 @@ mod tests {
         assert_eq!(bytes(12 * 1024 * 1024), "12.0 MiB");
         assert_eq!(plural(1, "task", "tasks"), "1 task");
         assert_eq!(plural(1200, "task", "tasks"), "1,200 tasks");
+        assert_eq!(num(7.5), "7.5");
+        assert_eq!(num(10.0), "10");
+        assert_eq!(num(0.25), "0.25");
+        assert_eq!(num(7.125), "7.13");
+        assert_eq!(num(2.999), "3");
+        assert_eq!(num(0.004), "0");
+        assert_eq!(num(-1.5), "-1.5");
+        assert_eq!(num(1234.5), "1,234.5");
+        assert_eq!(num(f64::NAN), DASH);
     }
 
     #[test]

@@ -4,6 +4,32 @@ use h2s_api::{Comparison, ModeSummary, TaskDelta};
 
 use super::format;
 
+/// What a judge row counted: `9 / 12 criteria` from the integer counts or, when the judge
+/// wrote fractional points (JobBench's weighted judging leaves `n_passed` empty; addendum
+/// v1.2), `7.5 / 10 points` from the raw points. `None` when neither is known.
+pub(crate) fn judge_count(
+    n_passed: Option<u32>,
+    n_criteria: Option<u32>,
+    points_passed: Option<f64>,
+    points_max: Option<f64>,
+    metric: Option<&str>,
+) -> Option<String> {
+    let unit = if metric == Some("points") {
+        "points"
+    } else {
+        "criteria"
+    };
+    match (n_passed, n_criteria, points_passed, points_max) {
+        (Some(p), Some(n), _, _) => Some(format!(
+            "{} / {} {unit}",
+            format::int(u64::from(p)),
+            format::int(u64::from(n))
+        )),
+        (_, _, Some(p), Some(m)) => Some(format!("{} / {} points", format::num(p), format::num(m))),
+        _ => None,
+    }
+}
+
 /// How an upstream report note should be shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NoteLevel {
@@ -150,6 +176,29 @@ mod tests {
             ties,
             sign_test_p: p,
         }
+    }
+
+    #[test]
+    fn judge_counts() {
+        assert_eq!(
+            judge_count(Some(9), Some(12), Some(9.0), Some(12.0), Some("criteria")).as_deref(),
+            Some("9 / 12 criteria")
+        );
+        assert_eq!(
+            judge_count(Some(7), Some(10), None, None, Some("points")).as_deref(),
+            Some("7 / 10 points")
+        );
+        // JobBench's weighted judging: fractional points, no integer counts.
+        assert_eq!(
+            judge_count(None, None, Some(7.5), Some(10.0), Some("points")).as_deref(),
+            Some("7.5 / 10 points")
+        );
+        assert_eq!(
+            judge_count(None, None, Some(6.333), Some(12.0), None).as_deref(),
+            Some("6.33 / 12 points")
+        );
+        assert_eq!(judge_count(None, None, Some(7.5), None, None), None);
+        assert_eq!(judge_count(None, None, None, None, None), None);
     }
 
     #[test]
