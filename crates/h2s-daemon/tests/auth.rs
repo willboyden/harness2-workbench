@@ -374,6 +374,45 @@ async fn login_attempts_are_rate_limited_per_client() {
     t.stop().await;
 }
 
+/// A token-length string whose multi-byte character straddles the id/secret split once
+/// panicked the login handler (the connection was dropped instead of answered).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn non_ascii_tokens_are_refused_with_401() {
+    let t = TestServer::start().await;
+    let tokens = [
+        format!("h2s_abcdefgé{}", "A".repeat(43)),
+        format!("h2s_{}", "é".repeat(26)),
+        format!("h2s_abcdefg😀{}", "B".repeat(41)),
+    ];
+    for token in &tokens {
+        let r = t
+            .post("/api/v1/auth/login", None)
+            .json(&json!({ "token": token }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401, "{token}");
+        assert_eq!(
+            r.json::<ErrorBody>().await.unwrap().error.code,
+            ErrorCode::Unauthorized
+        );
+        // The same bytes as a bearer token (obs-text in the header) are refused too.
+        let header =
+            reqwest::header::HeaderValue::from_bytes(format!("Bearer {token}").as_bytes()).unwrap();
+        let r = t
+            .client
+            .get(t.url("/api/v1/auth/me"))
+            .header("authorization", header)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401, "{token}");
+    }
+    // The server is still serving.
+    assert_eq!(me(&t, &t.admin).await.status(), 200);
+    t.stop().await;
+}
+
 const PROXY_SECRET: &str = "proxy-shared-secret-0123456789";
 
 fn proxy_setup(s: &mut Setup, trusted: &str) {

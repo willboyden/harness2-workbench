@@ -87,6 +87,8 @@ environment variable `auth.proxy.secret_env` when the server starts.
 
 - Order: `Authorization: Bearer` (a malformed header is 401, never a fall-through), then the
   `h2s_session` cookie, then (proxy mode) the proxy headers. Tokens keep working in proxy mode.
+- A presented token must be exactly `h2s_` + 8 of `[a-z0-9]` + `_` + 43 of `[A-Za-z0-9_-]`;
+  anything else, including any non-ASCII character, is malformed (401), at login and as a bearer.
 - Sessions last `auth.session_ttl_hours` and never outlive their token; revoking a token ends its
   sessions; logout deletes the session and clears the cookie (`Max-Age=0`).
 - Login is rate-limited per client address (IPv6 per /64): `server.login_attempts_per_minute`

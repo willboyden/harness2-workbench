@@ -89,8 +89,14 @@ fn is_b64url(s: &str) -> bool {
 }
 
 /// Split `h2s_<id>_<secret>`; `None` unless every part has the exact shape.
+///
+/// Any non-ASCII input is refused before the string is split at byte offsets, so a
+/// multi-byte character straddling a boundary cannot panic (`str::split_at`).
 #[must_use]
 pub fn parse(token: &str) -> Option<ParsedToken<'_>> {
+    if !token.is_ascii() {
+        return None;
+    }
     let rest = token.strip_prefix(h2s_api::TOKEN_PREFIX)?;
     if rest.len() != TOKEN_ID_LEN + 1 + SECRET_LEN {
         return None;
@@ -188,6 +194,16 @@ mod tests {
     }
 
     #[test]
+    fn a_multibyte_character_at_the_id_boundary_is_refused() {
+        // "é" (2 bytes) starts at byte 7 of the 52-byte rest, so byte 8 is inside it.
+        let t = format!("h2s_abcdefgé{}", "A".repeat(SECRET_LEN));
+        assert_eq!(t.len(), 4 + TOKEN_ID_LEN + 1 + SECRET_LEN);
+        assert!(!t.is_char_boundary(4 + TOKEN_ID_LEN));
+        assert!(parse(&t).is_none());
+        assert!(token_id_hint(&t).is_none());
+    }
+
+    #[test]
     fn session_ids() {
         let (id, hash) = new_session().unwrap();
         assert_eq!(session_hash(&id), Some(hash));
@@ -208,6 +224,30 @@ mod tests {
         fn parse_never_panics(s in ".{0,80}") {
             let _ = parse(&s);
             let _ = session_hash(&s);
+        }
+
+        /// Token-shaped strings (prefix + exactly the right byte length) with arbitrary
+        /// Unicode, including multi-byte characters across the id/secret boundary.
+        #[test]
+        fn parse_never_panics_on_token_sized_unicode(
+            head in "[a-z0-9]{0,8}",
+            middle in proptest::char::any(),
+            tail in "\\PC{0,52}",
+        ) {
+            let mut rest: String = format!("{head}{middle}{tail}");
+            while rest.len() > TOKEN_ID_LEN + 1 + SECRET_LEN {
+                rest.pop();
+            }
+            while rest.len() < TOKEN_ID_LEN + 1 + SECRET_LEN {
+                rest.push('a');
+            }
+            let t = format!("h2s_{rest}");
+            prop_assert_eq!(t.len(), 4 + TOKEN_ID_LEN + 1 + SECRET_LEN);
+            let p = parse(&t);
+            if !t.is_ascii() {
+                prop_assert!(p.is_none());
+            }
+            let _ = token_id_hint(&t);
         }
 
         #[test]
