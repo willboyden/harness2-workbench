@@ -17,7 +17,9 @@ missing tool **fails** the suite with an explanation; nothing is skipped silentl
   ```bash
   git clone https://github.com/google-research/harness2 ~/harness2 && cd ~/harness2
   git checkout 1cfe254e8d25b15f37048c3730134686abe60335   # the tested commit
-  uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e '.[render]'
+  uv venv --python 3.12 .venv
+  # The same dependency versions the Studio installs (h2s_core::install::TESTED_HARNESS2_DEPS_CUTOFF):
+  uv pip install --python .venv/bin/python --exclude-newer 2026-10-14T02:22:49Z -e '.[render]'
   ```
 - Firefox and geckodriver on `PATH` (or `GECKODRIVER=/path/to/geckodriver`; optional
   `FIREFOX_BIN`). The browser runs headless with a throwaway profile.

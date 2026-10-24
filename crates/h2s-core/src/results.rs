@@ -20,17 +20,85 @@ use h2s_api::{
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::lite::{self, BaseLite, JudgedLite, Loose, MetaLite, RecordLite, SummaryLite};
 use crate::namespace::{self, Namespace};
-use crate::safefs::{self, EntryKind, MAX_JSON_BYTES, MAX_TEXT_BYTES};
+use crate::safefs::{self, EntryKind};
 use crate::{CoreError, Result, names, pyfmt, report, tree};
 
 /// Default cap for [`ExperimentDir::rollout_file`] and audit text reads.
 pub const DEFAULT_READ_CAP: u64 = 2 * 1024 * 1024;
 
+// Memory bounds. harness2's files can be rewritten by the jobs that produce them, so every
+// read below has a size cap, and every view that reads many files has a count cap and a
+// total. Past a cap a view fails with `CoreError::TooLarge`, except where a single file is
+// only flagged (an oversized summary) or only a display hint (a sweep record).
+
 /// Most entries walked by [`ExperimentDir::size_bytes`].
 const MAX_SIZE_ENTRIES: usize = 5_000_000;
 /// Largest task prompt read for [`TaskDetail::task_prompt`].
 const MAX_PROMPT_BYTES: u64 = 256 * 1024;
+/// Largest `summary.json` read. Real ones are tens of KiB; a larger one is listed with
+/// status `too-large` and never parsed, and its task detail is refused.
+pub(crate) const MAX_SUMMARY_BYTES: u64 = 4 * 1024 * 1024;
+/// Most task directories in one sweep.
+pub(crate) const MAX_SWEEP_TASKS: usize = 10_000;
+/// Most `summary.json` bytes one multi-task view reads in total.
+pub(crate) const MAX_SWEEP_SUMMARY_BYTES: u64 = 256 * 1024 * 1024;
+/// Largest `judged.json` / `base_judged.json`.
+pub(crate) const MAX_JUDGED_BYTES: u64 = 32 * 1024 * 1024;
+/// Most rows kept from one judged file.
+pub(crate) const MAX_JUDGED_ROWS: usize = 100_000;
+/// Largest sweep record or `demo.json` read for the stream order (a larger one is ignored:
+/// tasks are then listed by id).
+const MAX_RECORD_BYTES: u64 = 4 * 1024 * 1024;
+/// Largest `config.json` read for a sweep identity.
+const MAX_CONFIG_BYTES: u64 = 256 * 1024;
+/// Most `config.json` bytes one manifest reads in total.
+const MAX_IDENTITY_BYTES: u64 = 16 * 1024 * 1024;
+/// Bytes of a library `INDEX.md` read for its title (the first line).
+const MAX_INDEX_HEAD: u64 = 4096;
+/// Largest `EXPERIENCE.md` parsed; a larger one is listed without its details.
+pub(crate) const MAX_EXPERIENCE_BYTES: u64 = 256 * 1024;
+/// Most `EXPERIENCE.md` bytes one library view reads in total.
+pub(crate) const MAX_LIBRARY_BYTES: u64 = 32 * 1024 * 1024;
+/// Largest audit `.meta.json`; a larger one reads as empty.
+const MAX_META_BYTES: u64 = 64 * 1024;
+/// Most `.meta.json` bytes one audit view reads in total.
+const MAX_AUDIT_META_BYTES: u64 = 32 * 1024 * 1024;
+/// Most audit sessions listed for one sweep.
+pub(crate) const MAX_AUDIT_SESSIONS: usize = 50_000;
+/// Most entries listed from one rollout directory.
+pub(crate) const MAX_ROLLOUT_ENTRIES: usize = 20_000;
+
+/// Bytes read so far by one view, refused past `limit`.
+struct Budget {
+    used: u64,
+    limit: u64,
+    what: &'static str,
+}
+
+impl Budget {
+    fn new(limit: u64, what: &'static str) -> Self {
+        Budget {
+            used: 0,
+            limit,
+            what,
+        }
+    }
+
+    fn take(&mut self, n: usize) -> Result<()> {
+        self.used = self
+            .used
+            .saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+        if self.used > self.limit {
+            return Err(CoreError::TooLarge(format!(
+                "{} total more than {} bytes",
+                self.what, self.limit
+            )));
+        }
+        Ok(())
+    }
+}
 
 /// An open experiment directory.
 pub struct ExperimentDir {
@@ -162,20 +230,6 @@ fn modes_present(record: &Value) -> Vec<Mode> {
     modes
 }
 
-/// Upstream `_spend_and_fallbacks` for one summary and mode: `(fell_back, stage spend,
-/// selection spend)`.
-fn mode_spend(record: &Value, mode: Mode) -> (u32, f64, f64) {
-    let rec = mode_rec(record, mode);
-    let fell_back = usize_u32(list(field(rec, "fell_back")).len());
-    let spend = pyfmt::sum(
-        list(field(rec, "stages"))
-            .iter()
-            .map(|s| number(field(s, "usd"))),
-    );
-    let sel = number(field(selection_rec(record, mode), "usd"));
-    (fell_back, spend, sel)
-}
-
 /// `library.has_experience`.
 fn experience(v: &Value) -> Option<Experience> {
     let ok = ["cue", "lesson", "evidence"]
@@ -280,54 +334,38 @@ fn role_of(label: &str) -> HarnessRole {
     }
 }
 
-/// Judge points exactly as harness2 wrote them. JobBench's weighted judging writes floats
-/// (`total_score`/`max_score`), which the `u32` wire fields cannot hold; the rows carry these
-/// raw values as `points_passed`/`points_max`.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-struct Points {
-    passed: Option<f64>,
-    max: Option<f64>,
-}
-
-fn points(v: &Value) -> Points {
-    Points {
-        passed: v.get("n_passed").and_then(Value::as_f64),
-        max: v.get("n_criteria").and_then(Value::as_f64),
-    }
-}
-
 /// A judged row as `core.judge._load_rows` rebuilds it: `graded` and `frac` are recomputed
-/// from `n_passed`/`n_criteria` (weighted JobBench scores are floats).
-fn judged_row(v: &Value) -> Option<JudgedRow> {
-    let mode_v = v.get("mode").or_else(|| v.get("arm"))?;
-    let mode = Mode::from_token(mode_v.as_str()?)?;
-    let Points {
-        passed,
-        max: criteria,
-    } = points(v);
+/// from `n_passed`/`n_criteria`. JobBench's weighted judging writes float points, which the
+/// `u32` wire fields cannot hold; the rows carry the raw values as `points_passed` /
+/// `points_max`.
+fn judged_row(l: JudgedLite) -> Option<JudgedRow> {
+    let mode = Mode::from_token(l.mode.as_ref().or(l.arm.as_ref())?.as_str()?)?;
+    let passed = l.n_passed.as_f64();
+    let criteria = l.n_criteria.as_f64();
     let graded = criteria.is_some_and(|c| c > 0.0) && passed.is_some();
     let frac = match (graded, passed, criteria) {
         (true, Some(p), Some(c)) => Some(p / c),
         _ => None,
     };
-    let metric = match field(field(v, "raw"), "metric") {
-        Value::Null | Value::Bool(false) => None,
-        Value::String(s) if s.is_empty() => None,
-        other => Some(text(other)),
-    };
+    let metric = match &l.raw.0.metric {
+        Loose::Str(s) => Some(s.clone()),
+        m @ (Loose::Num(_) | Loose::Bool(true)) => Some(m.text()),
+        _ => None,
+    }
+    .filter(|m| !m.is_empty());
     Some(JudgedRow {
-        task_id: text(field(v, "task_id")),
+        task_id: l.task_id.into_text(),
         mode,
-        k: count(field(v, "k")),
-        label: text(field(v, "label")),
-        run_id: text(field(v, "run_id")),
-        chosen_is_base: truthy(field(v, "chosen_is_base")),
+        k: l.k.count(),
+        label: l.label.into_text(),
+        run_id: l.run_id.into_text(),
+        chosen_is_base: l.chosen_is_base.truthy(),
         n_passed: passed.and_then(pyfmt::exact_u32),
         n_criteria: criteria.and_then(pyfmt::exact_u32),
-        all_pass: truthy(field(v, "all_pass")),
+        all_pass: l.all_pass.truthy(),
         frac,
         graded,
-        error: text(field(v, "error")),
+        error: l.error.0.into_text(),
         metric,
         points_passed: passed,
         points_max: criteria,
@@ -335,31 +373,56 @@ fn judged_row(v: &Value) -> Option<JudgedRow> {
 }
 
 /// A `base_judged.json` row (`{task, label, run_id, score}`), with the raw fraction.
-fn base_row(v: &Value) -> (BaseJudgedRow, Option<f64>) {
-    let score = field(v, "score");
-    let Points {
-        passed,
-        max: criteria,
-    } = points(score);
+fn base_row(l: BaseLite) -> (BaseJudgedRow, Option<f64>) {
+    let score = l.score.0;
+    let passed = score.n_passed.as_f64();
+    let criteria = score.n_criteria.as_f64();
     let frac = match (passed, criteria) {
         (Some(p), Some(c)) if c > 0.0 => Some(p / c),
         _ => None,
     };
     let row = BaseJudgedRow {
-        task_id: text(field(v, "task")),
-        label: text(field(v, "label")),
-        run_id: text(field(v, "run_id")),
+        task_id: l.task.into_text(),
+        label: l.label.into_text(),
+        run_id: l.run_id.into_text(),
         n_passed: passed.and_then(pyfmt::exact_u32),
         n_criteria: criteria.and_then(pyfmt::exact_u32),
-        all_pass: match score.get("all_pass") {
-            Some(Value::Bool(b)) => Some(*b),
-            Some(Value::Null) | None => None,
-            Some(other) => Some(truthy(other)),
+        all_pass: match score.all_pass {
+            Some(Loose::Null) | None => None,
+            Some(other) => Some(other.truthy()),
         },
         points_passed: passed,
         points_max: criteria,
     };
     (row, frac)
+}
+
+/// Rows of a judged file (empty when it does not exist), converted while they are read.
+/// More than [`MAX_JUDGED_ROWS`] rows, or a file over [`MAX_JUDGED_BYTES`], is
+/// [`CoreError::TooLarge`].
+fn read_rows<L, T>(
+    dir: &cap_std::fs::Dir,
+    rel: &str,
+    what: &str,
+    convert: impl FnMut(L) -> Option<T>,
+) -> Result<Vec<T>>
+where
+    L: for<'de> serde::Deserialize<'de>,
+{
+    let Some(bytes) = safefs::read_whole_opt(dir, rel, MAX_JUDGED_BYTES, what)? else {
+        return Ok(Vec::new());
+    };
+    let (rows, more) =
+        lite::rows(&bytes, MAX_JUDGED_ROWS, convert).map_err(|e| CoreError::Malformed {
+            what: what.to_owned(),
+            detail: e.to_string(),
+        })?;
+    if more {
+        return Err(CoreError::TooLarge(format!(
+            "{what} has more than {MAX_JUDGED_ROWS} rows"
+        )));
+    }
+    Ok(rows)
 }
 
 fn rfc3339(secs: i64) -> Option<String> {
@@ -437,7 +500,8 @@ fn label_sanitize(s: &str) -> String {
         .collect()
 }
 
-/// A parsed `summary.json` and the directory it came from.
+/// One task's whole `summary.json` (at most [`MAX_SUMMARY_BYTES`]) and the directory it
+/// came from, for the single-task views.
 struct TaskSummary {
     slug: String,
     raw: Value,
@@ -450,6 +514,32 @@ impl TaskSummary {
             _ => self.slug.replace("__", "/"),
         }
     }
+}
+
+/// A task's `summary.json` as the multi-task views read it.
+enum SummaryState {
+    Parsed(SummaryLite),
+    /// Not valid JSON, not an object, or not a regular file.
+    Unreadable,
+    /// Over [`MAX_SUMMARY_BYTES`]; never read.
+    TooLarge,
+}
+
+/// The recorded `task_id`, else the directory name with `__` read as `/`.
+fn task_id_of(s: &SummaryLite, slug: &str) -> String {
+    match s.task_id.as_str() {
+        Some(t) if !t.is_empty() => t.to_owned(),
+        _ => slug.replace("__", "/"),
+    }
+}
+
+/// Upstream `INDEX.md` title line `# Library — <domain>`.
+fn index_title(head: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(head)
+        .lines()
+        .next()
+        .and_then(|l| l.strip_prefix("# Library — "))
+        .map(str::to_owned)
 }
 
 fn surface_of(substrate: Substrate) -> Surface {
@@ -621,32 +711,53 @@ impl ExperimentDir {
         Ok(out.into_values().collect())
     }
 
-    /// Task directories of the sweep with their parsed `summary.json`, in upstream's
-    /// `sorted(glob("*/summary.json"))` order. Unreadable or malformed summaries are `None`.
-    fn summaries(&self, sweep: &Namespace) -> Result<Vec<(String, Option<TaskSummary>)>> {
+    /// Task directories of the sweep with their `summary.json` read into the typed view, in
+    /// upstream's `sorted(glob("*/summary.json"))` order (task directories without one are
+    /// left out).
+    ///
+    /// One bad summary never hides the others: it is listed as [`SummaryState::Unreadable`]
+    /// or, over [`MAX_SUMMARY_BYTES`], [`SummaryState::TooLarge`] without being read. More
+    /// than [`MAX_SWEEP_TASKS`] task directories, or more than [`MAX_SWEEP_SUMMARY_BYTES`]
+    /// of summaries in total, is [`CoreError::TooLarge`].
+    fn summaries(&self, sweep: &Namespace) -> Result<Vec<(String, SummaryState)>> {
         let dir = self.sweep_dir(sweep)?;
-        let mut out = Vec::new();
-        for e in safefs::list_opt(&self.dir, &dir, "sweep")? {
-            if e.kind != EntryKind::Dir || names::task_slug(&e.name).is_err() {
-                continue;
-            }
-            let rel = format!("{dir}/{}/summary.json", e.name);
-            match safefs::read_json_opt(&self.dir, &rel, "summary.json") {
-                Ok(Some(raw)) if raw.is_object() => {
-                    out.push((e.name.clone(), Some(TaskSummary { slug: e.name, raw })));
-                }
-                Ok(None) => {}
-                Ok(Some(_)) | Err(CoreError::Malformed { .. }) => out.push((e.name, None)),
-                Err(err) => return Err(err),
-            }
+        let slugs: Vec<String> = safefs::list_opt(&self.dir, &dir, "sweep")?
+            .into_iter()
+            .filter(|e| e.kind == EntryKind::Dir && names::task_slug(&e.name).is_ok())
+            .map(|e| e.name)
+            .collect();
+        if slugs.len() > MAX_SWEEP_TASKS {
+            return Err(CoreError::TooLarge(format!(
+                "the sweep has {} task directories, over the limit of {MAX_SWEEP_TASKS}",
+                slugs.len()
+            )));
+        }
+        let mut budget = Budget::new(MAX_SWEEP_SUMMARY_BYTES, "the sweep's summary.json files");
+        let mut out = Vec::with_capacity(slugs.len());
+        for slug in slugs {
+            let rel = format!("{dir}/{slug}/summary.json");
+            let state =
+                match safefs::read_whole_opt(&self.dir, &rel, MAX_SUMMARY_BYTES, "summary.json") {
+                    Ok(Some(bytes)) => {
+                        budget.take(bytes.len())?;
+                        lite::object::<SummaryLite>(&bytes)
+                            .map_or(SummaryState::Unreadable, SummaryState::Parsed)
+                    }
+                    Ok(None) => continue,
+                    Err(CoreError::TooLarge(_)) => SummaryState::TooLarge,
+                    Err(CoreError::Refused(_)) => SummaryState::Unreadable,
+                    Err(e) => return Err(e),
+                };
+            out.push((slug, state));
         }
         Ok(out)
     }
 
+    /// One task's whole summary; over [`MAX_SUMMARY_BYTES`] is [`CoreError::TooLarge`].
     fn summary(&self, sweep: &Namespace, slug: &str) -> Result<TaskSummary> {
         names::task_slug(slug)?;
         let rel = format!("{}/{slug}/summary.json", self.sweep_dir(sweep)?);
-        match safefs::read_json_opt(&self.dir, &rel, "summary.json")? {
+        match safefs::read_json_opt(&self.dir, &rel, MAX_SUMMARY_BYTES, "summary.json")? {
             Some(raw) if raw.is_object() => Ok(TaskSummary {
                 slug: slug.to_owned(),
                 raw,
@@ -662,22 +773,14 @@ impl ExperimentDir {
     /// Rows of `judged.json` (empty when not judged yet).
     fn judged_rows(&self, sweep: &Namespace) -> Result<Vec<JudgedRow>> {
         let rel = format!("{}/judged.json", self.sweep_dir(sweep)?);
-        Ok(
-            match safefs::read_json_opt(&self.dir, &rel, "judged.json")? {
-                Some(Value::Array(rows)) => rows.iter().filter_map(judged_row).collect(),
-                _ => Vec::new(),
-            },
-        )
+        read_rows(&self.dir, &rel, "judged.json", judged_row)
     }
 
     fn base_rows(&self, sweep: &Namespace) -> Result<Vec<(BaseJudgedRow, Option<f64>)>> {
         let rel = format!("{}/base_judged.json", self.sweep_dir(sweep)?);
-        Ok(
-            match safefs::read_json_opt(&self.dir, &rel, "base_judged.json")? {
-                Some(Value::Array(rows)) => rows.iter().map(base_row).collect(),
-                _ => Vec::new(),
-            },
-        )
+        read_rows(&self.dir, &rel, "base_judged.json", |l: BaseLite| {
+            Some(base_row(l))
+        })
     }
 
     fn headline(rows: &[JudgedRow], k: u32) -> Vec<ModeScore> {
@@ -703,21 +806,21 @@ impl ExperimentDir {
         let mut newest: Option<i64> = None;
         for (slug, s) in &summaries {
             match s {
-                Some(s) => {
-                    match text(field(&s.raw, "status")).as_str() {
-                        "ok" | "skipped" => ok += 1,
-                        "partial" => partial += 1,
+                SummaryState::Parsed(s) => {
+                    match s.status.as_str() {
+                        Some("ok" | "skipped") => ok += 1,
+                        Some("partial") => partial += 1,
                         _ => failed += 1,
                     }
-                    for m in modes_present(&s.raw) {
+                    for m in s.modes_present() {
                         if !modes.contains(&m) {
                             modes.push(m);
                         }
-                        let (_, spend, sel) = mode_spend(&s.raw, m);
+                        let (_, spend, sel) = s.mode_spend(m);
                         usd += spend + sel;
                     }
                 }
-                None => failed += 1,
+                SummaryState::Unreadable | SummaryState::TooLarge => failed += 1,
             }
             let rel = format!("{dir}/{slug}/summary.json");
             if let Some(t) = safefs::mtime(&self.dir, &rel, "summary.json")? {
@@ -766,103 +869,88 @@ impl ExperimentDir {
     }
 
     /// Task ids in stream order from the newest sweep record (`demo.json` for a demo).
+    ///
+    /// The order is only a display hint: a record that cannot be used (missing, over
+    /// [`MAX_RECORD_BYTES`], malformed) gives no order, and the tasks are listed by id.
     fn stream_order(&self, sweep: &Namespace) -> Result<Vec<String>> {
-        let record = match self.kind {
-            ExperimentKind::Demo => safefs::read_json_opt(&self.dir, "demo.json", "demo.json")
-                .ok()
-                .flatten(),
+        let rel = match self.kind {
+            ExperimentKind::Demo => Some("demo.json".to_owned()),
             ExperimentKind::Standard => {
                 let root = format!("{}/_sweeps", self.ns_root(&sweep.bench_name)?);
                 let ns = sweep.summary().to_string();
-                let newest = safefs::list_opt(&self.dir, &root, "sweep records")?
+                safefs::list_opt(&self.dir, &root, "sweep records")?
                     .into_iter()
                     .filter(|e| e.kind == EntryKind::File)
                     .filter_map(|e| {
                         record_stamp(&e.name, &ns).map(|s| (s.to_owned(), e.name.clone()))
                     })
-                    .max();
-                match newest {
-                    Some((_, name)) => {
-                        safefs::read_json_opt(&self.dir, &format!("{root}/{name}"), "sweep record")
-                            .ok()
-                            .flatten()
-                    }
-                    None => None,
-                }
+                    .max()
+                    .map(|(_, name)| format!("{root}/{name}"))
             }
         };
-        let Some(rec) = record else {
-            return Ok(Vec::new());
-        };
-        let mut order = Vec::new();
-        if rec.get("tasks").is_some() {
-            // demo.json: one run_domain report.
-            for t in list(field(&rec, "tasks")) {
-                order.push(text(field(t, "task")));
-            }
-            return Ok(order);
-        }
-        let domains = list(field(&rec, "domains"));
-        let mut names_in_order: Vec<String> =
-            list(field(&rec, "domain_order")).iter().map(text).collect();
-        for d in domains {
-            let name = text(field(d, "domain"));
-            if !names_in_order.contains(&name) {
-                names_in_order.push(name);
-            }
-        }
-        for name in names_in_order {
-            if let Some(d) = domains.iter().find(|d| text(field(d, "domain")) == name) {
-                for t in list(field(d, "tasks")) {
-                    order.push(text(field(t, "task")));
-                }
-            }
-        }
-        Ok(order)
+        let record = rel
+            .and_then(|rel| {
+                safefs::read_whole_opt(&self.dir, &rel, MAX_RECORD_BYTES, "sweep record")
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|bytes| lite::object::<RecordLite>(&bytes).ok());
+        Ok(record.map(RecordLite::order).unwrap_or_default())
     }
 
     /// Task rows of one sweep (`sweep` is the summary namespace), in stream order when a
     /// sweep record exists, else sorted by task id.
     pub fn tasks(&self, sweep: &Namespace) -> Result<Vec<TaskRow>> {
         let judged = self.judged_rows(sweep)?;
-        let mut scores: HashMap<(String, Mode), &JudgedRow> = HashMap::new();
+        let mut scores: HashMap<(&str, Mode), &JudgedRow> = HashMap::new();
         for r in judged.iter().filter(|r| r.k == sweep.k) {
-            scores.insert((r.task_id.clone(), r.mode), r);
+            scores.insert((r.task_id.as_str(), r.mode), r);
         }
         let mut rows: Vec<TaskRow> = Vec::new();
-        for (slug, s) in self.summaries(sweep)? {
-            let Some(s) = s else {
-                rows.push(TaskRow {
-                    task_id: slug.replace("__", "/"),
-                    slug,
-                    domain: String::new(),
-                    status: "unreadable".into(),
-                    modes: Vec::new(),
-                    errors: 1,
-                });
-                continue;
+        for (slug, state) in self.summaries(sweep)? {
+            let s = match state {
+                SummaryState::Parsed(s) => s,
+                SummaryState::Unreadable | SummaryState::TooLarge => {
+                    let status = if matches!(state, SummaryState::TooLarge) {
+                        "too-large"
+                    } else {
+                        "unreadable"
+                    };
+                    rows.push(TaskRow {
+                        task_id: slug.replace("__", "/"),
+                        slug,
+                        domain: String::new(),
+                        status: status.into(),
+                        modes: Vec::new(),
+                        errors: 1,
+                    });
+                    continue;
+                }
             };
-            let task_id = s.task_id();
-            let modes = modes_present(&s.raw)
+            let task_id = task_id_of(&s, &slug);
+            let modes = s
+                .modes_present()
                 .into_iter()
                 .map(|mode| {
-                    let rec = mode_rec(&s.raw, mode);
-                    let sel = selection_rec(&s.raw, mode);
-                    let (fell_back, spend, sel_usd) = mode_spend(&s.raw, mode);
-                    let chosen = text(field(sel, "chosen_label"));
-                    let judged = scores.get(&(task_id.clone(), mode));
+                    let rec = s.mode(mode);
+                    let sel = s.selection(mode);
+                    let (fell_back, spend, sel_usd) = s.mode_spend(mode);
+                    let chosen = sel.map(|x| x.chosen_label.text()).unwrap_or_default();
+                    let judged = scores.get(&(task_id.as_str(), mode));
                     TaskModeOutcome {
                         mode,
-                        ok: truthy(field(rec, "ok"))
-                            && truthy(field(sel, "ok"))
+                        ok: rec.is_some_and(|r| r.ok.truthy())
+                            && sel.is_some_and(|x| x.ok.truthy())
                             && !chosen.is_empty(),
                         chosen_label: (!chosen.is_empty()).then_some(chosen),
                         // "The adopted harness is an unchanged base": harness2 records
                         // that as `chosen_tree_is_base` (the selector's own
                         // `chosen_is_base` only says a reference run was picked).
-                        chosen_is_base: sel
-                            .get("chosen_tree_is_base")
-                            .map_or_else(|| truthy(field(sel, "chosen_is_base")), truthy),
+                        chosen_is_base: sel.is_some_and(|x| {
+                            x.chosen_tree_is_base
+                                .as_ref()
+                                .map_or_else(|| x.chosen_is_base.truthy(), Loose::truthy)
+                        }),
                         fell_back,
                         usd: spend + sel_usd,
                         score: judged.and_then(|r| r.frac),
@@ -871,11 +959,11 @@ impl ExperimentDir {
                 })
                 .collect();
             rows.push(TaskRow {
-                domain: text(field(&s.raw, "domain")),
-                status: text(field(&s.raw, "status")),
-                errors: usize_u32(list(field(&s.raw, "errors")).len()),
+                domain: s.domain.text(),
+                status: s.status.text(),
+                errors: s.errors.len(),
                 modes,
-                slug: s.slug.clone(),
+                slug,
                 task_id,
             });
         }
@@ -918,16 +1006,18 @@ impl ExperimentDir {
         if !labels.iter().any(|l| l == "base") {
             labels.push("base".to_owned());
         }
-        let ledger_order: Vec<String> = list(field(field(rec, "ledger"), "rollouts"))
+        // First position of each label in the ledger's rollout order.
+        let mut ledger_pos: HashMap<String, usize> = HashMap::new();
+        for (i, l) in list(field(field(rec, "ledger"), "rollouts"))
             .iter()
             .map(text)
-            .collect();
+            .enumerate()
+        {
+            ledger_pos.entry(l).or_insert(i);
+        }
         let key = |l: &str| {
             let base = u8::from(!l.starts_with("base"));
-            let pos = ledger_order
-                .iter()
-                .position(|x| x == l)
-                .unwrap_or(usize::MAX);
+            let pos = ledger_pos.get(l).copied().unwrap_or(usize::MAX);
             let digits: String = l.chars().filter(char::is_ascii_digit).collect();
             let n: u64 = digits.parse().unwrap_or(0);
             (base, pos, n, l.to_owned())
@@ -1182,7 +1272,7 @@ impl ExperimentDir {
             format!("{run}/{sub}")
         };
         let dir = safefs::open_dir(&self.dir, &target, "rollout directory")?;
-        let mut out: Vec<FileEntry> = safefs::list(&dir)?
+        let mut out: Vec<FileEntry> = safefs::list_capped(&dir, MAX_ROLLOUT_ENTRIES)?
             .into_iter()
             .map(|e| FileEntry {
                 path: if sub.is_empty() {
@@ -1308,10 +1398,10 @@ impl ExperimentDir {
         let mut fell_back = FellBack::new();
         let mut usd = Spend::new();
         for (_, s) in self.summaries(sweep)? {
-            let Some(s) = s else { continue };
+            let SummaryState::Parsed(s) = s else { continue };
             for &mode in modes {
                 let key = (mode, sweep.k);
-                let (fb, spend, sel) = mode_spend(&s.raw, mode);
+                let (fb, spend, sel) = s.mode_spend(mode);
                 *fell_back.entry(key).or_insert(0) += fb;
                 let acc = usd.get(&key).copied().unwrap_or(0.0);
                 usd.insert(key, acc + spend + sel);
@@ -1321,10 +1411,15 @@ impl ExperimentDir {
     }
 
     /// Experience libraries of the sweep, one per (mode, domain).
+    ///
+    /// An entry whose `EXPERIENCE.md` is over [`MAX_EXPERIENCE_BYTES`] (or not a regular
+    /// file) is listed without its details; more than [`MAX_LIBRARY_BYTES`] of them in
+    /// total is [`CoreError::TooLarge`].
     pub fn library(&self, sweep: &Namespace) -> Result<Vec<LibraryDomain>> {
         let Some(root) = namespace::library_root(self.kind, sweep) else {
             return Ok(Vec::new());
         };
+        let mut budget = Budget::new(MAX_LIBRARY_BYTES, "the library's EXPERIENCE.md files");
         let mut out = Vec::new();
         for mode in Mode::ALL {
             let mode_root = format!("{root}/{}", mode.token());
@@ -1333,29 +1428,33 @@ impl ExperimentDir {
                     continue;
                 }
                 let dom_rel = format!("{mode_root}/{}", d.name);
-                let index = safefs::read_text_opt(
-                    &self.dir,
-                    &format!("{dom_rel}/INDEX.md"),
-                    MAX_TEXT_BYTES,
-                    "INDEX.md",
-                )?;
-                let domain = index
-                    .as_deref()
-                    .and_then(|t| t.lines().next())
-                    .and_then(|l| l.strip_prefix("# Library — "))
-                    .map_or_else(|| d.name.clone(), str::to_owned);
+                let index = format!("{dom_rel}/INDEX.md");
+                let domain =
+                    match safefs::read_capped(&self.dir, &index, MAX_INDEX_HEAD, "INDEX.md") {
+                        Ok((head, _, _)) => index_title(&head),
+                        Err(CoreError::NotFound(_) | CoreError::Refused(_)) => None,
+                        Err(e) => return Err(e),
+                    }
+                    .unwrap_or_else(|| d.name.clone());
                 let mut entries = Vec::new();
                 let harnesses = format!("{dom_rel}/harnesses");
                 for e in safefs::list_opt(&self.dir, &harnesses, "library entries")? {
                     if e.kind != EntryKind::Dir || names::task_slug(&e.name).is_err() {
                         continue;
                     }
-                    let exp = safefs::read_text_opt(
+                    let exp = match safefs::read_text_opt(
                         &self.dir,
                         &format!("{harnesses}/{}/EXPERIENCE.md", e.name),
-                        MAX_TEXT_BYTES,
+                        MAX_EXPERIENCE_BYTES,
                         "EXPERIENCE.md",
-                    )?;
+                    ) {
+                        Ok(text) => text,
+                        Err(CoreError::TooLarge(_) | CoreError::Refused(_)) => None,
+                        Err(e) => return Err(e),
+                    };
+                    if let Some(text) = &exp {
+                        budget.take(text.len())?;
+                    }
                     entries.push(library_entry(&e.name, exp.as_deref().unwrap_or("")));
                 }
                 out.push(LibraryDomain {
@@ -1414,19 +1513,29 @@ impl ExperimentDir {
             }
             slot.2 = slot.2.min(e.mtime.unwrap_or(i64::MAX));
         }
+        if stems.len() > MAX_AUDIT_SESSIONS {
+            return Err(CoreError::TooLarge(format!(
+                "the audit trail has {} sessions, over the limit of {MAX_AUDIT_SESSIONS}",
+                stems.len()
+            )));
+        }
+        let mut budget = Budget::new(MAX_AUDIT_META_BYTES, "the audit's .meta.json files");
         let mut out = Vec::new();
         for (stem, (mut parts, has_meta, mtime)) in stems {
             parts.sort_by_key(|p| AUDIT_PARTS.iter().position(|x| x == p));
-            let meta = if has_meta {
-                safefs::read_json_opt(&self.dir, &format!("{dir}/{stem}.meta.json"), "meta.json")
-                    .ok()
-                    .flatten()
-                    .unwrap_or(Value::Null)
-            } else {
-                Value::Null
+            let meta_rel = format!("{dir}/{stem}.meta.json");
+            // Metadata that cannot be read (oversized, a link, malformed) reads as empty.
+            let meta: MetaLite = match has_meta
+                .then(|| safefs::read_whole_opt(&self.dir, &meta_rel, MAX_META_BYTES, "meta.json"))
+            {
+                Some(Ok(Some(bytes))) => {
+                    budget.take(bytes.len())?;
+                    lite::object(&bytes).unwrap_or_default()
+                }
+                _ => MetaLite::default(),
             };
-            let label = match meta.get("label") {
-                Some(Value::String(l)) if !l.is_empty() => l.clone(),
+            let label = match meta.label.as_str() {
+                Some(l) if !l.is_empty() => l.to_owned(),
                 _ => audit_label_of(&stem),
             };
             out.push((
@@ -1434,14 +1543,14 @@ impl ExperimentDir {
                 AuditSession {
                     id: stem,
                     label,
-                    ok: truthy(field(&meta, "ok")),
-                    channel: text(field(&meta, "channel")),
-                    model: text(field(&meta, "model")),
-                    effort: text(field(&meta, "effort")),
-                    attempts: count(field(&meta, "attempts")),
-                    wall_s: number(field(&meta, "wall_s")),
-                    cost_usd: number(field(&meta, "cost_usd")),
-                    error: text(field(&meta, "error")),
+                    ok: meta.ok.truthy(),
+                    channel: meta.channel.into_text(),
+                    model: meta.model.into_text(),
+                    effort: meta.effort.into_text(),
+                    attempts: meta.attempts.count(),
+                    wall_s: meta.wall_s.number(),
+                    cost_usd: meta.cost_usd.number(),
+                    error: meta.error.0.into_text(),
                     parts,
                 },
             ));
@@ -1500,9 +1609,9 @@ impl ExperimentDir {
     pub fn spend_usd(&self, sweep: &Namespace) -> Result<f64> {
         let mut total = 0.0;
         for (_, s) in self.summaries(sweep)? {
-            let Some(s) = s else { continue };
-            for mode in modes_present(&s.raw) {
-                let (_, spend, sel) = mode_spend(&s.raw, mode);
+            let SummaryState::Parsed(s) = s else { continue };
+            for mode in s.modes_present() {
+                let (_, spend, sel) = s.mode_spend(mode);
                 total += spend + sel;
             }
         }
@@ -1510,13 +1619,18 @@ impl ExperimentDir {
     }
 
     /// `config.json` identities of every sweep (for the manifest).
+    ///
+    /// A `config.json` over [`MAX_CONFIG_BYTES`], or more than [`MAX_IDENTITY_BYTES`] of
+    /// them in total, is [`CoreError::TooLarge`].
     pub fn sweep_identities(&self) -> Result<Vec<SweepIdentity>> {
+        let mut budget = Budget::new(MAX_IDENTITY_BYTES, "the sweeps' config.json files");
         let mut out = Vec::new();
         for ns in self.summary_namespaces()? {
             let rel = format!("{}/config.json", self.sweep_dir(&ns)?);
             if let Some(text) =
-                safefs::read_text_opt(&self.dir, &rel, MAX_JSON_BYTES, "config.json")?
+                safefs::read_text_opt(&self.dir, &rel, MAX_CONFIG_BYTES, "config.json")?
             {
+                budget.take(text.len())?;
                 out.push(SweepIdentity {
                     sweep: ns.to_string(),
                     identity_json: text,
@@ -1871,13 +1985,17 @@ mod tests {
 
     /// JobBench's weighted judging writes fractional points: the integer fields stay empty
     /// and the raw values travel as `points_*`, with `frac` computed from them.
+    fn judged(v: &serde_json::Value) -> Option<JudgedRow> {
+        judged_row(lite::object(v.to_string().as_bytes()).unwrap())
+    }
+
     #[test]
     fn weighted_points_are_kept_exactly() {
         let v = serde_json::json!({
             "task_id": "t1", "mode": "agg", "k": 1, "label": "agg1", "run_id": "ns/t1/agg1",
             "chosen_is_base": false, "n_passed": 7.5, "n_criteria": 10.0, "all_pass": false,
         });
-        let r = judged_row(&v).unwrap();
+        let r = judged(&v).unwrap();
         assert_eq!((r.n_passed, r.n_criteria), (None, Some(10)));
         assert_eq!((r.points_passed, r.points_max), (Some(7.5), Some(10.0)));
         assert_eq!(r.frac, Some(0.75));
@@ -1885,13 +2003,14 @@ mod tests {
             "task_id": "t2", "mode": "seq", "k": 1, "label": "seq1", "run_id": "ns/t2/seq1",
             "chosen_is_base": false, "n_passed": 3, "n_criteria": 4, "all_pass": false,
         });
-        let r = judged_row(&v).unwrap();
+        let r = judged(&v).unwrap();
         assert_eq!((r.n_passed, r.n_criteria), (Some(3), Some(4)));
         assert_eq!((r.points_passed, r.points_max), (Some(3.0), Some(4.0)));
-        let (b, frac) = base_row(&serde_json::json!({
+        let base = serde_json::json!({
             "task": "t1", "label": "base", "run_id": "ns/t1/base",
             "score": {"n_passed": 2.25, "n_criteria": 3, "all_pass": false},
-        }));
+        });
+        let (b, frac) = base_row(lite::object(base.to_string().as_bytes()).unwrap());
         assert_eq!(
             (b.n_passed, b.points_passed, b.points_max),
             (None, Some(2.25), Some(3.0))
@@ -1955,6 +2074,250 @@ mod tests {
         assert_eq!(x.confidence, "high");
         let empty = library_entry("x", "");
         assert!(empty.experience.is_none());
+    }
+
+    /// A standard experiment with one LAB sweep (`lab-oc-agg1`) built in a temp dir.
+    struct Lab {
+        root: tempfile::TempDir,
+    }
+
+    impl Lab {
+        const SWEEP: &'static str = "lab/adapt/lab-oc-agg1";
+
+        fn new() -> Self {
+            let root = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(root.path().join(Self::SWEEP)).unwrap();
+            Lab { root }
+        }
+
+        fn path(&self, rel: &str) -> std::path::PathBuf {
+            let p = self.root.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            p
+        }
+
+        fn write(&self, rel: &str, body: &[u8]) {
+            std::fs::write(self.path(rel), body).unwrap();
+        }
+
+        /// A file of `len` zero bytes that takes no disk space.
+        fn sparse(&self, rel: &str, len: u64) {
+            std::fs::File::create(self.path(rel))
+                .unwrap()
+                .set_len(len)
+                .unwrap();
+        }
+
+        fn summary(&self, slug: &str, usd: f64) {
+            let body = serde_json::json!({
+                "task_id": slug, "domain": "d", "status": "ok",
+                "modes": {"agg": {"ok": true, "stages": [{"usd": usd}]}},
+            });
+            self.write(
+                &format!("{}/{slug}/summary.json", Self::SWEEP),
+                body.to_string().as_bytes(),
+            );
+        }
+
+        fn open(&self) -> (ExperimentDir, Namespace) {
+            let exp = ExperimentDir::open(self.root.path(), ExperimentKind::Standard, &[]).unwrap();
+            (exp, Namespace::parse("lab-oc-agg1").unwrap())
+        }
+    }
+
+    fn status_of(rows: &[TaskRow], slug: &str) -> String {
+        rows.iter().find(|r| r.slug == slug).unwrap().status.clone()
+    }
+
+    /// An oversized summary is flagged without being parsed (it is valid JSON: parsing it
+    /// would give status `ok`), and every other summary of the sweep still reads.
+    #[test]
+    fn an_oversized_summary_is_flagged_and_the_others_still_read() {
+        let lab = Lab::new();
+        lab.summary("t1", 0.5);
+        lab.summary("t3", 0.25);
+        let head = br#"{"task_id": "t2", "status": "ok"}"#;
+        let pad = |n: u64| {
+            let mut b = head.to_vec();
+            b.resize(usize::try_from(n).unwrap(), b' ');
+            b
+        };
+        lab.write(
+            &format!("{}/t2/summary.json", Lab::SWEEP),
+            &pad(MAX_SUMMARY_BYTES + 1),
+        );
+        // Exactly at the cap is still read.
+        lab.write(
+            &format!("{}/t4/summary.json", Lab::SWEEP),
+            &pad(MAX_SUMMARY_BYTES),
+        );
+        let (exp, ns) = lab.open();
+        let rows = exp.tasks(&ns).unwrap();
+        assert_eq!(rows.len(), 4);
+        assert_eq!(status_of(&rows, "t2"), "too-large");
+        assert_eq!(status_of(&rows, "t4"), "ok");
+        assert_eq!(status_of(&rows, "t1"), "ok");
+        assert_eq!(rows.iter().find(|r| r.slug == "t2").unwrap().errors, 1);
+        assert_eq!(exp.spend_usd(&ns).unwrap(), 0.75);
+        let sweeps = exp.sweeps().unwrap();
+        assert_eq!((sweeps[0].tasks, sweeps[0].ok, sweeps[0].failed), (4, 3, 1));
+        // The single-task views refuse it instead.
+        assert!(matches!(exp.task(&ns, "t2"), Err(CoreError::TooLarge(_))));
+        assert!(exp.task(&ns, "t1").is_ok());
+    }
+
+    /// The multi-task views have a total: 64 summaries of 4 MiB (the per-file cap) are
+    /// 256 MiB and still read; one more is refused instead of read.
+    #[test]
+    fn a_sweep_reads_at_most_its_summary_budget() {
+        let lab = Lab::new();
+        let per_file = MAX_SUMMARY_BYTES;
+        let fit = usize::try_from(MAX_SWEEP_SUMMARY_BYTES / per_file).unwrap();
+        for i in 0..fit {
+            lab.sparse(&format!("{}/t{i:03}/summary.json", Lab::SWEEP), per_file);
+        }
+        let (exp, ns) = lab.open();
+        let rows = exp.tasks(&ns).unwrap();
+        assert_eq!(rows.len(), fit);
+        assert!(rows.iter().all(|r| r.status == "unreadable"));
+        lab.sparse(&format!("{}/t{fit:03}/summary.json", Lab::SWEEP), per_file);
+        let err = exp.tasks(&ns).unwrap_err();
+        assert!(matches!(err, CoreError::TooLarge(_)), "{err}");
+    }
+
+    #[test]
+    fn a_sweep_holds_at_most_its_task_cap() {
+        let lab = Lab::new();
+        for i in 0..MAX_SWEEP_TASKS {
+            std::fs::create_dir(lab.root.path().join(format!("{}/t{i}", Lab::SWEEP))).unwrap();
+        }
+        lab.summary("t0", 1.0);
+        let (exp, ns) = lab.open();
+        assert_eq!(exp.tasks(&ns).unwrap().len(), 1);
+        std::fs::create_dir(lab.root.path().join(format!("{}/one-more", Lab::SWEEP))).unwrap();
+        let err = exp.tasks(&ns).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "too large: the sweep has 10001 task directories, over the limit of 10000"
+        );
+    }
+
+    #[test]
+    fn judged_files_are_capped_by_size_and_rows() {
+        let lab = Lab::new();
+        lab.summary("t1", 0.0);
+        let judged = format!("{}/judged.json", Lab::SWEEP);
+        let row = br#"{"task_id": "t1", "mode": "agg", "k": 1, "n_passed": 1, "n_criteria": 2}"#;
+        let many = |n: usize| {
+            let mut b = b"[".to_vec();
+            for i in 0..n {
+                if i > 0 {
+                    b.push(b',');
+                }
+                b.extend_from_slice(row);
+            }
+            b.push(b']');
+            b
+        };
+        lab.write(&judged, &many(MAX_JUDGED_ROWS));
+        let (exp, ns) = lab.open();
+        assert_eq!(exp.scores(&ns).unwrap().rows.len(), MAX_JUDGED_ROWS);
+        lab.write(&judged, &many(MAX_JUDGED_ROWS + 1));
+        let err = exp.scores(&ns).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "too large: judged.json has more than 100000 rows"
+        );
+        // Every view that needs the rows says so too, rather than showing partial scores.
+        assert!(matches!(exp.tasks(&ns), Err(CoreError::TooLarge(_))));
+        lab.sparse(&judged, MAX_JUDGED_BYTES + 1);
+        assert!(matches!(exp.scores(&ns), Err(CoreError::TooLarge(_))));
+        lab.sparse(
+            &format!("{}/base_judged.json", Lab::SWEEP),
+            MAX_JUDGED_BYTES + 1,
+        );
+        std::fs::remove_file(lab.root.path().join(&judged)).unwrap();
+        assert!(matches!(exp.scores(&ns), Err(CoreError::TooLarge(_))));
+    }
+
+    /// The stream order is a display hint: an oversized sweep record is ignored, not fatal.
+    #[test]
+    fn an_oversized_sweep_record_only_loses_the_order() {
+        let lab = Lab::new();
+        lab.summary("b", 0.0);
+        lab.summary("a", 0.0);
+        let record = "lab/adapt/_sweeps/lab-oc-agg1-20261023T120000Z.json";
+        lab.write(
+            record,
+            br#"{"domains": [{"domain": "d", "tasks": [{"task": "b"}, {"task": "a"}]}]}"#,
+        );
+        let (exp, ns) = lab.open();
+        let order = |exp: &ExperimentDir| -> Vec<String> {
+            exp.tasks(&ns)
+                .unwrap()
+                .into_iter()
+                .map(|r| r.slug)
+                .collect()
+        };
+        assert_eq!(order(&exp), vec!["b", "a"]);
+        lab.sparse(record, MAX_RECORD_BYTES + 1);
+        assert_eq!(order(&exp), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn library_and_audit_files_are_capped() {
+        let lab = Lab::new();
+        let lib = "lab/library/lab/k1-oc/agg/dom";
+        lab.write(
+            &format!("{lib}/INDEX.md"),
+            "# Library — Domain\n".as_bytes(),
+        );
+        lab.write(
+            &format!("{lib}/harnesses/small/EXPERIENCE.md"),
+            b"- adopted: `agg1`\n",
+        );
+        lab.sparse(
+            &format!("{lib}/harnesses/large/EXPERIENCE.md"),
+            MAX_EXPERIENCE_BYTES + 1,
+        );
+        let (exp, ns) = lab.open();
+        let doms = exp.library(&ns).unwrap();
+        assert_eq!(doms[0].domain, "Domain");
+        let entry = |slug: &str| {
+            doms[0]
+                .entries
+                .iter()
+                .find(|e| e.task_slug == slug)
+                .unwrap()
+        };
+        assert_eq!(entry("small").adopted_label, "agg1");
+        assert_eq!(entry("large").adopted_label, "");
+        // Audit metadata over its cap reads as empty; the session is still listed.
+        let audit = "lab/adapt/_audit/lab-oc-agg1";
+        lab.write(
+            &format!("{audit}/inv1.a1.0123456789abcdef.mission.md"),
+            b"m",
+        );
+        lab.sparse(
+            &format!("{audit}/inv1.a1.0123456789abcdef.meta.json"),
+            MAX_META_BYTES + 1,
+        );
+        lab.write(
+            &format!("{audit}/select.agg1.fedcba9876543210.meta.json"),
+            br#"{"label": "select", "ok": true, "model": "m"}"#,
+        );
+        let sessions = exp.audit(&ns).unwrap();
+        assert_eq!(sessions.len(), 2);
+        let s = sessions.iter().find(|s| s.id.starts_with("inv1")).unwrap();
+        assert_eq!((s.label.as_str(), s.ok), ("inv1.a1", false));
+        let s = sessions
+            .iter()
+            .find(|s| s.id.starts_with("select"))
+            .unwrap();
+        assert_eq!(
+            (s.label.as_str(), s.ok, s.model.as_str()),
+            ("select", true, "m")
+        );
     }
 
     #[test]

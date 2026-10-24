@@ -230,6 +230,11 @@ impl From<h2s_core::CoreError> for ApiError {
                 tracing::error!(error = %io, "I/O error reading results");
                 ApiError::internal("I/O error reading results")
             }
+            C::TooLarge(what) => ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ErrorCode::PayloadTooLarge,
+                format!("too large: {what}"),
+            ),
             C::Unimplemented(what) => {
                 ApiError::unavailable(format!("not available in this build yet: {what}"))
             }
@@ -303,6 +308,16 @@ mod tests {
         assert_eq!(e.status, StatusCode::NOT_FOUND);
         let e: ApiError = h2s_core::CoreError::Unimplemented("x").into();
         assert_eq!(e.status, StatusCode::SERVICE_UNAVAILABLE);
+        let e: ApiError =
+            h2s_core::CoreError::TooLarge("judged.json has more than 9 rows".into()).into();
+        assert_eq!(
+            (e.status, e.code, e.message.as_str()),
+            (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ErrorCode::PayloadTooLarge,
+                "too large: judged.json has more than 9 rows"
+            )
+        );
         let e: ApiError = h2s_core::CoreError::InvalidMany(vec![
             ("a".into(), "b".into()),
             ("c".into(), "d".into()),

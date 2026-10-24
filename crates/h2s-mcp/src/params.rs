@@ -7,9 +7,9 @@
 
 use h2s_api::{
     BridgeParams, CheckParams, CreateExperimentRequest, DEMO_K_MAX, DemoParams, EstimateRequest,
-    ExportTarget, InstallParams, JobKind, JobStatus, JudgeParams, K_MAX, MAX_TASKS_MAX, Mode,
-    PipelineParams, PreviewParams, ReportParams, RunParams, SetupParams, SplitParams,
-    UpdateExperimentRequest, ValidateHarnessRequest, WORKERS_MAX,
+    ExportTarget, InstallExtra, InstallParams, JobKind, JobStatus, JudgeParams, K_MAX,
+    MAX_TASKS_MAX, Mode, PipelineParams, PreviewParams, ReportParams, RunParams, SetupParams,
+    SplitParams, UpdateExperimentRequest, ValidateHarnessRequest, WORKERS_MAX,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -31,10 +31,12 @@ const RUN_MODES: &str = "Recursion modes, the same ones the run used.";
 const BUDGET: &str = "Stop the job once recorded spend reaches this many USD (checked as task \
                       summaries land; a task in flight finishes first). harness2 records \
                       improver spend only, not executor rollouts. Omit for no cap.";
-const ACKNOWLEDGE_RISKS: &str = "Must be true when the server runs jobs without container \
-                                 isolation (server_info shows isolation host): the executor then \
-                                 has the server user's files and network. Set it only with the \
-                                 user's informed consent.";
+const ACKNOWLEDGE_RISKS: &str = "Needed when the server runs jobs without container isolation \
+                                 (server_info shows isolation host): the executor then has the \
+                                 server user's files and network. This MCP server accepts true \
+                                 only when started with --allow-risk-acknowledgement; otherwise \
+                                 a human starts the run in the web UI, or the Studio server \
+                                 pre-acknowledges host risks.";
 
 fn quick_wait() -> u32 {
     45
@@ -669,21 +671,53 @@ job_input!(
     }
 );
 
-job_input!(
-    InstallInput,
-    InstallParams,
-    "no_wait",
-    "Seconds to wait before returning (default 0: return the queued job at once; max 600). \
-     Installs take minutes: follow them with wait_for_job.",
-    |schema| {
-        describe(
+/// `install_harness2`. Unlike the API, there is no `rev`: an MCP client always installs the
+/// commit this Studio release was tested against (audit F13: an arbitrary commit could be a
+/// fork-only one whose build code runs on the server).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct InstallInput {
+    /// Optional extras: render (always installed) and bridge (the LiteLLM proxy start_bridge
+    /// needs).
+    #[serde(default)]
+    pub(crate) extras: Vec<InstallExtra>,
+    /// Re-create the virtual environment even if harness2 is already installed.
+    #[serde(default)]
+    pub(crate) reinstall: bool,
+    /// Seconds to wait before returning (default 0: return the queued job at once; max 600).
+    /// Installs take minutes: follow them with wait_for_job.
+    #[serde(default = "no_wait")]
+    pub(crate) wait_secs: u32,
+}
+
+impl InstallInput {
+    /// The job parameters: the tested commit, always.
+    pub(crate) fn params(&self) -> InstallParams {
+        InstallParams {
+            rev: None,
+            extras: self.extras.clone(),
+            reinstall: self.reinstall,
+        }
+    }
+}
+
+impl ToolInput for InstallInput {
+    fn patch(schema: &mut Value) {
+        wait_bounds(schema);
+        // One line each (wrapped doc comments would put newlines into the schema).
+        redescribe(
             schema,
             &["extras"],
             "Optional extras: render (always installed) and bridge (the LiteLLM proxy \
              start_bridge needs).",
         );
+        redescribe(
+            schema,
+            &["wait_secs"],
+            "Seconds to wait before returning (default 0: return the queued job at once; max \
+             600). Installs take minutes: follow them with wait_for_job.",
+        );
     }
-);
+}
 
 job_input!(
     BridgeInput,

@@ -174,21 +174,38 @@ pub(crate) fn round(x: f64, ndigits: usize) -> f64 {
 /// `sum(xs)` over floats in CPython 3.12: start from the int 0, then Neumaier-compensated
 /// addition, adding the compensation once at the end when it is finite and nonzero.
 pub(crate) fn sum(xs: impl IntoIterator<Item = f64>) -> f64 {
-    let mut total = 0.0_f64;
-    let mut comp = 0.0_f64;
+    let mut acc = PySum::default();
     for x in xs {
-        let t = total + x;
-        if total.abs() >= x.abs() {
-            comp += (total - t) + x;
+        acc.add(x);
+    }
+    acc.value()
+}
+
+/// [`sum`] fed one value at a time, for values read while a file is parsed.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct PySum {
+    total: f64,
+    comp: f64,
+}
+
+impl PySum {
+    pub(crate) fn add(&mut self, x: f64) {
+        let t = self.total + x;
+        if self.total.abs() >= x.abs() {
+            self.comp += (self.total - t) + x;
         } else {
-            comp += (x - t) + total;
+            self.comp += (x - t) + self.total;
         }
-        total = t;
+        self.total = t;
     }
-    if comp != 0.0 && comp.is_finite() {
-        total += comp;
+
+    pub(crate) fn value(self) -> f64 {
+        if self.comp != 0.0 && self.comp.is_finite() {
+            self.total + self.comp
+        } else {
+            self.total
+        }
     }
-    total
 }
 
 /// `statistics.mean(xs)` over floats: the exact rational mean, correctly rounded to `f64`.
