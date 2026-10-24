@@ -312,9 +312,14 @@ pub fn detect_surface(tree: &Tree) -> Surface {
 }
 
 /// Largest single harness file read.
-const MAX_HARNESS_FILE: u64 = 4 * 1024 * 1024;
+pub(crate) const MAX_HARNESS_FILE: u64 = 4 * 1024 * 1024;
 /// Most directory entries walked in one harness tree.
 const MAX_TREE_ENTRIES: usize = 20_000;
+/// Most files [`read_tree`] reads from one harness, and the most an export takes.
+pub(crate) const MAX_TREE_FILES: usize = 2_000;
+/// Most bytes [`read_tree`] reads from one harness (the sum of its files' sizes), and the
+/// most an export takes.
+pub(crate) const MAX_TREE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Python's `Path.read_text(encoding="utf-8", errors="replace")`: invalid UTF-8 replaced and
 /// universal newlines (`\r\n` and `\r` become `\n`).
@@ -338,21 +343,59 @@ fn under_pycache(rel: &str) -> bool {
 /// Returns the tree and the off-surface paths found. Never follows symlinks.
 ///
 /// Symbolic links are never read; they are reported among the off-surface paths.
+///
+/// A harness is held in memory whole, so it is bounded: more than 2,000 on-surface files,
+/// more than 64 MiB in total, one file over 4 MiB, or more than 20,000 entries is
+/// [`CoreError::TooLarge`] (counted from the directory listing before any file is read).
 pub fn read_tree(dir: &cap_std::fs::Dir, surface: Surface) -> Result<(Tree, Vec<String>)> {
+    read_tree_capped(dir, surface, MAX_TREE_FILES, MAX_TREE_BYTES)
+}
+
+fn read_tree_capped(
+    dir: &cap_std::fs::Dir,
+    surface: Surface,
+    max_files: usize,
+    max_bytes: u64,
+) -> Result<(Tree, Vec<String>)> {
     let (mut files, symlinks) = safefs::walk_files(dir, &["__pycache__"], MAX_TREE_ENTRIES)?;
     files.sort_by(|a, b| pyfmt::cmp_paths(&a.0, &b.0));
     let stubs = stub_paths(surface);
-    let mut tree = Tree::new();
+    let mut on = Vec::new();
     let mut off = Vec::new();
-    for (rel, _) in files {
+    for (rel, len) in files {
         if under_pycache(&rel) || stubs.contains(&rel.as_str()) {
             continue;
         }
-        if !is_allowed(surface, &rel) {
+        if is_allowed(surface, &rel) {
+            on.push((rel, len));
+        } else {
             off.push(rel);
-            continue;
         }
+    }
+    if on.len() > max_files {
+        return Err(CoreError::TooLarge(format!(
+            "the harness has {} files, over the limit of {max_files}",
+            on.len()
+        )));
+    }
+    let listed = on
+        .iter()
+        .fold(0_u64, |acc, (_, len)| acc.saturating_add(*len));
+    if listed > max_bytes {
+        return Err(CoreError::TooLarge(format!(
+            "the harness files total {listed} bytes, over the {max_bytes}-byte limit"
+        )));
+    }
+    let mut tree = Tree::new();
+    let mut read = 0_u64;
+    for (rel, _) in on {
         let bytes = safefs::read_whole(dir, &rel, MAX_HARNESS_FILE, "harness file")?;
+        read = read.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+        if read > max_bytes {
+            return Err(CoreError::TooLarge(format!(
+                "the harness files grew past the {max_bytes}-byte limit while they were read"
+            )));
+        }
         tree.insert(rel, decode_text(bytes));
     }
     for link in symlinks {
@@ -1064,5 +1107,76 @@ mod tests {
     fn script_ref_regex_compiles() {
         assert!(script_ref_regex(Surface::Opencode).is_some());
         assert!(script_ref_regex(Surface::Codex).is_some());
+    }
+
+    fn sparse(path: &std::path::Path, len: u64) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::File::create(path).unwrap().set_len(len).unwrap();
+    }
+
+    fn open(p: &std::path::Path) -> cap_std::fs::Dir {
+        cap_std::fs::Dir::open_ambient_dir(p, cap_std::ambient_authority()).unwrap()
+    }
+
+    /// 64 files of 4 MiB each (sparse, so the test uses no disk): every file is within the
+    /// per-file cap, the whole is 256 MiB, and the tree is refused from the listing alone.
+    #[test]
+    fn a_256_mib_harness_is_refused_before_it_is_read() {
+        let t = tempfile::tempdir().unwrap();
+        for i in 0..64 {
+            sparse(&t.path().join(format!("scripts/f{i}.py")), MAX_HARNESS_FILE);
+        }
+        let started = std::time::Instant::now();
+        let err = read_tree(&open(t.path()), Surface::Opencode).unwrap_err();
+        assert!(matches!(err, CoreError::TooLarge(_)), "{err}");
+        assert_eq!(
+            err.to_string(),
+            "too large: the harness files total 268435456 bytes, over the 67108864-byte limit"
+        );
+        // Nothing was read: refusing 256 MiB takes the time of a directory listing.
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn harness_caps_are_exact() {
+        let t = tempfile::tempdir().unwrap();
+        for i in 0..3 {
+            std::fs::create_dir_all(t.path().join("scripts")).unwrap();
+            std::fs::write(t.path().join(format!("scripts/f{i}.py")), "0123456789").unwrap();
+        }
+        // Off-surface files are listed, not read, and do not count.
+        std::fs::write(t.path().join("notes.txt"), "x".repeat(100)).unwrap();
+        let d = open(t.path());
+        let (tree, off) = read_tree_capped(&d, Surface::Opencode, 3, 30).unwrap();
+        assert_eq!((tree.len(), off.len()), (3, 1));
+        for (files, bytes) in [(2, 30), (3, 29)] {
+            let err = read_tree_capped(&d, Surface::Opencode, files, bytes).unwrap_err();
+            assert!(matches!(err, CoreError::TooLarge(_)), "{err}");
+        }
+    }
+
+    #[test]
+    fn file_count_and_single_file_caps() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(t.path().join("scripts")).unwrap();
+        for i in 0..MAX_TREE_FILES {
+            std::fs::write(t.path().join(format!("scripts/f{i}.py")), "x").unwrap();
+        }
+        let d = open(t.path());
+        assert_eq!(
+            read_tree(&d, Surface::Opencode).unwrap().0.len(),
+            MAX_TREE_FILES
+        );
+        std::fs::write(t.path().join("systemprompt.md"), "one more").unwrap();
+        let err = read_tree(&d, Surface::Opencode).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "too large: the harness has 2001 files, over the limit of 2000"
+        );
+        // One file over 4 MiB is refused even though the tree is small.
+        let one = tempfile::tempdir().unwrap();
+        sparse(&one.path().join("systemprompt.md"), MAX_HARNESS_FILE + 1);
+        let err = read_tree(&open(one.path()), Surface::Opencode).unwrap_err();
+        assert!(matches!(err, CoreError::TooLarge(_)), "{err}");
     }
 }
