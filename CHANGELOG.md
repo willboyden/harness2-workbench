@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-24
+
+The first release.
+
 ### Added
 
 - Initial workspace: wire-type contract (`h2w-api`), domain library (`h2w-core`), server
@@ -25,6 +29,9 @@ All notable changes to this project are documented here. The format follows
   heading-anchor rules) and on a missing required document (the README that release archives
   contain, the guides the governance files point to); it is also one of the gates of
   `cargo xtask check`.
+- Third-party licences: release archives and the all-in-one image carry
+  `THIRD-PARTY-LICENSES.md`, the licence texts of every crate compiled into the servers and the
+  web UI (`cargo xtask licenses`, cargo-about 0.9.2); the runner image carries uv's licence texts.
 
 ### Security
 
@@ -80,3 +87,6 @@ Each change, its tests and how it was checked are in
 - Restart recovery no longer counts a job process caught in the middle of an exec as unmarked:
   an environment that reads empty or denied for that moment is read again for up to about 0.25 s
   (found by a test that failed once on a CI runner).
+
+[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/willboyden/harness2-workbench/releases/tag/v0.1.0
