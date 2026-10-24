@@ -617,6 +617,8 @@ async fn run_step(ctx: &Ctx<'_>, step: &StepPlan, summary_ns: Option<&str>) -> S
     for (k, v) in &step.env {
         cmd.env(k, v);
     }
+    // Restart recovery identifies the job's processes by this (see `procfs`).
+    cmd.env(procfs::JOB_MARKER_ENV, &ctx.live.id);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -629,15 +631,17 @@ async fn run_step(ctx: &Ctx<'_>, step: &StepPlan, summary_ns: Option<&str>) -> S
     };
     let pid = child.id().and_then(|p| i32::try_from(p).ok());
     if let Some(pid) = pid {
-        let start = procfs::start_time(pid).and_then(|s| i64::try_from(s).ok());
+        let process = crate::db::jobs::ProcessRecord {
+            pid: i64::from(pid),
+            start: procfs::start_time(pid).and_then(|s| i64::try_from(s).ok()),
+            boot_id: procfs::boot_id(),
+            in_container: step.container.is_some(),
+        };
         let id = ctx.live.id.clone();
-        let in_container = step.container.is_some();
         let _ = ctx
             .mgr
             .db()
-            .call(move |c| {
-                crate::db::jobs::set_process(c, &id, Some(i64::from(pid)), start, in_container)
-            })
+            .call(move |c| crate::db::jobs::set_process(c, &id, Some(&process)))
             .await;
     }
 
@@ -734,7 +738,7 @@ async fn run_step(ctx: &Ctx<'_>, step: &StepPlan, summary_ns: Option<&str>) -> S
         let _ = ctx
             .mgr
             .db()
-            .call(move |c| crate::db::jobs::set_process(c, &id, None, None, false))
+            .call(move |c| crate::db::jobs::set_process(c, &id, None))
             .await;
     }
 

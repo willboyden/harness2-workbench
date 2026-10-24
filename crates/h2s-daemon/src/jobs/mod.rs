@@ -12,8 +12,8 @@
 //! stream never overlap or miss anything. The database is written at every state change.
 //!
 //! On startup, jobs left `running` by a previous server become `failed` ("server
-//! restarted") and their process groups are terminated when the recorded leader pid and
-//! start time still match (see [`procfs`]).
+//! restarted") and their process groups are terminated when they are positively identified:
+//! same boot, and a group member still carrying the job's marker (see [`procfs`]).
 
 pub mod backend;
 pub mod container;
@@ -1088,11 +1088,8 @@ impl JobManager {
             .await
             .ok()
             .flatten();
-        if let Some(r) = row
-            && let (Some(pid), Some(start)) = (r.pid, r.pid_start)
-            && let (Ok(pid), Ok(start)) = (i32::try_from(pid), u64::try_from(start))
-        {
-            procfs::terminate_recorded_group(pid, start, self.settings.kill_grace).await;
+        if let Some(rec) = row.as_ref().and_then(recorded_process) {
+            procfs::terminate_recorded_group(&rec, self.settings.kill_grace).await;
         }
         let now = now_rfc3339();
         live.mutate(|job| {
@@ -1152,11 +1149,28 @@ impl JobManager {
                     Err(e) => notes.push(format!("container not stopped: {e}")),
                 }
             }
-            if let (Some(pid), Some(start)) = (row.pid, row.pid_start)
-                && let (Ok(pid), Ok(start)) = (i32::try_from(pid), u64::try_from(start))
-                && procfs::terminate_recorded_group(pid, start, self.settings.kill_grace).await
-            {
-                notes.push(format!("terminated its process group {pid}"));
+            if row.pid.is_some() {
+                let note = match recorded_process(&row) {
+                    Some(rec) => {
+                        match procfs::terminate_recorded_group(&rec, self.settings.kill_grace).await
+                        {
+                            procfs::Termination::Signalled => {
+                                Some(format!("terminated its process group {}", rec.pid))
+                            }
+                            procfs::Termination::OtherBoot => Some(
+                                "its processes were recorded before a reboot; nothing signalled"
+                                    .to_owned(),
+                            ),
+                            procfs::Termination::NotFound => None,
+                        }
+                    }
+                    None => Some(
+                        "its processes could not be identified (incomplete record); nothing \
+                         signalled"
+                            .to_owned(),
+                    ),
+                };
+                notes.extend(note);
             }
             let mut job = row.job;
             let log_path = logs::log_path(&self.settings.paths.job_logs_dir, &id);
@@ -1200,7 +1214,7 @@ impl JobManager {
             self.db
                 .call(move |c| {
                     crate::db::jobs::save_state(c, &j)?;
-                    crate::db::jobs::set_process(c, &j.id, None, None, false)
+                    crate::db::jobs::set_process(c, &j.id, None)
                 })
                 .await?;
             self.metrics
@@ -1349,6 +1363,16 @@ impl JobManager {
     pub(crate) fn job_dir(&self, id: &str) -> PathBuf {
         self.settings.paths.job_files_dir.join(id)
     }
+}
+
+/// What a job row recorded about its running step's process, when complete.
+fn recorded_process(row: &crate::db::jobs::JobRow) -> Option<procfs::Recorded> {
+    Some(procfs::Recorded {
+        pid: i32::try_from(row.pid?).ok()?,
+        start: u64::try_from(row.pid_start?).ok()?,
+        boot_id: row.pid_boot.clone()?,
+        job_id: row.job.id.clone(),
+    })
 }
 
 #[cfg(test)]

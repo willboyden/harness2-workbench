@@ -47,7 +47,8 @@ pub enum DbError {
 pub type DbResult<T> = Result<T, DbError>;
 
 /// Schema migrations, applied in order; `PRAGMA user_version` counts how many ran.
-const MIGRATIONS: &[&str] = &[r"
+const MIGRATIONS: &[&str] = &[
+    r"
 CREATE TABLE tokens (
     id TEXT PRIMARY KEY,
     secret_hash BLOB NOT NULL,
@@ -140,7 +141,13 @@ CREATE TABLE audit (
     prev_hash TEXT NOT NULL,
     hash TEXT NOT NULL
 ) STRICT;
-"];
+",
+    r"
+-- The boot the recorded pid belongs to (/proc/sys/kernel/random/boot_id): start times are
+-- clock ticks since boot, so a pid and start time from another boot identify nothing.
+ALTER TABLE jobs ADD COLUMN pid_boot TEXT;
+",
+];
 
 /// Schema version this build writes.
 #[must_use]

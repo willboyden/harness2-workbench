@@ -854,13 +854,13 @@ async fn secrets_printed_by_a_job_are_redacted_everywhere() {
     t.stop().await;
 }
 
-/// A crash (no graceful shutdown) leaves a job `running` and its processes alive; the
-/// next server start marks it failed and terminates its process group.
-#[test]
-fn restart_recovers_running_jobs_and_kills_their_processes() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().to_path_buf();
-    let (job_id, child, leader) = std::thread::spawn(move || {
+/// Run a server in its own runtime, start a `sleep-*` demo job on `experiment`, then crash
+/// the server (no graceful shutdown): the job stays `running` in the database and its
+/// processes keep running. Returns the job id, the stub's background child and the leader.
+fn crash_with_a_running_job(path: &std::path::Path, experiment: &str) -> (String, i32, i32) {
+    let path = path.to_path_buf();
+    let experiment = experiment.to_owned();
+    std::thread::spawn(move || {
         mt().block_on(async move {
             fake_harness2_home(&path.join("harness2"));
             let setup = Setup::new(&path);
@@ -888,18 +888,21 @@ fn restart_recovers_running_jobs_and_kills_their_processes() {
                 .post(format!("{}/api/v1/jobs", srv.base_url()))
                 .bearer_auth(minted.token.as_str())
                 .header("x-h2s-request", "1")
-                .json(&demo_spec("sleep-crash"))
+                .json(&demo_spec(&experiment))
                 .send()
                 .await
                 .unwrap()
                 .json()
                 .await
                 .unwrap();
-            let child: i32 = wait_file(&path.join("data/experiments/sleep-crash/child.pid"), 30)
-                .await
-                .trim()
-                .parse()
-                .unwrap();
+            let child: i32 = wait_file(
+                &path.join(format!("data/experiments/{experiment}/child.pid")),
+                30,
+            )
+            .await
+            .trim()
+            .parse()
+            .unwrap();
             let jid = job.id.clone();
             let leader = loop {
                 let j = jid.clone();
@@ -911,6 +914,7 @@ fn restart_recovers_running_jobs_and_kills_their_processes() {
                     .unwrap()
                     .unwrap();
                 if let Some(p) = row.pid {
+                    assert!(row.pid_start.is_some() && row.pid_boot.is_some(), "{row:?}");
                     break i32::try_from(p).unwrap();
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -923,11 +927,21 @@ fn restart_recovers_running_jobs_and_kills_their_processes() {
         })
     })
     .join()
-    .unwrap();
+    .unwrap()
+}
+
+/// A crash (no graceful shutdown) leaves a job `running` and its processes alive; the
+/// next server start marks it failed and terminates its process group, identified by the
+/// job marker in the leader's environment.
+#[test]
+fn restart_recovers_running_jobs_and_kills_their_processes() {
+    let root = tempfile::tempdir().unwrap();
+    let (job_id, child, leader) = crash_with_a_running_job(root.path(), "sleep-crash");
     assert!(
         !process_gone(child),
         "the job's processes should survive the crash"
     );
+    assert!(h2s_daemon::jobs::procfs::carries_marker(leader, &job_id));
 
     mt().block_on(async move {
         let setup = Setup::new(root.path());
@@ -944,7 +958,45 @@ fn restart_recovers_running_jobs_and_kills_their_processes() {
             "the leader survived the restart"
         );
         let log = full_log(&t, &job_id).await;
-        assert!(log.last().unwrap().text.contains("server restarted"));
+        let last = &log.last().unwrap().text;
+        assert!(last.contains("server restarted"), "{last}");
+        assert!(last.contains("terminated its process group"), "{last}");
+        t.stop().await;
+    });
+}
+
+/// Start times are clock ticks since boot: a record from another boot identifies nothing,
+/// so recovery signals nothing. (The processes here are alive and carry the marker, so it
+/// is the boot check that holds.)
+#[test]
+fn restart_recovery_signals_nothing_recorded_on_another_boot() {
+    let root = tempfile::tempdir().unwrap();
+    let (job_id, child, leader) = crash_with_a_running_job(root.path(), "sleep-boot");
+    let db = h2s_daemon::db::open_connection(&root.path().join("data/studio.db")).unwrap();
+    let n = db
+        .execute(
+            "UPDATE jobs SET pid_boot = '00000000-0000-0000-0000-000000000000' WHERE id = ?1",
+            [&job_id],
+        )
+        .unwrap();
+    assert_eq!(n, 1);
+    drop(db);
+
+    mt().block_on(async move {
+        let setup = Setup::new(root.path());
+        let t = TestServer::start_in(root, setup).await;
+        let j = t.job(&job_id).await;
+        assert_terminal(&j, JobStatus::Failed);
+        assert_eq!(j.error.as_deref(), Some("server restarted"));
+        let log = full_log(&t, &job_id).await;
+        let last = &log.last().unwrap().text;
+        assert!(last.contains("before a reboot"), "{last}");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let alive = !process_gone(child) && !process_gone(leader);
+        // Clean up whatever happens below.
+        let _ = h2s_daemon::jobs::procfs::signal_group(leader, nix::sys::signal::Signal::SIGKILL);
+        assert!(alive, "a process recorded on another boot was signalled");
+        assert!(wait_gone(child, 15).await && wait_gone(leader, 15).await);
         t.stop().await;
     });
 }

@@ -168,9 +168,15 @@ Keys beyond §11 (all optional, defaults shown):
   restart (failed, "server restarted").
 - A runner that panics (a bug) fails its job ("internal error in the job runner"), terminates
   its recorded process group and frees its slot.
-- **Restart recovery** signals a recorded process group only when the recorded leader still has
-  the recorded start time (`/proc/<pid>/stat` field 22), or when members of that group started
-  no earlier than it; container jobs are stopped through the label-verified stop.
+- **Restart recovery** signals a recorded process group only after positive identification:
+  the job row records the leader's pid, its start time (`/proc/<pid>/stat` field 22) and the
+  boot id (`/proc/sys/kernel/random/boot_id`); every step process gets `H2S_JOB_ID=<job id>` in
+  its environment. A record from another boot signals nothing; otherwise only a group with a
+  live member (started no earlier than the leader) whose `/proc/<pid>/environ` holds that
+  marker is sent SIGTERM, and SIGKILL after the grace period only while such a member remains.
+  A process that removed the marker from its environment is not found (it is left running and
+  the log says nothing was signalled). The same rule applies when a runner panics. Container
+  jobs are also stopped through the label-verified stop.
 - **Logs**: one JSON `LogLine` per line in `<data>/logs/jobs/<id>.log` (0600), lines cut at
   64 KiB with ` … [line truncated]`, every line through the job's redactor (built from all
   stored and environment secrets plus the job's own), then path-masked: `<job>`, `<experiment>`,

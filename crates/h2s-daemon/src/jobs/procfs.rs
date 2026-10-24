@@ -1,9 +1,12 @@
 //! Process identity from `/proc` (Linux; harness2 is Linux-only) and process-group signals.
 //!
 //! A pid alone is not an identity: after a restart the number may belong to another
-//! process. Jobs record the leader's pid **and** its start time (clock ticks since boot,
-//! `/proc/<pid>/stat` field 22); recovery signals a group only when both still match, or
-//! when members of that group started no earlier than the recorded leader.
+//! process. Jobs record the leader's pid, its start time (clock ticks since boot,
+//! `/proc/<pid>/stat` field 22) and the boot id (`/proc/sys/kernel/random/boot_id`), and
+//! every step process gets [`JOB_MARKER_ENV`] = the job id in its environment. Recovery
+//! signals a recorded group only on the same boot and only when a live member of the group
+//! still carries that marker in `/proc/<pid>/environ` (positive identification); nothing is
+//! signalled on a guess.
 
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
@@ -48,6 +51,68 @@ pub fn is_same_process(pid: i32, start: u64) -> bool {
     stat(pid).is_some_and(|s| s.start == start && s.state != 'Z')
 }
 
+/// Environment variable every step process gets: the id of its job.
+pub const JOB_MARKER_ENV: &str = "H2S_JOB_ID";
+
+/// Largest `/proc/<pid>/environ` read when looking for the marker.
+const MAX_ENVIRON: u64 = 4 * 1024 * 1024;
+
+/// The id of the running boot (`/proc/sys/kernel/random/boot_id`).
+#[must_use]
+pub fn boot_id() -> Option<String> {
+    let s = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
+    let s = s.trim();
+    let ok =
+        !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-');
+    ok.then(|| s.to_owned())
+}
+
+/// `true` when the environment of `pid` holds `H2S_JOB_ID=<job_id>` (readable only for
+/// processes of the same user that are dumpable, as job processes are).
+#[must_use]
+pub fn carries_marker(pid: i32, job_id: &str) -> bool {
+    use std::io::Read;
+    let Ok(f) = std::fs::File::open(format!("/proc/{pid}/environ")) else {
+        return false;
+    };
+    let mut buf = Vec::new();
+    if f.take(MAX_ENVIRON).read_to_end(&mut buf).is_err() {
+        return false;
+    }
+    let want = format!("{JOB_MARKER_ENV}={job_id}");
+    buf.split(|b| *b == 0).any(|e| e == want.as_bytes())
+}
+
+/// What was recorded about a step's leader when it started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recorded {
+    pub pid: i32,
+    pub start: u64,
+    pub boot_id: String,
+    pub job_id: String,
+}
+
+/// The outcome of [`terminate_recorded_group`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Termination {
+    /// Members were identified and signalled.
+    Signalled,
+    /// Recorded on another boot: the pid identifies nothing now.
+    OtherBoot,
+    /// No live member of the group carries the job's marker.
+    NotFound,
+}
+
+/// Live members of the recorded group that carry the job's marker. The group id is the
+/// leader's pid; members started no earlier than the leader (a necessary condition) and
+/// the marker is the identification.
+fn marked_members(rec: &Recorded) -> Vec<i32> {
+    group_members(rec.pid, rec.start)
+        .into_iter()
+        .filter(|p| carries_marker(*p, &rec.job_id))
+        .collect()
+}
+
 /// Live (non-zombie) members of process group `pgid` that started at or after `min_start`.
 #[must_use]
 pub fn group_members(pgid: i32, min_start: u64) -> Vec<i32> {
@@ -87,26 +152,28 @@ pub fn group_alive(pgid: i32) -> bool {
     }
 }
 
-/// Terminate a job's process group found after a restart: only when the recorded leader
-/// is still the same process, or members started no earlier than it. SIGTERM, then
-/// SIGKILL after `grace`. Returns `true` when something was signalled.
-pub async fn terminate_recorded_group(pid: i32, start: u64, grace: std::time::Duration) -> bool {
-    let leader_matches = is_same_process(pid, start);
-    if !leader_matches && group_members(pid, start).is_empty() {
-        return false;
+/// Terminate a job's process group found after a restart (or left by a runner that
+/// panicked): only on the recorded boot and only while a member of the group carries the
+/// job's marker. SIGTERM, then SIGKILL after `grace` if a marked member is still alive (so
+/// the group id is still the job's).
+pub async fn terminate_recorded_group(rec: &Recorded, grace: std::time::Duration) -> Termination {
+    if boot_id().as_deref() != Some(rec.boot_id.as_str()) {
+        return Termination::OtherBoot;
     }
-    if signal_group(pid, Signal::SIGTERM).is_err() {
-        return false;
+    if marked_members(rec).is_empty() || signal_group(rec.pid, Signal::SIGTERM).is_err() {
+        return Termination::NotFound;
     }
     let deadline = tokio::time::Instant::now() + grace;
     while tokio::time::Instant::now() < deadline {
-        if group_members(pid, start).is_empty() {
-            return true;
+        if marked_members(rec).is_empty() {
+            return Termination::Signalled;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    let _ = signal_group(pid, Signal::SIGKILL);
-    true
+    if !marked_members(rec).is_empty() {
+        let _ = signal_group(rec.pid, Signal::SIGKILL);
+    }
+    Termination::Signalled
 }
 
 #[cfg(test)]
@@ -148,21 +215,134 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn terminates_a_recorded_group() {
-        let mut cmd = std::process::Command::new("sleep");
+    /// Spawn `sh -c script` as its own process group, with or without the marker.
+    fn spawn_group(script: &str, marker: Option<&str>) -> (std::process::Child, Recorded) {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", script]).env_remove(JOB_MARKER_ENV);
+        if let Some(m) = marker {
+            cmd.env(JOB_MARKER_ENV, m);
+        }
         std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-        let mut child = cmd.arg("30").spawn().unwrap();
+        let child = cmd.spawn().unwrap();
         let pid = i32::try_from(child.id()).unwrap();
-        let start = start_time(pid).unwrap();
-        assert!(group_alive(pid));
-        // A wrong start time must not signal anything.
-        assert!(
-            !terminate_recorded_group(pid, start + 1_000_000, std::time::Duration::from_secs(1))
-                .await
+        let rec = Recorded {
+            pid,
+            start: start_time(pid).unwrap(),
+            boot_id: boot_id().unwrap(),
+            job_id: "job-1".into(),
+        };
+        (child, rec)
+    }
+
+    #[test]
+    fn the_boot_id_is_read() {
+        let a = boot_id().unwrap();
+        assert_eq!(a.len(), 36, "{a}");
+        assert_eq!(boot_id().unwrap(), a);
+    }
+
+    #[tokio::test]
+    async fn terminates_a_marked_group() {
+        let (mut child, rec) = spawn_group("exec sleep 30", Some("job-1"));
+        assert!(group_alive(rec.pid));
+        assert!(carries_marker(rec.pid, "job-1"));
+        assert!(!carries_marker(rec.pid, "job-2"));
+        // A wrong start time, another job's marker or another boot signal nothing.
+        let wrong_start = Recorded {
+            start: rec.start + 1_000_000,
+            ..rec.clone()
+        };
+        let other_job = Recorded {
+            job_id: "job-2".into(),
+            ..rec.clone()
+        };
+        let other_boot = Recorded {
+            boot_id: "00000000-0000-0000-0000-000000000000".into(),
+            ..rec.clone()
+        };
+        let grace = std::time::Duration::from_secs(1);
+        assert_eq!(
+            terminate_recorded_group(&wrong_start, grace).await,
+            Termination::NotFound
         );
-        assert!(terminate_recorded_group(pid, start, std::time::Duration::from_secs(5)).await);
+        assert_eq!(
+            terminate_recorded_group(&other_job, grace).await,
+            Termination::NotFound
+        );
+        assert_eq!(
+            terminate_recorded_group(&other_boot, grace).await,
+            Termination::OtherBoot
+        );
+        assert!(group_alive(rec.pid));
+        assert_eq!(
+            terminate_recorded_group(&rec, std::time::Duration::from_secs(5)).await,
+            Termination::Signalled
+        );
         let status = child.wait().unwrap();
         assert!(!status.success());
+    }
+
+    /// The old fallback signalled any group member that started after the recorded leader.
+    /// A group whose members do not carry the job's marker is left alone.
+    #[tokio::test]
+    async fn unmarked_groups_are_never_signalled() {
+        let (mut child, rec) = spawn_group("exec sleep 30", None);
+        assert_eq!(
+            terminate_recorded_group(&rec, std::time::Duration::from_secs(1)).await,
+            Termination::NotFound
+        );
+        assert!(group_alive(rec.pid));
+        signal_group(rec.pid, Signal::SIGKILL).unwrap();
+        let _ = child.wait();
+    }
+
+    /// After the leader exits, a member that still carries the marker identifies the group;
+    /// one that dropped it does not.
+    #[tokio::test]
+    async fn members_are_identified_by_their_marker_when_the_leader_is_gone() {
+        // The members once the leader is reaped and the background child runs `sleep`
+        // (before its last exec it may still be `sh` or `env`, with the marker).
+        let wait_member = |pgid: i32| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                let members = group_members(pgid, 0);
+                let sleeping = members.iter().all(|m| {
+                    std::fs::read_to_string(format!("/proc/{m}/comm"))
+                        .is_ok_and(|c| c.trim() == "sleep")
+                });
+                if !members.is_empty() && sleeping {
+                    return members;
+                }
+                assert!(std::time::Instant::now() < deadline, "no member left");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        // The leader backgrounds a child and exits.
+        let (mut child, rec) = spawn_group("sleep 30 & exit 0", Some("job-1"));
+        let _ = child.wait();
+        let members = wait_member(rec.pid);
+        assert!(members.iter().all(|m| carries_marker(*m, "job-1")));
+        assert_eq!(
+            terminate_recorded_group(&rec, std::time::Duration::from_secs(5)).await,
+            Termination::Signalled
+        );
+        assert!(group_members(rec.pid, 0).is_empty());
+
+        let (mut child, rec) = spawn_group(
+            &format!("env -u {JOB_MARKER_ENV} sleep 30 & exit 0"),
+            Some("job-1"),
+        );
+        let _ = child.wait();
+        let members = wait_member(rec.pid);
+        assert_eq!(
+            terminate_recorded_group(&rec, std::time::Duration::from_secs(1)).await,
+            Termination::NotFound
+        );
+        assert_eq!(
+            group_members(rec.pid, 0),
+            members,
+            "an unmarked member was signalled"
+        );
+        signal_group(rec.pid, Signal::SIGKILL).unwrap();
     }
 }
