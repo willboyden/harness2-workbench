@@ -7,7 +7,9 @@
 //! - `codex`: `AGENTS.md`, `.agents/skills/`, `.codex/hooks.json`, `scripts/`, sub-agents
 //!   as `.codex/agents/<name>.md` with a note that Codex has no native sub-agent loader.
 //!
-//! Export never changes file contents except to join the always-on files.
+//! Export never changes file contents except to join the always-on files. Every path must
+//! be a clean relative path without control characters ([`names::relative_path`]), so no
+//! terminal escape sequence can ship in a file name.
 
 use std::io::Write;
 
@@ -213,7 +215,7 @@ fn bundle(
 /// directory `harness-<label>/`).
 ///
 /// Owner and group are 0 with empty names; the gzip header carries no name and mtime 0.
-/// Refused: an invalid label, an unsafe or duplicate path.
+/// Refused: an invalid label, an unsafe or duplicate path, a path with a control character.
 pub fn tar_gz(bundle: &ExportBundle) -> Result<Vec<u8>> {
     names::harness_label(&bundle.label)?;
     let mut files: Vec<&FileText> = bundle.files.iter().collect();
@@ -404,5 +406,30 @@ mod tests {
         let mut dup = b;
         dup.files[1].path = dup.files[0].path.clone();
         assert!(tar_gz(&dup).is_err());
+    }
+
+    /// A file name carrying a terminal escape sequence never reaches an export.
+    #[test]
+    fn names_with_control_characters_are_refused() {
+        let h = harness(
+            Surface::Opencode,
+            &[
+                ("systemprompt.md", "a"),
+                ("scripts/x\u{1b}]0;pwned\u{7}.py", ""),
+            ],
+        );
+        for target in [ExportTarget::Raw, ExportTarget::Opencode] {
+            let err = export(&h, target).unwrap_err();
+            assert!(err.to_string().contains("control characters"), "{err}");
+        }
+        let clean = harness(Surface::Opencode, &[("systemprompt.md", "a")]);
+        let mut b = export(&clean, ExportTarget::Raw).unwrap();
+        b.files[0].path = "a\u{9b}31m.md".into();
+        assert!(
+            tar_gz(&b)
+                .unwrap_err()
+                .to_string()
+                .contains("control characters")
+        );
     }
 }
