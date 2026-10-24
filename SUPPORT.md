@@ -1,8 +1,8 @@
 # Getting help
 
-- **How do I…?** Start with the [README](README.md), the in-app *Help* page and the
-  [troubleshooting guide](docs/TROUBLESHOOTING.md), which is indexed by the exact error message you
-  see; [CONCEPTS.md](docs/CONCEPTS.md) explains harness2's vocabulary and the
+- **How do I…?** Start with the [README](README.md), the [user guide](docs/USER-GUIDE.md), the
+  in-app *Help* page and the [troubleshooting guide](docs/TROUBLESHOOTING.md), which is indexed by
+  the exact error message you see; [CONCEPTS.md](docs/CONCEPTS.md) explains harness2's vocabulary and the
   [administrator's guide](docs/ADMIN-GUIDE.md) covers installation and configuration. Still stuck?
   Open a GitHub Discussion (or an issue labelled `question`).
 - **Something is broken:** open an issue with the bug template. Include `h2studio version`, the

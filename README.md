@@ -30,7 +30,18 @@ under the same rules as people.
 > Studio itself**. MCP agents: give them a viewer token; an operator token only when they must start
 > jobs; never an admin token; and treat everything a tool returns as untrusted.
 
-<!-- screenshots: added after the UI merge -->
+<table>
+<tr>
+<td width="33%"><a href="docs/USER-GUIDE.md#4-the-dashboard-and-the-guided-tour"><img src="docs/images/dashboard.png" alt="The dashboard: harness2 status, environment checks, recent jobs and experiments"></a></td>
+<td width="33%"><a href="docs/USER-GUIDE.md#6-a-task-in-depth"><img src="docs/images/task-diff.png" alt="The diff between a task's base harness and the harness harness2 adopted"></a></td>
+<td width="33%"><a href="docs/USER-GUIDE.md#9-comparing-results"><img src="docs/images/mock-compare.png" alt="Comparing two results task by task with a sign test (fictional mock data)"></a></td>
+</tr>
+<tr>
+<td>The dashboard (real server)</td>
+<td>What changed in a harness (real demo run)</td>
+<td>Comparing two results (fictional mock data)</td>
+</tr>
+</table>
 
 ## Status and how to read it
 
@@ -78,7 +89,7 @@ through the Studio**: the only real harness2 workflow exercised end to end is th
 | Compose reference deployment (internal network, egress proxy, TLS ingress) | Implemented | verified live by the maintainers, 2026-10-23; not re-run by the author | [ADMIN-GUIDE §10](docs/ADMIN-GUIDE.md#10-the-compose-reference-deployment) |
 | OpenTelemetry traces (OTLP/HTTP) and Prometheus metrics | Implemented | verified live (local collector; scrape with a bearer secret) | |
 | MCP server: 42 tools, resources, prompts; stdio and streamable HTTP | Implemented | verified live (stdio session including a real demo run, HTTP guard); client configuration snippets unverified | [MCP.md](docs/MCP.md) |
-| Web UI (Leptos, WebAssembly) | Implemented | unverified by the documentation author (not run in a browser); the maintainers' notes record scripted headless-Firefox runs against a mock API and a real server | build it with `cargo xtask web`; without it the server serves a placeholder page; [notes](docs/notes/web.md) |
+| Web UI (Leptos, WebAssembly) | Implemented | verified live in headless Firefox on 2026-10-24 against a real server and the free demo (most pages), and against a fictional mock API (scored pages); not other browsers, not a model-backed run | build it with `cargo xtask web`; without it the server serves a placeholder page; [USER-GUIDE](docs/USER-GUIDE.md) says what was and was not exercised |
 | systemd user unit | Implemented | syntax checked with `systemd-analyze verify`; service not started | |
 | Native TLS, multi-node scheduling, hosting models, Postgres, per-experiment permissions, Windows or macOS job hosts | Not planned | n/a | use a reverse proxy; harness2's setup guide specifies Linux |
 
@@ -134,7 +145,7 @@ $ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8722/api/v1/jobs/01
 ```
 
 The [API walkthrough](docs/API.md#10-a-curl-walkthrough) continues from there (diffs, exports, reports);
-the web UI offers the same in a browser once it is built into the binary. Before you point it at a real
+the web UI ([USER-GUIDE.md](docs/USER-GUIDE.md)) offers the same in a browser once it is built into the binary. Before you point it at a real
 model, read [MODELS.md](docs/MODELS.md) and [THREAT-MODEL.md](docs/THREAT-MODEL.md): **in the default
 host mode, executors run with your user's files and network.**
 
@@ -219,6 +230,7 @@ configuration, the safety rules and every tool: [docs/MCP.md](docs/MCP.md).
 | Document | For | What it covers |
 |---|---|---|
 | [docs/CONCEPTS.md](docs/CONCEPTS.md) | newcomers | harness2 in plain terms: recursion, the eight harness components, modes, budgets; a glossary mapping harness2's words to the Studio |
+| [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | everyone who uses the web UI | a screen-by-screen walkthrough with screenshots: signing in, experiments and sweeps, a task's harnesses and diffs, starting a run, live jobs, comparing, settings, keyboard shortcuts, what each role sees |
 | [docs/ADMIN-GUIDE.md](docs/ADMIN-GUIDE.md) | administrators | install, every configuration key, authentication, TLS behind a proxy, container isolation, the egress allowlist, compose, observability, backups, upgrades, the audit log, systemd, a hardening checklist |
 | [docs/MODELS.md](docs/MODELS.md) | operators | model profiles for Vertex AI and OpenAI-compatible servers; which benchmark and executor works with which; judge rules; cost |
 | [docs/API.md](docs/API.md) | integrators | authentication, the CSRF rules, errors, paging, jobs, server-sent events, roles per route, the OpenAPI document, curl recipes |
@@ -229,8 +241,6 @@ configuration, the safety rules and every tool: [docs/MCP.md](docs/MCP.md).
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | contributors | the build contract: components, REST table, security model, job engine, configuration, addenda |
 | [docs/SUPPLY-CHAIN.md](docs/SUPPLY-CHAIN.md), [docs/RELEASING.md](docs/RELEASING.md) | maintainers | dependency policy, release process |
 | [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md), [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md) | | reporting, getting help, contributing, release notes |
-
-A user guide for the web UI is planned; until it lands, the app's own Help page and the glossary tooltips explain each screen.
 
 ## Repository layout
 

@@ -175,8 +175,8 @@ reports and headlines, **fractions (0..1)** in judge rows, task rows and compari
 ## 7. Glossary: harness2 terms and where they appear in the Studio
 
 REST paths are relative to `/api/v1`. The MCP names are tools unless marked otherwise. "UI"
-refers to the routes in the UI contract ([ARCHITECTURE.md](ARCHITECTURE.md) §12); a user guide for
-the web UI is a separate document.
+refers to the routes in the UI contract ([ARCHITECTURE.md](ARCHITECTURE.md) §12); the screens are
+walked through in the [user guide](USER-GUIDE.md).
 
 | harness2 term | Meaning | In the Studio |
 |---|---|---|
