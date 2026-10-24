@@ -9,14 +9,17 @@ versioned with the product.
 Code scanning (the CodeQL and OpenSSF Scorecard jobs of `.github/workflows/security.yml`) and the
 build-provenance attestations of the release workflow need a public repository on GitHub's free
 plan (private repositories need GitHub Advanced Security or Enterprise Cloud). The two scanning jobs
-therefore run only when the repository variable `CODE_SCANNING_ENABLED` is `true`:
-`gh variable set CODE_SCANNING_ENABLED --body true` once the repository is public. Tag the first
-release only after that.
+therefore run only when the repository variable `CODE_SCANNING_ENABLED` is `true`
+(`gh variable set CODE_SCANNING_ENABLED --body true`, done when the repository became public on
+2026-10-24). Tag the first release only with that set.
 
-When the repository becomes public, also turn on what the governance files promise: private
-vulnerability reporting (SECURITY.md), Discussions (SUPPORT.md), branch protection for `main`
-(CONTRIBUTING.md; with a single code owner, decide whether code-owner review is required, since it
-blocks your own pull requests), and create the `triage` label the issue forms use.
+Also set on 2026-10-24, as the governance files promise: private vulnerability reporting
+(SECURITY.md), Discussions (SUPPORT.md), the `triage` label the issue forms use, Dependabot alerts
+and security updates, secret scanning with push protection, deletion of merged branches, and a
+ruleset for `main` (CONTRIBUTING.md): pull requests need green CI (the eight jobs of `ci.yml`, plus
+`cargo audit` and `gitleaks` from `security.yml`, as reported by GitHub Actions) and an approving review
+from a code owner, approvals are dismissed by new commits, force-pushes and deletion are blocked,
+and the repository admin role may bypass it. If you fork this project, set the same.
 
 ## Build artifacts
 
