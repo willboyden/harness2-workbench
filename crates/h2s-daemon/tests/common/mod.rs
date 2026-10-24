@@ -502,6 +502,8 @@ pub struct Setup {
     pub sleep_secs: f64,
     /// Plan jobs with the production backend (`h2s-core`) instead of [`FakeBackend`].
     pub core_backend: bool,
+    /// Event-stream heartbeat (the server's default when `None`).
+    pub sse_heartbeat: Option<Duration>,
 }
 
 impl Setup {
@@ -514,6 +516,7 @@ impl Setup {
             install_harness2: true,
             sleep_secs: 1.0,
             core_backend: false,
+            sse_heartbeat: None,
         }
     }
 }
@@ -740,6 +743,7 @@ pub async fn start_server(
     };
     let mut opts = ServerOptions::new(backend);
     opts.kill_grace = Some(setup.kill_grace);
+    opts.sse_heartbeat = setup.sse_heartbeat;
     opts.proxy_secret.clone_from(&setup.proxy_secret);
     let vars = setup.secret_env.clone();
     let names: Vec<String> = vars

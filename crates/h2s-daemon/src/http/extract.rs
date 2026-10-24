@@ -246,6 +246,42 @@ impl AuthFailure {
     }
 }
 
+/// What authenticated a request, kept so long-lived responses (event streams) can check
+/// that it is still valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Credential {
+    /// An API token (by id).
+    Token(String),
+    /// A browser session (by the hash of its id).
+    Session([u8; 32]),
+    /// Reverse-proxy headers: nothing the server can revoke.
+    Proxy,
+}
+
+/// Whether `credential` still authenticates: the token is neither revoked nor expired, the
+/// session still exists (logout, revocation and expiry end it). Database errors count as
+/// invalid (the client reconnects and authenticates again).
+pub(crate) async fn credential_valid(state: &AppState, credential: &Credential) -> bool {
+    let now = now_unix();
+    match credential.clone() {
+        Credential::Proxy => true,
+        Credential::Token(id) => state
+            .db
+            .call(move |c| crate::db::tokens::get(c, &id))
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|r| r.is_active(now)),
+        Credential::Session(hash) => state
+            .db
+            .call(move |c| crate::db::sessions::lookup(c, &hash, now))
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|r| r.is_active(now)),
+    }
+}
+
 /// Verify a presented token string.
 pub(crate) async fn verify_token(
     state: &AppState,
@@ -334,11 +370,14 @@ async fn resolve(
     state: &AppState,
     headers: &http::HeaderMap,
     meta: &RequestMeta,
-) -> Result<Principal, Failed> {
+) -> Result<(Principal, Credential), Failed> {
     if let Some(b) = bearer(headers) {
         let token = b?;
         return match verify_token(state, &token).await {
-            Ok(rec) => Ok(token_principal(&rec, PrincipalKind::Token)),
+            Ok(rec) => Ok((
+                token_principal(&rec, PrincipalKind::Token),
+                Credential::Token(rec.id),
+            )),
             Err(why) => Err(Failed {
                 why,
                 target: crate::auth::token_id_hint(&token).map(str::to_owned),
@@ -360,18 +399,23 @@ async fn resolve(
                 target: Some(rec.id),
             });
         }
-        return Ok(token_principal(&rec, PrincipalKind::Session));
+        return Ok((
+            token_principal(&rec, PrincipalKind::Session),
+            Credential::Session(hash),
+        ));
     }
     if state.cfg.file.auth.mode == h2s_api::AuthMode::Proxy {
         let p = &state.cfg.file.auth.proxy;
         if let Some(user) = headers.get(p.user_header.as_str()) {
-            return proxy_principal(state, headers, meta, user).map_err(|why| Failed {
-                why,
-                target: user
-                    .to_str()
-                    .ok()
-                    .map(|u| crate::util::truncate_chars(u, 100)),
-            });
+            return proxy_principal(state, headers, meta, user)
+                .map(|principal| (principal, Credential::Proxy))
+                .map_err(|why| Failed {
+                    why,
+                    target: user
+                        .to_str()
+                        .ok()
+                        .map(|u| crate::util::truncate_chars(u, 100)),
+                });
         }
     }
     Err(AuthFailure::Missing.into())
@@ -447,8 +491,9 @@ pub async fn authenticate(parts: &mut Parts, state: &AppState) -> Result<Princip
     }
     let meta = RequestMeta::from_request_parts(parts, state).await?;
     match resolve(state, &parts.headers, &meta).await {
-        Ok(p) => {
+        Ok((p, credential)) => {
             parts.extensions.insert(p.clone());
+            parts.extensions.insert(credential);
             Ok(p)
         }
         Err(Failed { why, target }) => {
@@ -514,6 +559,8 @@ impl Need for AdminRole {
 #[derive(Debug, Clone)]
 pub struct Auth<R: Need> {
     pub principal: Principal,
+    /// What authenticated the request (re-checked by event streams).
+    pub credential: Credential,
     pub meta: RequestMeta,
     _need: PhantomData<fn() -> R>,
 }
@@ -583,8 +630,14 @@ impl<R: Need> FromRequestParts<AppState> for Auth<R> {
             let route = format!("{} {}", parts.method, parts.uri.path());
             return Err(deny(state, &principal, &meta, &route, role).await);
         }
+        let credential = parts
+            .extensions
+            .get::<Credential>()
+            .cloned()
+            .ok_or_else(|| ApiError::internal("the request lost its credential"))?;
         Ok(Auth {
             principal,
+            credential,
             meta,
             _need: PhantomData,
         })

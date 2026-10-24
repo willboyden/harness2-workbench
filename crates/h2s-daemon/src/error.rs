@@ -108,6 +108,13 @@ impl ApiError {
         e
     }
 
+    /// The same error with another message.
+    #[must_use]
+    pub fn with_message(mut self, m: impl Into<String>) -> ApiError {
+        self.message = m.into();
+        self
+    }
+
     #[must_use]
     pub fn misdirected() -> ApiError {
         Self::new(

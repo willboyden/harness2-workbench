@@ -71,6 +71,7 @@ Keys beyond §11 (all optional, defaults shown):
 
 | Key | Default | Meaning |
 |---|---|---|
+| `server.sse_max_per_principal` | `8` | Event streams one principal may hold (1 ..= 10,000), see "Event streams". |
 | `jobs.max_log_bytes` | `268435456` (256 MiB) | Largest stored log per job (64 KiB ..= 1 TiB). Past it, one marker line, then output is still read (the job never blocks) and parsed for progress, results and the bridge, but not stored; each step's end reports how many lines were not stored. The server's own lines may use 64 KiB more. |
 | `jobs.min_free_disk_mb` | `256` | Running jobs are stopped (failed, "stopped: less than N MiB free on the data directory") when the filesystem of `paths.data_dir` has less free space; checked when a job starts and every 15 s. `0` = never. |
 | `paths.allow_untested_harness2_rev` | `false` | `install_harness2` with a `rev` other than the tested commit (`h2s_core::TESTED_HARNESS2_COMMIT`) is 422 on `params.rev` unless `true`: a fork can make any commit fetchable from the upstream repository, and installing runs its build code. |
@@ -200,7 +201,14 @@ Keys beyond §11 (all optional, defaults shown):
   `N+1..` up to the snapshot (from the ring buffer or the file); a `heartbeat` event at least every
   15 s; the stream ends after the terminal `status` event, after 10 minutes without events, after
   1 hour, or at shutdown (clients reconnect). A subscriber that falls behind gets a fresh
-  `snapshot`. `server.sse_max_connections` streams at once, then 503.
+  `snapshot`. At every heartbeat the caller's credential is checked again: a revoked or expired
+  token, or a session that ended (logout, revocation, expiry), ends the stream without a final
+  event (proxy users have nothing to revoke; their streams still end after 1 hour). A
+  `Last-Event-ID` too large to have a successor replays nothing. Each principal (a token
+  together with its browser sessions, or one proxy user) may hold
+  `server.sse_max_per_principal` streams (default 8), then 429; `server.sse_max_connections`
+  streams at once in total, then 503. A slot is released once the server notices the closed
+  connection, at the latest at the next heartbeat.
 
 ## Container isolation
 

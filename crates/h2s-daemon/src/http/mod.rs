@@ -55,6 +55,10 @@ pub struct AppInner {
     /// `Host` values this server answers to (configured + loopback forms of the bound port).
     pub hosts: Vec<HostEntry>,
     pub sse_open: AtomicUsize,
+    /// Open event streams per principal (see `routes::jobs`).
+    pub sse_by_principal: std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    /// Heartbeat of event streams; the caller's credential is re-checked at each one.
+    pub sse_heartbeat: std::time::Duration,
     pub shutdown: watch::Receiver<bool>,
     /// Shared secret a trusted reverse proxy presents (proxy auth mode).
     pub proxy_secret: Option<Zeroizing<String>>,

@@ -63,6 +63,8 @@ pub struct ServerSection {
     pub max_body_bytes: u64,
     pub request_timeout_secs: u64,
     pub sse_max_connections: u32,
+    /// Event streams one principal (a token and its sessions, or a proxy user) may hold.
+    pub sse_max_per_principal: u32,
     pub login_attempts_per_minute: u32,
 }
 
@@ -76,6 +78,7 @@ impl Default for ServerSection {
             max_body_bytes: 1_048_576,
             request_timeout_secs: 60,
             sse_max_connections: 64,
+            sse_max_per_principal: 8,
             login_attempts_per_minute: 10,
         }
     }
@@ -1039,6 +1042,13 @@ fn validate(
         problems,
         "server.sse_max_connections",
         s.sse_max_connections,
+        1,
+        10_000,
+    );
+    range_check(
+        problems,
+        "server.sse_max_per_principal",
+        s.sse_max_per_principal,
         1,
         10_000,
     );

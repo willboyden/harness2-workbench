@@ -62,6 +62,8 @@ pub struct ServerOptions {
     pub proxy_secret: Option<String>,
     /// SIGTERM -> SIGKILL grace for job cancellation (10 s by default).
     pub kill_grace: Option<Duration>,
+    /// Event-stream heartbeat (15 s by default; tests shorten it).
+    pub sse_heartbeat: Option<Duration>,
 }
 
 impl ServerOptions {
@@ -72,6 +74,7 @@ impl ServerOptions {
             secret_env: None,
             proxy_secret: None,
             kill_grace: None,
+            sse_heartbeat: None,
         }
     }
 }
@@ -175,6 +178,8 @@ impl Server {
             doctor: DoctorService::default(),
             hosts,
             sse_open: AtomicUsize::new(0),
+            sse_by_principal: std::sync::Mutex::new(std::collections::HashMap::new()),
+            sse_heartbeat: opts.sse_heartbeat.unwrap_or(super::routes::jobs::HEARTBEAT),
             shutdown: shutdown_rx,
             proxy_secret,
             bound,

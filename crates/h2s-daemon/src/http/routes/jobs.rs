@@ -5,7 +5,9 @@
 //! events carry `id: <line number>`; a reconnecting client's `Last-Event-ID` replays the
 //! lines it missed. The first frame is always a `snapshot`; a `heartbeat` follows at least
 //! every 15 s; the stream ends after the terminal `status` event, after an idle period,
-//! after a maximum lifetime, or at server shutdown.
+//! after a maximum lifetime, at server shutdown, or at a heartbeat once the caller's token
+//! or session is no longer valid (revoked, expired, logged out). Streams are capped per
+//! principal and in total.
 
 use std::convert::Infallible;
 use std::sync::atomic::Ordering;
@@ -24,7 +26,7 @@ use super::clamp_limit;
 use crate::db::jobs::{JobFilter, parse_enum};
 use crate::error::ApiError;
 use crate::http::AppState;
-use crate::http::extract::{ApiJson, ApiQuery, Auth, OperatorRole, ViewerRole};
+use crate::http::extract::{ApiJson, ApiQuery, Auth, OperatorRole, ViewerRole, credential_valid};
 
 /// Heartbeat interval of event streams.
 pub const HEARTBEAT: Duration = Duration::from_secs(15);
@@ -164,25 +166,53 @@ pub async fn log(
     ))
 }
 
-/// Holds one of the server's event-stream slots.
+/// Holds one of the server's event-stream slots and one of its principal's.
 struct SseSlot {
     state: AppState,
+    principal: String,
+}
+
+/// The key streams are counted under: a token and its browser sessions together, or one
+/// proxy user.
+fn principal_key(p: &h2s_api::Principal) -> String {
+    match p.kind {
+        h2s_api::PrincipalKind::Proxy => format!("proxy:{}", p.id),
+        _ => format!("token:{}", p.id),
+    }
 }
 
 impl SseSlot {
-    fn acquire(state: &AppState) -> Result<SseSlot, ApiError> {
+    fn acquire(state: &AppState, principal: String) -> Result<SseSlot, ApiError> {
+        let per = usize::try_from(state.cfg.file.server.sse_max_per_principal).unwrap_or(8);
+        {
+            let mut map = match state.sse_by_principal.lock() {
+                Ok(m) => m,
+                Err(p) => p.into_inner(),
+            };
+            let n = map.entry(principal.clone()).or_insert(0);
+            if *n >= per {
+                state.metrics.auth_failure("sse_per_principal");
+                return Err(ApiError::rate_limited(5).with_message(format!(
+                    "this caller already has {per} open event streams; close one first"
+                )));
+            }
+            *n += 1;
+        }
+        let slot = SseSlot {
+            state: state.clone(),
+            principal,
+        };
         let max = usize::try_from(state.cfg.file.server.sse_max_connections).unwrap_or(64);
         let prev = state.sse_open.fetch_add(1, Ordering::SeqCst);
+        state.metrics.sse_connections.inc();
         if prev >= max {
-            state.sse_open.fetch_sub(1, Ordering::SeqCst);
+            // Dropping the slot gives both counts back.
+            drop(slot);
             return Err(ApiError::unavailable(
                 "too many open event streams; try again later",
             ));
         }
-        state.metrics.sse_connections.inc();
-        Ok(SseSlot {
-            state: state.clone(),
-        })
+        Ok(slot)
     }
 }
 
@@ -190,6 +220,16 @@ impl Drop for SseSlot {
     fn drop(&mut self) {
         self.state.sse_open.fetch_sub(1, Ordering::SeqCst);
         self.state.metrics.sse_connections.dec();
+        let mut map = match self.state.sse_by_principal.lock() {
+            Ok(m) => m,
+            Err(p) => p.into_inner(),
+        };
+        if let Some(n) = map.get_mut(&self.principal) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                map.remove(&self.principal);
+            }
+        }
     }
 }
 
@@ -216,22 +256,22 @@ fn heartbeat() -> Event {
     responses((status = 200, description = "text/event-stream; every data frame is one JobEvent", content_type = "text/event-stream"),
         (status = "default", description = "Error", body = ErrorBody)))]
 pub async fn events(
-    _auth: Auth<ViewerRole>,
+    auth: Auth<ViewerRole>,
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let id = job_id(&id)?;
-    let slot = SseSlot::acquire(&state)?;
+    let slot = SseSlot::acquire(&state, principal_key(&auth.principal))?;
     let last_seen: Option<u64> = headers
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.trim().parse().ok());
     let sub = state.jobs.subscribe(&id).await?;
     let snapshot_lines = sub.snapshot.log_lines;
-    let replay: Vec<LogLine> = match last_seen {
-        Some(last) if last + 1 < snapshot_lines => {
-            let from = last + 1;
+    let replay_from = last_seen.and_then(|last| last.checked_add(1));
+    let replay: Vec<LogLine> = match replay_from {
+        Some(from) if from < snapshot_lines => {
             let ring_ok = sub.recent.first().is_some_and(|l| l.n <= from);
             if ring_ok {
                 sub.recent
@@ -247,6 +287,9 @@ pub async fn events(
     };
     let mut shutdown = state.shutdown.clone();
     let jobs = state.jobs.clone();
+    let heartbeat_every = state.sse_heartbeat;
+    let credential = auth.credential.clone();
+    let st = state.clone();
     let stream = async_stream::stream! {
         let _slot = slot;
         let terminal = sub.snapshot.status.is_terminal();
@@ -257,7 +300,10 @@ pub async fn events(
         let Some(mut rx) = sub.events.filter(|_| !terminal) else {
             return;
         };
-        let mut beat = tokio::time::interval_at(tokio::time::Instant::now() + HEARTBEAT, HEARTBEAT);
+        let mut beat = tokio::time::interval_at(
+            tokio::time::Instant::now() + heartbeat_every,
+            heartbeat_every,
+        );
         let end = tokio::time::Instant::now() + MAX_STREAM;
         let mut idle = tokio::time::Instant::now() + IDLE_CLOSE;
         loop {
@@ -287,7 +333,13 @@ pub async fn events(
                     }
                     Err(RecvError::Closed) => break,
                 },
-                _ = beat.tick() => yield Ok(heartbeat()),
+                _ = beat.tick() => {
+                    // A revoked or expired token, or an ended session, ends the stream.
+                    if !credential_valid(&st, &credential).await {
+                        break;
+                    }
+                    yield Ok(heartbeat());
+                }
                 () = tokio::time::sleep_until(idle) => break,
                 () = tokio::time::sleep_until(end) => break,
                 _ = shutdown.changed() => break,
