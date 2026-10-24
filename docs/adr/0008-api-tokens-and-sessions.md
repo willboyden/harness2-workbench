@@ -30,7 +30,13 @@ and must not leak information through timing or error text.
   and an open event stream notices at its next heartbeat. Login is rate-limited per client address.
 - **Failed authentication is throttled per client address** (60 a minute, then `429`), and at most 10
   of those failures a minute per client reach the audit log, so presenting junk tokens can neither
-  guess nor flood. Valid credentials from the same address are not affected.
+  guess nor flood. Valid credentials from the same address are not affected. The limiters key each
+  request on its TCP peer *and* its client (behind a trusted proxy, the `X-Forwarded-For` client):
+  a peer holds at most 1,024 client keys and its other clients share one bucket of that peer, so a
+  process that invents forwarded addresses only limits itself.
+- The audit log names the **kind** of every actor: `token:<name>`, `proxy:<user>`, `cli`, `server`
+  or `anonymous`, so a proxy user cannot pose as a token (a user called `initial admin` is
+  `proxy:initial admin`, not the bootstrap token's `token:initial admin`).
 - There are **no passwords** and no user table. A proxy mode accepts a user and groups asserted by a
   trusted reverse proxy instead, behind a shared secret, for deployments with SSO.
 - `h2workbench init` mints the first admin token and prints it once.
@@ -44,7 +50,7 @@ Good:
   every stored hash (which would also leak timing).
 - Nothing to reset or recover: lose a token, create another. Rotation is create-then-revoke.
 - The same credential works for the CLI, curl, CI, MCP and the browser, and every action is
-  attributable to a named token.
+  attributable to a named token (or, in proxy mode, to a named proxy user).
 
 Bad, and how it is managed:
 
@@ -60,8 +66,10 @@ Bad, and how it is managed:
 - Sessions are not bound to an address or user agent.
 - **Throttling is per client address**: an attacker with many addresses has an allowance on each, and
   behind a proxy that is not listed in `server.trusted_proxies` every user shares one allowance.
-  Guessing 256 bits is infeasible either way; the throttle protects the audit log and the server's
-  work, not the secret.
+  Behind one that is, the clients of a single peer share that peer's bucket once it has used its
+  1,024 keys, so whoever can make that proxy forward invented addresses can get its other users
+  refused. Guessing 256 bits is infeasible either way; the throttle protects the audit log and the
+  server's work, not the secret.
 
 ## Alternatives considered
 
@@ -76,7 +84,9 @@ Bad, and how it is managed:
 `db/sessions.rs`. Tests: `auth.rs` (bearer, expiry and revocation, cookie attributes, session end,
 rate limit, proxy mode, and `failed_authentication_cannot_flood_the_audit_log`,
 `https_deployments_use_a_host_prefixed_session_cookie`, `non_ascii_tokens_are_refused_with_401`,
-`repeated_proxy_identity_headers_are_refused`); `ratelimit.rs::a_full_table_shares_one_overflow_bucket_instead_of_failing_open`.
+`repeated_proxy_identity_headers_are_refused`); `ratelimit.rs::a_full_table_shares_overflow_buckets_instead_of_failing_open`,
+`one_peer_cannot_fill_the_table_or_starve_another`; `auth.rs::a_peer_inventing_forwarded_clients_only_limits_itself`,
+`audit_actors_name_their_kind`.
 Exercised live for this documentation: login, the cookie attributes under both names, the 401
 messages, revocation, and the 429s (sign-in, and 75 junk tokens: 60 `401`, then `429`).
 
