@@ -854,6 +854,21 @@ impl ExperimentDir {
         })
     }
 
+    /// The summary namespaces of every sweep on disk, sorted by name: what [`Self::sweeps`]
+    /// lists. With [`Self::sweep`] a caller can read them one at a time and keep listing the
+    /// others when one fails (an oversized `judged.json`, too many task directories).
+    /// Additive after contract v1.2.
+    pub fn sweep_namespaces(&self) -> Result<Vec<Namespace>> {
+        self.summary_namespaces()
+    }
+
+    /// One sweep's summary (`sweep` is its summary namespace, as from
+    /// [`Self::sweep_namespaces`]), exactly as [`Self::sweeps`] lists it. Additive after
+    /// contract v1.2.
+    pub fn sweep(&self, sweep: &Namespace) -> Result<SweepSummary> {
+        self.sweep_summary(sweep)
+    }
+
     /// Every sweep on disk, newest first. Unparseable directory names are skipped.
     pub fn sweeps(&self) -> Result<Vec<SweepSummary>> {
         let mut out = Vec::new();
@@ -2238,6 +2253,55 @@ mod tests {
         );
         std::fs::remove_file(lab.root.path().join(&judged)).unwrap();
         assert!(matches!(exp.scores(&ns), Err(CoreError::TooLarge(_))));
+    }
+
+    /// `sweeps()` is `sweep_namespaces()` read one by one with `sweep()`, newest first; and
+    /// read that way, a sweep that fails does not take the others with it.
+    #[test]
+    fn sweeps_are_the_namespaces_read_one_by_one() {
+        let lab = Lab::new();
+        lab.summary("t1", 0.5);
+        lab.summary("t2", 0.25);
+        let other = "lab/adapt/lab-oc-agg1-s7";
+        let body = serde_json::json!({
+            "task_id": "u1", "domain": "d", "status": "partial",
+            "modes": {"agg": {"ok": false, "stages": [{"usd": 1.0}]}},
+        });
+        lab.write(
+            &format!("{other}/u1/summary.json"),
+            body.to_string().as_bytes(),
+        );
+        let newest_first = |v: &mut Vec<SweepSummary>| {
+            v.sort_by(|a, b| {
+                b.updated_at
+                    .cmp(&a.updated_at)
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+        };
+        let (exp, _) = lab.open();
+        let names = exp.sweep_namespaces().unwrap();
+        let ids: Vec<String> = names.iter().map(ToString::to_string).collect();
+        assert_eq!(ids, vec!["lab-oc-agg1", "lab-oc-agg1-s7"]);
+        let mut each: Vec<SweepSummary> = names.iter().map(|ns| exp.sweep(ns).unwrap()).collect();
+        newest_first(&mut each);
+        assert_eq!(each, exp.sweeps().unwrap());
+
+        // One bad sweep: the whole list fails, the other sweep still reads on its own.
+        let rows: Vec<serde_json::Value> = (0..=MAX_JUDGED_ROWS)
+            .map(|_| serde_json::json!({"task_id": "u1", "mode": "agg", "k": 1}))
+            .collect();
+        lab.write(
+            &format!("{other}/judged.json"),
+            serde_json::to_vec(&rows).unwrap().as_slice(),
+        );
+        assert!(matches!(exp.sweeps(), Err(CoreError::TooLarge(_))));
+        let bad = Namespace::parse("lab-oc-agg1-s7").unwrap();
+        assert!(matches!(exp.sweep(&bad), Err(CoreError::TooLarge(_))));
+        let good = exp.sweep(&names[0]).unwrap();
+        assert_eq!(
+            (good.id.as_str(), good.tasks, good.ok),
+            ("lab-oc-agg1", 2, 2)
+        );
     }
 
     /// The stream order is a display hint: an oversized sweep record is ignored, not fatal.
