@@ -898,7 +898,13 @@ async fn a_sweep_that_cannot_be_read_does_not_hide_the_others() {
         serde_json::to_vec(&rows).unwrap(),
     )
     .unwrap();
-    let ids = |e: &Experiment| -> Vec<String> { e.sweeps.iter().map(|s| s.id.clone()).collect() };
+    // Sorted: sweeps are listed newest first, and each copy's files have their own times, so
+    // the two experiments can list the same sweeps in different orders.
+    let ids = |e: &Experiment| -> Vec<String> {
+        let mut ids: Vec<String> = e.sweeps.iter().map(|s| s.id.clone()).collect();
+        ids.sort();
+        ids
+    };
     let created = adopt(&t, "std", "std-ok", "standard").await;
     assert!(
         ids(&created).contains(&"lab-oc-agg2".to_owned()),
