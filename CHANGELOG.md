@@ -72,7 +72,11 @@ Each change, its tests and how it was checked are in
   its reads (`503`); at most 200 sweeps are listed per experiment; the sweep cache evicts the least
   recently used entry and serves a changed sweep as it was while it is read again.
 - Second review: records of refused requests (`access.denied`, and refused job starts and cancels)
-  are limited to 10 a minute per principal, one shared allowance; audit actors name their kind (`token:<name>`, `proxy:<user>`, `cli`, `server`,
-  `anonymous`); the rate limiters are kept per trusted-proxy peer (1,024 clients each, then that
-  peer's own overflow bucket); behind an `https` `public_url` only https origins are accepted and a
-  repeated `Origin` header is `403`; the MCP HTTP guard refuses a `Host` with userinfo.
+  are limited to 10 a minute per principal, one shared allowance; audit actors name their kind
+  (`token:<name>`, `proxy:<user>`, `cli`, `server`, `anonymous`); the rate limiters are kept per
+  trusted-proxy peer (1,024 clients each, then that peer's own overflow bucket); behind an `https`
+  `public_url` only https origins are accepted and a repeated `Origin` header is `403`; the MCP
+  HTTP guard refuses a `Host` with userinfo.
+- Restart recovery no longer counts a job process caught in the middle of an exec as unmarked:
+  an environment that reads empty or denied for that moment is read again for up to about 0.25 s
+  (found by a test that failed once on a CI runner).
