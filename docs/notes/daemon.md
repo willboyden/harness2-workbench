@@ -92,8 +92,11 @@ Keys beyond §11 (all optional, defaults shown):
   more than one `Host` header is 400 (RFC 9112 §3.2); an absolute-form target
   (`GET http://host/...`) must name an allowed host as well as its `Host` header.
 - **Unsafe methods** (everything but GET/HEAD/OPTIONS) need `x-h2w-request: 1`. An `Origin`, when
-  sent, must be `public_url`'s origin or `http(s)://<the request's Host>` (so a UI opened at
-  `http://localhost:P` works); `null` is refused. No CORS headers are ever sent.
+  sent, must be `public_url`'s origin or `https://<the request's Host>`, or, only when
+  `public_url` is plain `http`, `http://<the request's Host>` (so a UI opened at
+  `http://localhost:P` works). Behind an `https` public URL a page served over plain HTTP on
+  the same host cannot change anything: use the public URL. `null` is refused, and so is a
+  request with more than one `Origin` header (403). No CORS headers are ever sent.
 - **Errors**: every error response is `ErrorBody` with `request_id`, including 404/405 for unknown
   routes and methods, 413, 421 and rejections from extractors. Status mapping beyond §4: unknown
   query parameters, unknown enum values and unparsable numbers in a query are **422** (field
