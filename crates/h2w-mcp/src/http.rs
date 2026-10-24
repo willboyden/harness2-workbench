@@ -146,6 +146,10 @@ struct HostRule {
 
 impl HostRule {
     fn parse(authority: &str) -> Option<Self> {
+        // A Host header never carries userinfo; `Authority` would accept `evil@127.0.0.1:8723`.
+        if authority.contains('@') {
+            return None;
+        }
         let authority: axum::http::uri::Authority = authority.trim().parse().ok()?;
         Some(Self {
             host: normalize_host(authority.host()),
@@ -445,6 +449,8 @@ mod tests {
             "attacker.localhost.evil:8723",
             "",
             "127.0.0.1:8723 extra",
+            "evil@127.0.0.1:8723",
+            "user:pass@localhost:8723",
         ] {
             assert!(!g.host_allowed(bad), "{bad}");
         }

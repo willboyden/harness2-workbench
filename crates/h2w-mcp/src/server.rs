@@ -1,4 +1,4 @@
-//! The MCP server: 41 tools, 3 resource templates and 3 prompts over the Workbench REST API.
+//! The MCP server: 42 tools, 3 resource templates and 3 prompts over the Workbench REST API.
 //!
 //! Each tool is one REST capability (`docs/ARCHITECTURE.md` §8, §13 and §16) called with the
 //! caller's token. The server enforces roles and audits; this handler only translates.

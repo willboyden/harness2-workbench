@@ -1,4 +1,4 @@
-//! The tamper-evident audit log: paged, newest first, with chain verification.
+//! The hash-chained audit log: paged, newest first, with chain verification.
 
 use h2w_api::{AuditEvent, AuditOutcome, AuditVerification, Page};
 use leptos::prelude::*;
