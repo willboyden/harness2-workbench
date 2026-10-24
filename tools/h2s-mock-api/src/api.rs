@@ -22,9 +22,9 @@ use h2s_api::{
     CreateExperimentRequest, CreateTokenRequest, ErrorBody, ErrorCode, EstimateRequest, Experiment,
     ExportTarget, FieldProblem, Health, Isolation, Job, JobEvent, JobSpec, JobStatus, KeyValue,
     LoginRequest, Manifest, ManifestJob, Mode, ModelProfile, Page, Principal, PrincipalKind,
-    Readiness, Role, SESSION_COOKIE, SetSecretRequest, Surface, SweepIdentity, SystemInfo,
-    TaskDelta, TokenCreated, TokenInfo, UpdateExperimentRequest, ValidateHarnessRequest,
-    ValidationReport,
+    ProfileCheck, ProfileKind, Readiness, Role, SESSION_COOKIE, SetSecretRequest, Surface,
+    SweepIdentity, SystemInfo, TaskDelta, TokenCreated, TokenInfo, UpdateExperimentRequest,
+    ValidateHarnessRequest, ValidationReport,
 };
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 use tokio_stream::{Stream, StreamExt};
@@ -365,6 +365,137 @@ async fn put_profile(
     g.add_audit(&p.name, "profile.put", &name, AuditOutcome::Success, None);
     let view = g.profile_view(&body);
     Ok(Json(view))
+}
+
+/// Server rule for profile names (`h2s_core::names::profile_name`), as the server words it.
+const PROFILE_NAME_RULE: &str =
+    "use 1-63 lowercase letters, digits, '_' or '-', starting with a letter or digit";
+
+/// `GET /profiles/{name}/check` (addendum v1.2), answering like the server: viewer role, 422
+/// for a malformed name, 404 "no profile named <name>" for an unknown one.
+async fn check_profile(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+) -> R<Json<ProfileCheck>> {
+    require(&st, &headers, Role::Viewer)?;
+    if !valid_slug(&name) {
+        return Err(invalid(vec![("name".into(), PROFILE_NAME_RULE.into())]));
+    }
+    let g = lock(&st.s);
+    let Some(p) = g.profiles.get(&name) else {
+        return Err(fail(
+            StatusCode::NOT_FOUND,
+            ErrorCode::NotFound,
+            &format!("no profile named {name}"),
+        ));
+    };
+    let missing_secrets = referenced_secrets(p)
+        .into_iter()
+        .filter(|n| !g.secrets.get(n).is_some_and(|s| s.set))
+        .collect();
+    Ok(Json(ProfileCheck {
+        warnings: profile_warnings(p),
+        missing_secrets,
+    }))
+}
+
+/// Secrets a profile references, in the server's order (endpoints, Vertex credentials, extra
+/// environment), without duplicates.
+fn referenced_secrets(p: &ModelProfile) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let names = [&p.endpoint, &p.judge_endpoint, &p.codex_endpoint]
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.api_key_secret.clone())
+        .chain(p.vertex.as_ref().and_then(|v| v.credentials_secret.clone()))
+        .chain(p.extra_env.iter().filter_map(|e| e.secret.clone()));
+    for n in names {
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// The main cases of the server's `h2s_core::env::profile_warnings`, in its words (the server
+/// derives them from the full environment plan; this is close enough to exercise the UI).
+fn profile_warnings(p: &ModelProfile) -> Vec<String> {
+    let env = |name: &str| p.extra_env.iter().any(|e| e.name == name);
+    let mut w = Vec::new();
+    let solver = p.solver_model.trim();
+    if solver.is_empty() {
+        w.push(
+            "No executor model: harness2 refuses to run without HARNESS2_SOLVER_MODEL.".to_owned(),
+        );
+    } else if p.kind != ProfileKind::OpenaiCompatible && !solver.contains('/') {
+        w.push(format!(
+            "The executor model {solver:?} is not in OpenCode's provider/model form, which \
+             harness2 requires."
+        ));
+    }
+    let judge = p
+        .judge_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|j| !j.is_empty());
+    match judge {
+        None => w.push(
+            "No judge model: harness2 starts no sweep and judges nothing without \
+             HARNESS2_JUDGE_MODEL."
+                .to_owned(),
+        ),
+        Some(j) => {
+            const LAB_JUDGES: [&str; 9] = [
+                "claude", "gemini", "gpt", "o1", "o3", "o4", "o5", "mistral", "vertex/",
+            ];
+            if !LAB_JUDGES.iter().any(|x| j.starts_with(x)) {
+                w.push(format!(
+                    "LAB's judge does not recognise the judge model {j:?} (it accepts ids \
+                     starting with claude, gemini, gpt, o1, o3, o4, o5, mistral or vertex/), so \
+                     this profile cannot judge LAB."
+                ));
+            }
+            if p.judge_endpoint.is_none() && p.vertex.is_none() && !env("HARNESS2_JUDGE_BASE_URL") {
+                w.push(
+                    "JobBench judging needs a judge endpoint or Vertex AI settings (harness2 \
+                     reads HARNESS2_JUDGE_BASE_URL or GOOGLE_CLOUD_PROJECT)."
+                        .to_owned(),
+                );
+            }
+            let judge_key = p
+                .judge_endpoint
+                .as_ref()
+                .is_some_and(|e| e.api_key_secret.is_some())
+                || env("HARNESS2_JUDGE_API_KEY");
+            if !j.starts_with("gemini") && !judge_key {
+                w.push(
+                    "JobBench needs a judge endpoint with an API key for a non-Gemini judge \
+                     (HARNESS2_JUDGE_BASE_URL and HARNESS2_JUDGE_API_KEY)."
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    let wb_ok = solver.starts_with("google-vertex/gemini")
+        && judge.is_some_and(|j| j.starts_with("gemini"))
+        && p.vertex.is_some();
+    if !wb_ok {
+        w.push(
+            "WorkBuddy-Bench cannot use this profile: its setup requires a google-vertex/gemini \
+             executor, a gemini judge and Vertex AI settings."
+                .to_owned(),
+        );
+    }
+    if p.codex_endpoint.is_none() && !env("HARNESS2_CODEX_BASE_URL") {
+        w.push(
+            "The Codex executor (substrate cx) needs a Responses-API endpoint: set the \
+             profile's Codex endpoint (for Vertex AI, run the bridge job and use its URL and \
+             key)."
+                .to_owned(),
+        );
+    }
+    w
 }
 
 async fn delete_profile(
@@ -1780,6 +1911,7 @@ pub(crate) fn router(st: AppState) -> Router {
         .route("/splits", get(splits))
         .route("/profiles", get(profiles))
         .route("/profiles/{name}", put(put_profile).delete(delete_profile))
+        .route("/profiles/{name}/check", get(check_profile))
         .route("/secrets", get(secrets))
         .route("/secrets/{name}", put(put_secret).delete(delete_secret))
         .route("/tokens", get(tokens).post(create_token))
@@ -1901,6 +2033,57 @@ mod tests {
         assert_eq!(role_of_dev_token("viewer_1"), Role::Viewer);
         assert_eq!(role_of_dev_token("operator"), Role::Operator);
         assert_eq!(role_of_dev_token("anything"), Role::Admin);
+    }
+
+    fn profile() -> ModelProfile {
+        let ep = |key: &str| h2s_api::Endpoint {
+            base_url: "https://gateway.example.test/v1".into(),
+            api_key_secret: Some(key.into()),
+        };
+        ModelProfile {
+            name: "gw".into(),
+            kind: ProfileKind::OpenaiCompatible,
+            description: String::new(),
+            solver_model: "model-a".into(),
+            improver_model: None,
+            judge_model: Some("gpt-judge".into()),
+            codex_model: None,
+            vertex: None,
+            endpoint: Some(ep("GW_KEY")),
+            judge_endpoint: Some(ep("JUDGE_KEY")),
+            codex_endpoint: Some(ep("GW_KEY")),
+            extra_env: vec![h2s_api::EnvVar {
+                name: "EXTRA".into(),
+                value: None,
+                secret: Some("EXTRA_KEY".into()),
+            }],
+            prices: None,
+            egress_hosts: Vec::new(),
+            secrets: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn profile_check_parts() {
+        let p = profile();
+        // The server's order, without duplicates.
+        assert_eq!(referenced_secrets(&p), ["GW_KEY", "JUDGE_KEY", "EXTRA_KEY"]);
+        // A complete gateway profile only lacks WorkBuddy (needs Vertex Gemini).
+        let w = profile_warnings(&p);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].starts_with("WorkBuddy-Bench cannot use this profile"));
+        let bare = ModelProfile {
+            judge_model: None,
+            codex_endpoint: None,
+            ..profile()
+        };
+        let w = profile_warnings(&bare);
+        assert!(w.iter().any(|x| x.starts_with("No judge model")), "{w:?}");
+        assert!(
+            w.iter().any(|x| x.starts_with("The Codex executor")),
+            "{w:?}"
+        );
+        assert!(!PROFILE_NAME_RULE.is_empty() && !valid_slug("Bad Name"));
     }
 
     #[test]

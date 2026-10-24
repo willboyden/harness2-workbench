@@ -94,6 +94,9 @@ pub(crate) mod api {
     pub(crate) fn profile(name: &str) -> String {
         p(&format!("/profiles/{}", enc(name)))
     }
+    pub(crate) fn profile_check(name: &str) -> String {
+        p(&format!("/profiles/{}/check", enc(name)))
+    }
     pub(crate) fn secrets() -> String {
         p("/secrets")
     }
@@ -375,6 +378,10 @@ mod tests {
         assert_eq!(
             api::experiment("lab pilot"),
             "/api/v1/experiments/lab%20pilot"
+        );
+        assert_eq!(
+            api::profile_check("vertex-flash"),
+            "/api/v1/profiles/vertex-flash/check"
         );
         assert_eq!(
             api::tasks("e", "s", "Contracts & Deals", "", 50, Some("c1")),

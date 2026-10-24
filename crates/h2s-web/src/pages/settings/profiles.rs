@@ -1,6 +1,6 @@
 //! Model profiles: list, create, edit, delete. API keys are referenced by secret NAME.
 
-use h2s_api::{ModelProfile, ProfileKind, Role, SecretInfo};
+use h2s_api::{ModelProfile, ProfileCheck, ProfileKind, Role, SecretInfo};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -9,6 +9,7 @@ use crate::components::form::{Checkbox, RadioCards, TextArea, TextField};
 use crate::components::icons::{Icon, icon};
 use crate::components::modal::Modal;
 use crate::components::ui::{Badge, Card, EmptyState, ErrorPanel, Notice, Term, loaded};
+use crate::components::widgets::ProfileCheckNotes;
 use crate::logic::format;
 use crate::logic::jobs::Tone;
 use crate::logic::profile::{
@@ -219,7 +220,7 @@ fn ProfileEditor(
     open: RwSignal<bool>,
     editing: RwSignal<Option<String>>,
     f: Fields,
-    on_saved: Callback<()>,
+    on_saved: Callback<String>,
 ) -> impl IntoView {
     let t = toasts();
     let tried = RwSignal::new(false);
@@ -266,7 +267,7 @@ fn ProfileEditor(
                     t.success(&format!("Profile {} saved", p.name));
                     open.set(false);
                     tried.set(false);
-                    on_saved.run(());
+                    on_saved.run(p.name);
                 }
                 Err(e) => server_error.set(Some(e)),
             }
@@ -425,7 +426,16 @@ pub(crate) fn Profiles() -> impl IntoView {
     let open = RwSignal::new(false);
     let editing = RwSignal::new(None::<String>);
     let fields = Fields::new();
-    let saved = Callback::new(move |()| data.refetch());
+    // After a save: what jobs with the profile would lack (`GET /profiles/{name}/check`).
+    let check = RwSignal::new(None::<(String, Result<ProfileCheck, ApiError>)>);
+    let saved = Callback::new(move |name: String| {
+        data.refetch();
+        check.set(None);
+        spawn_local(async move {
+            let r = api::get::<ProfileCheck>(&paths::profile_check(&name)).await;
+            check.set(Some((name, r)));
+        });
+    });
     let new_profile = move |_| {
         fields.load(&ProfileForm::default());
         editing.set(None);
@@ -465,6 +475,26 @@ pub(crate) fn Profiles() -> impl IntoView {
                             " New profile"
                         </button>
                     </div>
+                })
+        }}
+        {move || {
+            check
+                .get()
+                .map(|(name, r)| {
+                    view! {
+                        <section class="card profile-check-card" aria-live="polite" data-testid="profile-check-result">
+                            <div class="card-head">
+                                <h2 class="card-title">{format!("Profile {name} saved: what jobs would lack")}</h2>
+                                <button type="button" class="btn btn-ghost btn-sm" on:click=move |_| check.set(None)>
+                                    "Dismiss"
+                                </button>
+                            </div>
+                            {match r {
+                                Ok(c) => view! { <ProfileCheckNotes check=c /> }.into_any(),
+                                Err(e) => view! { <ErrorPanel error=e /> }.into_any(),
+                            }}
+                        </section>
+                    }
                 })
         }}
         {loaded(

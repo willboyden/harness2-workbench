@@ -716,6 +716,21 @@ svg {
   font-size: 1.05rem;
 }
 
+/* A card title with an action at the end of its line. */
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+}
+
+.card-head .card-title {
+  margin: 0;
+  min-width: 0;
+}
+
 .card > :last-child {
   margin-bottom: 0;
 }
@@ -1356,6 +1371,33 @@ fieldset legend {
   display: flex;
   flex-direction: column;
   gap: var(--s5);
+}
+
+/* GET /profiles/{name}/check results (settings and the run wizard). */
+.profile-check {
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+
+.profile-check .notice {
+  margin: 0;
+}
+
+.profile-check .notice ul {
+  margin: var(--s1) 0;
+  padding-left: 1.2em;
+}
+
+.check-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  margin: 0;
+  color: var(--success-fg);
+}
+
+.check-ok svg {
+  flex: none;
 }
 
 /* ---------- Code, copy blocks, terms ---------- */
