@@ -108,7 +108,7 @@ event streams and the static UI alike.
 |---|---|---|
 | `Host` | must be one the server answers to: the host of `server.public_url`, `server.allowed_hosts`, and `127.0.0.1:P`, `localhost:P`, `[::1]:P` for the bound port P. An absolute-form request target (`GET http://host/...`) must name an allowed host as well. More than one `Host` header is refused | `421` `misdirected_request`: `this server does not answer to that Host`; two `Host` headers: `400` `bad_request`: `the request has more than one Host header` |
 | `x-h2w-request` | every method except `GET`, `HEAD` and `OPTIONS` must send `x-h2w-request: 1`, **including login, logout and requests that carry a bearer token** | `403` `forbidden`: `state-changing requests need the header x-h2w-request: 1` |
-| `Origin` | when present on such a request, it must be the origin of `public_url`, or `http(s)://` + the request's own `Host`; `null` is refused. `curl` and SDKs send none | `403` `forbidden`: `cross-origin requests are refused` |
+| `Origin` | when present on such a request, there must be exactly one, and it must be the origin of `public_url` or `https://` + the request's own `Host`; `http://` + the `Host` passes only when `public_url` is itself plain `http` (behind an `https` public URL a plain-http page of the same host is refused); `null` is refused. `curl` and SDKs send none | `403` `forbidden`: `cross-origin requests are refused`; a repeated header: `the request has more than one Origin header` |
 | body size | declared or streamed body at most `server.max_body_bytes` (1 MiB) | `413` `payload_too_large`: `the request body is larger than N bytes` |
 | request time | at most `server.request_timeout_secs` (60 s) | `503` `unavailable`: `the request took too long` |
 
@@ -246,6 +246,12 @@ Notes on single routes:
 
 - `GET /system/doctor?refresh=true` runs the probes now instead of using the 60-second cache
   and needs operator.
+- `GET /audit` records name the **kind** of their `actor`: `token:<name>` (an API token and its browser
+  sessions), `proxy:<user>` (a user a reverse proxy authenticated), `cli`, `server` or `anonymous`
+  (a failed sign-in or authentication). `GET /auth/me`, and the `created_by` of jobs and
+  experiments, keep the plain name. At most 10 records a minute per principal are written for
+  refused requests (`access.denied`), and at most 10 per client for failed authentication; the rest
+  are counted in `h2w_audit_suppressed_total`.
 - `GET /system/info` includes `isolation` (`host` or `container`), `container_runtime` (set when
   container isolation is configured and the runtime answers) and `host_risks_preacknowledged`
   (`true` when the administrator set `isolation.preacknowledge_host_risks`, so jobs need no
@@ -296,14 +302,14 @@ are written for people and never contain secret values or quoted request input.
 | 400 | `bad_request` | body is not JSON or not `application/json`; unknown job `kind`; more than one `Host` header |
 | 405 | `bad_request` | the path exists but not for that method (the message is `method not allowed`; an `Allow` header lists the right ones) |
 | 401 | `unauthorized` | no or invalid credentials; expired or revoked token; ended session; in proxy mode a user, groups or secret header sent more than once |
-| 403 | `forbidden` | role too low (a job start says `starting a job of kind <kind> requires the <role> role`); missing `x-h2w-request`; foreign `Origin`; a proxy user whose groups grant no role |
+| 403 | `forbidden` | role too low (a job start says `starting a job of kind <kind> requires the <role> role`); missing `x-h2w-request`; foreign or repeated `Origin`; a proxy user whose groups grant no role |
 | 404 | `not_found` | unknown route, experiment, sweep, job, token |
 | 409 | `conflict` | experiment exists; wrong profile for a pinned experiment; archived experiment; job already finished; container isolation refuses WorkBuddy and the bridge |
-| 413 | `payload_too_large` | body over `server.max_body_bytes`; or a results read past one of the server's memory bounds (`too large: ...`, see section 6) |
+| 413 | `payload_too_large` | body over `server.max_body_bytes`; or a results read past one of the server's bounds: a file cap, the request's read budget, or the response cap (`too large: ...`, see section 6) |
 | 421 | `misdirected_request` | unknown `Host` |
 | 422 | `validation` | a field is wrong: `details` names it. Also unknown or unparsable **query parameters** (field `query`) |
 | 429 | `rate_limited` | too many login attempts; too many failed authentications from one address; a caller that already holds `server.sse_max_per_principal` event streams; `Retry-After` says how long |
-| 503 | `unavailable` | harness2 not installed; job queue full; too many event streams; database unavailable; request timed out |
+| 503 | `unavailable` | harness2 not installed; job queue full; too many event streams; database unavailable; request timed out; a results read that was cancelled (`the read was cancelled`) |
 | 500 | `internal` | a bug or an I/O failure; the message is generic, the cause is in the server log under the request id |
 
 ```console
@@ -330,7 +336,7 @@ are strict: an unknown name or a value that does not parse is a `422` on the fie
 | `GET /jobs` | `status`, `kind`, `experiment` | 50 / 500 |
 | `GET /audit` | none | 100 / 500 |
 | `GET .../tasks` | `domain`, `status` (`ok`, `skipped`, `partial`, `base-failed`, `running`, `exception`, `too-large`, `unreadable`) | 200 / 1000 |
-| `GET /jobs/{id}/log` | `from` (0-based line), `limit` | 500 / 5000 |
+| `GET /jobs/{id}/log` | `from` (0-based line), `limit` | 500 / 5000 lines, and about 1 MiB (below) |
 
 Other bounds: request body 1 MiB (configurable); rollout and audit-text files 2 MiB; a job log line
 64 KiB (longer lines are cut with ` … [line truncated]`); **reads of files that jobs may rewrite**
@@ -339,10 +345,57 @@ larger one appears as a row with status `too-large`, and a file that cannot be r
 `unreadable`), 10,000 tasks per sweep, 256 MiB of summaries per list view, 100,000 judged rows, a
 harness tree or export 2,000 files and 64 MiB, any directory listing 250,000 entries (the full list
 is in `docs/notes/core.md`); `POST /harness/validate` at most 5,000
-files; secret values at most 64 KiB; experiment descriptions 4,000 characters and 32 tags. At most
-four results reads run at once; the others wait for a permit within the request timeout. A sweep's
-task list is cached until its files change (five minutes at most), and a sweep that cannot be read
-is left out of the sweep list instead of failing it.
+files; secret values at most 64 KiB; experiment descriptions 4,000 characters and 32 tags.
+
+**Log pages.** A page of `GET /jobs/{id}/log` holds at most `limit` lines and about 1 MiB of stored
+lines (always at least one line, whatever its size). `next` is the line to ask for next, and
+`complete` is true only once a finished job's log has been read to its end, so keep following `next`
+until it is. A 262 MB log of 64 KiB lines came back in pages of 984,103 bytes with 15 lines each
+(267 pages), verified.
+
+**Reading what jobs write.** Everything a job leaves in an experiment directory is untrusted, so
+the server reads it within these bounds (the per-file caps above, and `docs/notes/core.md`, still
+apply to each view):
+
+- **Permits.** At most four blocking reads of results or logs run at once; the others wait for a
+  permit within the request timeout. Every file is opened without blocking and without following a
+  link, and refused unless it is the regular file that was seen (a FIFO swapped in is refused, never
+  waited on: the task is listed as `unreadable`).
+- **A read budget per request**, in bytes of results files and in sweeps; past it the answer is `413`
+  with `too large: this request may read at most N bytes of results files` (or `... N sweeps`):
+
+  | Route | Bytes | Sweeps |
+  |---|---|---|
+  | `GET /experiments` (all experiments together; sweeps already cached cost nothing) | 512 MiB | 1,000 |
+  | `GET /experiments/{exp}`, `POST /experiments`, `PATCH /experiments/{exp}`; the history behind `POST /estimate` and a preview | 256 MiB | 200 |
+  | `GET .../tasks` | 256 MiB | 1 |
+  | `GET .../scores`, `GET .../report` | 64 MiB | 1 |
+  | `GET /compare` | 640 MiB | 4 |
+  | `GET .../manifest` (the results digest) | 1 GiB | 1,000 |
+  | one poll of a job's budget guard | 256 MiB | 1 |
+
+  The experiment views do not fail when their budget runs out: they list the sweeps read so far,
+  cache nothing for the rest, and the next request goes on from the cache (an experiment of very
+  large sweeps shows a few more sweeps on each call until all are cached). The harness, diff, export,
+  task, library, audit and rollout views have no budget of their own; each is capped per file and
+  the response cap applies. Verified: a sweep of 62 summaries of 4 MiB plus a 12 MiB judged file
+  gave `413` on `.../tasks` with `too large: this request may read at most 268435456 bytes of results
+  files`, and 200 without the judged file.
+- **Cancellation.** A request that goes away (it timed out, or its client left) cancels its reads at
+  the next file or sweep, and its permit comes back: a read that learns it was cancelled answers `503`
+  `the read was cancelled` (to a client that is, by then, usually gone).
+- **Responses.** A results response is built inside its read permit and is refused with `413` `too
+  large: the response would be larger than 64 MiB` past that size (the JSON views, and the `tar.gz`
+  export too, whose archive is compressed and so usually far smaller). Verified: three 4 MiB files of control characters in one harness (12 MiB on disk, 72 MiB
+  as JSON) gave `413` on the harness view and the JSON export, and a 12,885-byte `tar.gz` export.
+- **Sweep lists.** `Experiment.sweeps` lists at most 200 sweeps, the newest by the modification
+  time of their directories; older sweeps stay reachable by id through the results routes (the server
+  log warns once: `the experiment has more sweeps than are listed; ...`). A sweep's summary is
+  cached (4,096 sweeps, least recently used evicted) under a stamp of the files it came from. A
+  sweep whose files changed, or whose entry is older than five minutes, is **served as it was** while
+  one background read refreshes it (at most 16 at once, only when a permit is free): the call after
+  a job rewrites a summary can still show the old counts, the next one the new. A sweep that cannot
+  be read is left out of the list with a warning instead of failing it.
 
 ## 7. Jobs
 
@@ -455,7 +508,9 @@ $ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "x-h2w-request: 1" -H "co
 - The **first frame is always a `snapshot`** of the whole job. A `heartbeat` follows at least
   every 15 seconds. `log` frames carry `id: <line number>`.
 - **Resuming**: reconnect with `Last-Event-ID: N` to get a fresh snapshot and then the log lines
-  `N+1` onward (from memory or from the log file).
+  `N+1` onward (from memory or from the log file), **at most one page of about 1 MiB**: when the
+  log is longer the replay stops early (the snapshot's `log_lines` says how many lines exist), and
+  you page the rest with `GET /jobs/{id}/log`.
 - The stream **ends** after the terminal `status` frame, after 10 minutes with nothing but
   heartbeats, after 1 hour, or when the server shuts down; clients reconnect. A job that has
   already finished gets a snapshot (and any replay) and the stream closes. A client that falls

@@ -68,8 +68,10 @@ Out of scope here, but please report to the right place:
   transforms (reverses, splits, encodes differently) are not caught, and job logs are readable by
   every viewer.
 - **Review status:** no human penetration test or professional audit has been done. A separate AI
-  agent reviewed the first implementation; its findings were fixed and are listed in the
+  agent reviewed the first implementation and its findings were fixed. An independent re-review on
+  2026-10-24 confirmed the first round's fixes (some are partial or by design, as the threat model
+  says) and found ten further issues, N1 to N10; they are fixed in this revision and listed in the
   [changelog](CHANGELOG.md#security) and in
-  [ADMIN-GUIDE §17](docs/ADMIN-GUIDE.md#17-what-changed-with-the-security-review). The fixed code has
-  not been reviewed independently again.
+  [ADMIN-GUIDE §17](docs/ADMIN-GUIDE.md#17-what-changed-with-the-security-review). **Those fixes have
+  not been re-reviewed independently.**
 - Supply-chain controls are described in [docs/SUPPLY-CHAIN.md](docs/SUPPLY-CHAIN.md).

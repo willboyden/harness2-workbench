@@ -86,7 +86,7 @@ The guard in front of the endpoint refuses, in this order:
 
 | Check | Status | Message |
 |---|---|---|
-| unknown `Host` (DNS-rebinding defence) | 421 | `this MCP server does not answer to that Host; add it with --allowed-host if it is legitimate` |
+| unknown `Host` (DNS-rebinding defence; a `Host` with userinfo such as `user@127.0.0.1:8723` is unknown too) | 421 | `this MCP server does not answer to that Host; add it with --allowed-host if it is legitimate` |
 | a browser `Origin` that is not allowed | 403 | `cross-origin requests are not allowed; add the origin with --allowed-origin if it is legitimate` |
 | no well-formed bearer token | 401 | ``send `Authorization: Bearer h2w_...` with a Harness² Workbench API token; it is forwarded to the Workbench server, which checks it`` (with `WWW-Authenticate: Bearer realm="h2workbench-mcp"`) |
 | more than `--max-concurrent-requests` (default 32) in flight | 503 | `this MCP server is already handling N requests, its maximum (--max-concurrent-requests); retry in a moment` (with `Retry-After: 1`) |
@@ -245,11 +245,16 @@ models.
 | Read results | `list_tasks`, `get_task`, `get_harness`, `diff_harnesses`, `list_rollout_files`, `read_rollout_file`, `get_scores`, `get_report`, `get_library`, `list_audit_sessions`, `read_audit_session`, `compare_sweeps` | viewer |
 | Adopt | `export_harness` (to raw, OpenCode or Codex project files) | viewer |
 
+`get_job_log` returns one page: at most `limit` lines (up to 5,000) and about 1 MiB, with `next` (pass
+it as `from` to continue) and `complete`; `tail=N` starts N lines before the end, so on a log of very
+long lines it can stop short of the end and you continue from `next`.
 `install_harness2` takes no `rev`: it always installs the commit this Workbench release was tested
 against. `server_info` reports the MCP server's own settings under `mcp_server.policy`
 (`allow_risk_acknowledgement`, `max_waits_per_token`) next to who you are and what the Workbench is.
 
-**Resources** (read-only, `resources/read`): `h2w://jobs/{id}/log` (the last 2,000 lines),
+**Resources** (read-only, `resources/read`): `h2w://jobs/{id}/log` (the 2,000 lines before the end of
+the log, in one page of at most about 1 MiB: a log of very long lines shows fewer, starting 2,000
+lines before the end, and its header says which lines are shown),
 `h2w://experiments/{exp}/sweeps/{sweep}/report` and `h2w://experiments/{exp}/manifest` (JSON).
 `resources/list` offers every experiment's manifest, every judged sweep's report and the 20 newest
 jobs' logs.
@@ -317,7 +322,9 @@ network (`setup_benchmark`, `install_harness2`, `start_run`, `start_pipeline`, `
 
 1. **The server decides, not the MCP server.** Roles are enforced by the Workbench server on every
    call, per token; the MCP layer only turns a refusal into a readable message. A viewer token
-   cannot start a job whatever the model says, and the denial is written to the audit log. The one
+   cannot start a job whatever the model says, and the denial is written to the audit log (as
+   `access.denied`, at most 10 records a minute per token; an operator token's refused job starts are
+   each recorded, so keep operator tokens to agents you trust with that). The one
    rule the MCP server adds itself is rule 3's: it refuses to let a model accept host-isolation
    risks for you.
 2. **MCP never writes profiles, secrets, tokens or the audit log.** There is no tool for it, by

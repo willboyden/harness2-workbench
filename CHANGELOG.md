@@ -28,8 +28,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
-Changes made after an independent review of the first implementation by a separate AI agent (no
-human penetration test has been done). The fixed code has not been reviewed independently again.
+Changes made after two independent reviews of the code by a separate AI agent (no human penetration
+test has been done): the first of the initial implementation, the second (2026-10-24) of the fixed
+code. The second confirmed the first round's fixes (some are partial or by design, as the threat
+model says) and found ten more issues; **those fixes have not been re-reviewed independently**.
 Each change, its tests and how it was checked are in
 [docs/ADMIN-GUIDE.md](docs/ADMIN-GUIDE.md#17-what-changed-with-the-security-review) and
 [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
@@ -57,3 +59,17 @@ Each change, its tests and how it was checked are in
   compose example sets `0.0.0.0:3128`); the server warns at start-up, and `doctor` reports
   (`container_network`), when the jobs network is not internal; `doctor` also checks the runner
   image (`runner_image`).
+- Second review: results files are opened without blocking (`O_NONBLOCK`, `O_NOFOLLOW`, then an
+  `fstat` check of type and inode), so a FIFO swapped in after the check is refused instead of
+  hanging a read; the harness fingerprint and the manifest digest never read a file over its cap (it
+  is recorded as `<too large: N bytes>`) and refuse more than 64 MiB and 1 GiB in all.
+- Second review: job-log pages and event-stream replays stop near 1 MiB (`next` says where to go
+  on); results responses are built inside their read permit and refused with `413` past 64 MiB;
+  every route has a read budget of bytes and sweeps; a request that goes away cancels its reads
+  (`503`); at most 200 sweeps are listed per experiment; the sweep cache evicts the least recently
+  used entry and serves a changed sweep as it was while it is read again.
+- Second review: records of refused requests (`access.denied`) are limited to 10 a minute per
+  principal; audit actors name their kind (`token:<name>`, `proxy:<user>`, `cli`, `server`,
+  `anonymous`); the rate limiters are kept per trusted-proxy peer (1,024 clients each, then that
+  peer's own overflow bucket); behind an `https` `public_url` only https origins are accepted and a
+  repeated `Origin` header is `403`; the MCP HTTP guard refuses a `Host` with userinfo.

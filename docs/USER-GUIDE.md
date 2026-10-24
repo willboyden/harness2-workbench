@@ -146,7 +146,8 @@ a digest of the results; viewers can download it too), **Edit** (description and
 profile cannot change) and **Archive** (hides it from lists and pickers; nothing is deleted).
 
 The **Sweeps** table lists each run configuration: its id (the summary namespace such as
-`demo-oc-agg2`), executor, budget **k**, seed, modes, tasks, spend, scores and last update. Below it,
+`demo-oc-agg2`), executor, budget **k**, seed, modes, tasks, spend, scores and last update (an
+experiment lists at most its 200 newest sweeps; older ones still open by their id). Below it,
 **Jobs in this experiment**.
 
 ### 5.3 A sweep
@@ -464,12 +465,17 @@ smallest role it needs, and keep MCP agents on **viewer** tokens unless they mus
 
 Every sign-in, job start and cancel, and every change to experiments, profiles, secrets and tokens is
 appended to a SHA-256 hash chain; values and request bodies are never recorded. **Verify the chain**
-re-walks it (*The chain is intact: all N entries link correctly*, with N the number of records). Treat that as
+re-walks it (*The chain is intact: all N entries link correctly*, with N the number of records). The
+**Who** column names the kind of actor: `token:<name>` for an API token and its browser sessions,
+`proxy:<user>` for a user a reverse proxy signed in, `cli` for the command line, `server` for the
+server itself and `anonymous` for a failed sign-in. Treat that as
 evidence of accidental or casual edits, **not as a tamper-proof record**: anyone who can write the
 server's data directory, host-mode jobs included, can rewrite the whole chain and the check will
 still pass. Keep the head hash somewhere the server's user cannot write
 ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#13-audit-log)). Refused credentials are recorded too, but at most
-10 a minute per client address (the rest are only counted), so junk requests cannot flood the log.
+10 a minute per client address, and calls refused for a role that is too low at most 10 a minute per
+token or proxy user (the rest are only counted), so junk requests and a viewer's refused calls cannot
+flood the log.
 
 ### 11.5 System
 
@@ -571,7 +577,8 @@ accepts a commit other than the tested one, which the server then refuses by def
 
 On 2026-10-24, in headless Firefox 157.0.1 through geckodriver 0.37.1, against the real server and the
 mock API described at the top, with the web UI built from the main branch after the security-review
-fixes and the rename to Harness² Workbench. All 38 pictures were taken from that one build.
+fixes and the rename to Harness² Workbench. All 38 pictures were taken from that one build, except
+the audit log picture, which was taken again after the audit log began to name the kind of each actor.
 
 - **Exercised and photographed or read back** (the buttons each role sees were listed from the page
   for a viewer, an operator and an admin): sign-in (empty, malformed and wrong token, the return

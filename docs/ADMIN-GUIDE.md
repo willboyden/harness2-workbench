@@ -373,7 +373,7 @@ Other environment variables the server reads: `H2W_CONFIG` (the configuration pa
 | Key | Type | Default | Validation | Effect |
 |---|---|---|---|---|
 | `server.listen` | string | `"127.0.0.1:8722"` | `ip:port` (an IP, not a name; `[::1]:8722` for IPv6); port 0 picks a free port | Where the server binds. Loopback by default; the server prints the bound address once listening. Override: `H2W_LISTEN` |
-| `server.public_url` | string | `"http://127.0.0.1:8722"` | `http` or `https` URL with a host; no credentials, query, fragment or path prefix | The URL people type. Its host (and port) join the `Host` allowlist, its origin is the expected `Origin` of browser requests, and `https` makes the session cookie `Secure` and names it `__Host-h2w_session` (`h2w_session` over plain http). Override: `H2W_PUBLIC_URL`. An `https` URL with no `server.trusted_proxies` draws a warning |
+| `server.public_url` | string | `"http://127.0.0.1:8722"` | `http` or `https` URL with a host; no credentials, query, fragment or path prefix | The URL people type. Its host (and port) join the `Host` allowlist, its origin is the expected `Origin` of browser requests (the exact rule is in [section 7](#7-reverse-proxy-and-tls)), and `https` makes the session cookie `Secure` and names it `__Host-h2w_session` (`h2w_session` over plain http). Override: `H2W_PUBLIC_URL`. An `https` URL with no `server.trusted_proxies` draws a warning |
 | `server.allowed_hosts` | list of strings | `[]` | each `host`, `host:port`, `[v6]` or `[v6]:port` with a valid name or IP | Extra `Host` values answered (a LAN name, or the name a reverse proxy forwards). An entry without a port matches any port. Anything else is `421` |
 | `server.trusted_proxies` | list of strings | `[]` | each an IP address or CIDR | Peers whose `X-Forwarded-For` and `x-request-id` are believed (the client is the right-most address that is not itself trusted) and, in proxy mode, whose identity headers are accepted. They are also exempt from `server.max_connections_per_ip` (a reverse proxy limits its own clients). Empty = none trusted |
 | `server.max_body_bytes` | integer | `1048576` | 1024 to 1073741824 | Largest request body; more is `413` |
@@ -386,7 +386,10 @@ Other environment variables the server reads: `H2W_CONFIG` (the configuration pa
 Fixed limits that are not configurable: 1024 concurrent connections in total, 10 s to send request
 headers, SSE heartbeats every 15 s (the caller's credential is checked again at each one), 10 minutes
 idle and 1 hour maximum per event stream. Failed authentication has its own fixed limits
-([section 6.5](#65-failed-authentication-is-throttled)).
+([section 6.5](#65-failed-authentication-is-throttled)). Reads of what jobs write are bounded too:
+at most 4 blocking reads of results or job logs at once, a log page or event-stream replay of about
+1 MiB, a results response of at most 64 MiB, and a read budget per request that depends on the route
+(the numbers are in [API.md](API.md#6-paging-filters-and-limits)).
 
 ### `[auth]` and `[auth.proxy]`: who may call
 
@@ -549,9 +552,12 @@ $ ... -H 'x-h2w-proxy-secret: guess'                  # wrong shared secret
 
 Configure the proxy to (1) authenticate users, (2) **strip any copy of the identity and secret
 headers sent by the client** and set its own, (3) add the shared-secret header on every request it
-forwards. In proxy mode tokens still work, so scripts keep using bearer tokens; the identity of a
-proxy user is recorded in the audit log by the user header's value. The UI contract is unchanged:
-mutating requests still need `x-h2w-request: 1` and a matching `Origin`.
+forwards. In proxy mode tokens still work, so scripts keep using bearer tokens. A proxy user is
+recorded in the audit log as `proxy:<the user header's value>`, never as a token: a user who calls
+itself `initial admin` appears as `proxy:initial admin`, the bootstrap token as `token:initial admin`
+([section 13](#13-audit-log)). The UI contract is unchanged: mutating requests still need
+`x-h2w-request: 1` and, when they carry an `Origin`, a matching one
+([section 7](#7-reverse-proxy-and-tls)).
 
 **Repeated headers are refused.** A request in which the user, groups or secret header appears more
 than once is `401` (`invalid credentials`; the audit record and the metric say
@@ -618,12 +624,27 @@ the other 15 `429` (`too many attempts; try again in 1 s`); a valid token from t
 the metrics read `h2w_auth_failures_total{reason="unknown_token"} 60`,
 `h2w_auth_failures_total{reason="rate_limited"} 15` and `h2w_audit_suppressed_total 50`.
 
-Each limiter tracks up to 10,000 clients. When its table is full, clients whose bucket has refilled
-are forgotten first and newcomers that still do not fit share one overflow bucket, so flooding the
-table with addresses cannot reset anyone's limit (the limiter never fails open; unit test
-`ratelimit.rs::a_full_table_shares_one_overflow_bucket_instead_of_failing_open`). Behind a reverse
-proxy list the proxy in `trusted_proxies`; otherwise every user shares the proxy's address and one
-person's mistakes lock out the others.
+**Who counts as a client.** The limiters (sign-in attempts, failed authentication, and the audit
+records of failures) key every request on its TCP peer and its client: the peer itself, or, when the
+peer is in `server.trusted_proxies`, the client found in `X-Forwarded-For`, which any process on the
+proxy's network can invent. A peer may hold at most 1,024 client keys of its own (16 for the audit
+records of failures); its further clients share one bucket of that peer, so a peer that invents
+addresses only limits itself. A limiter tracks at most 10,000 keys in all. When the table is full,
+buckets that have refilled completely are dropped first, and a newcomer that still does not fit uses
+the overflow bucket of its own peer, so one peer cannot starve another and the limit never fails
+open (unit tests `ratelimit.rs::one_peer_cannot_fill_the_table_or_starve_another` and
+`a_full_table_shares_overflow_buckets_instead_of_failing_open`; also
+`auth.rs::a_peer_inventing_forwarded_clients_only_limits_itself`).
+
+**What remains:** clients that arrive through the *same* trusted peer share that peer's overflow
+bucket once the peer has used its 1,024 keys, so someone who can make a proxy forward invented
+`X-Forwarded-For` values can get the other users of that proxy refused, at sign-in and for failed
+authentication. A process that connects directly (a job, another container) is its own peer and
+limits only itself. Verified with the trusted peer `127.0.0.2`: 1,124 sign-in attempts, each with a
+different invented client, got 1,034 `401` and 90 `429`; a valid admin token presented for one more
+invented client behind the same peer then got `429`, while the same token from the peer `127.0.0.3`
+got `200`. Behind a reverse proxy list the proxy in `trusted_proxies`; otherwise every user shares the
+proxy's address and one person's mistakes lock out the others.
 
 ## 7. Reverse proxy and TLS
 
@@ -647,7 +668,19 @@ trusted_proxies = ["203.0.113.10"]               # the proxy's address(es): X-Fo
   name an allowed host as well. Verified with raw requests: two allowed `Host` lines `400`; an
   absolute-form target for `evil.example` with an allowed `Host` `421`.
 - **`public_url`** also fixes the expected `Origin` of browser requests and the session cookie:
-  `https` makes it `Secure` and names it `__Host-h2w_session`. The server ignores
+  `https` makes it `Secure` and names it `__Host-h2w_session`. **The Origin rule** applies to every
+  request that needs `x-h2w-request: 1` (all methods except `GET`, `HEAD` and `OPTIONS`). Without an
+  `Origin` header (`curl`, SDKs) the request passes this check. With one, it must carry exactly one,
+  and it must be the origin of `public_url` or `https://` plus the request's own `Host`; `http://` plus
+  the `Host` also passes, but **only when `public_url` itself is plain `http`** (so a UI opened at
+  `http://localhost:8722` works). Behind an `https` public URL a page served over plain http on the
+  same host is a different, weaker origin and is refused, as are `null` and a repeated `Origin`
+  header: `403` with `cross-origin requests are refused` or
+  `the request has more than one Origin header`. Verified with raw requests under
+  `public_url = "https://workbench.example.com"`: the public origin and `https://<Host>` `200`;
+  `http://<Host>`, `null`, a foreign origin, two identical `Origin` headers, and the public origin plus
+  `http://<Host>` all `403`; under a plain-http `public_url` both `http://<Host>` and `https://<Host>`
+  `200` and two `Origin` headers `403`. The server ignores
   `X-Forwarded-Proto` and `X-Forwarded-Host`: `public_url` is the only source of truth for the scheme
   and host. With an `https` URL and an empty `trusted_proxies`, `serve` and `config check` warn
   (verified): `server.public_url is https but server.trusted_proxies is empty: when a reverse proxy
@@ -658,7 +691,8 @@ trusted_proxies = ["203.0.113.10"]               # the proxy's address(es): X-Fo
   (proxy mode) identity headers. The client address is found by walking `X-Forwarded-For` from the
   right and taking the first entry that is not itself a trusted proxy; an entry that is not an IP
   address ends the walk (everything left of it was written by the client), and no usable entry
-  means the peer's own address. The client address feeds the login rate limit and the audit log.
+  means the peer's own address. The client address feeds the rate limits (kept apart per peer,
+  [section 6.5](#65-failed-authentication-is-throttled)) and the audit log.
   Verified live with a trusted peer at `127.0.0.1`:
 
   ```text
@@ -1085,7 +1119,7 @@ $ curl -s -H "Authorization: Bearer $SCRAPE_SECRET" $BASE/api/v1/auth/me        
 | `h2w_job_duration_seconds` | histogram | `kind` | wall-clock duration of finished jobs |
 | `h2w_spend_usd_total` | counter | `experiment` | improver spend recorded while jobs ran (at most 50 experiments are labelled; the rest are `other`) |
 | `h2w_auth_failures_total` | counter | `reason` | refused requests: `missing`, `malformed`, `unknown_token`, `bad_secret`, `expired`, `revoked`, `session_invalid`, `proxy_untrusted`, `proxy_secret`, `proxy_user`, `proxy_duplicate_header`, `proxy_no_role`, `forbidden`, `rate_limited` (login limit, failed-authentication limit), `sse_per_principal`, `host`, `csrf`, `origin`, `unavailable` |
-| `h2w_audit_suppressed_total` | counter | | records of failed authentication not written to the audit log because the client used its 10 per minute |
+| `h2w_audit_suppressed_total` | counter | | records not written to the audit log because the client (failed authentication) or the principal (refused requests, `access.denied`) had used its 10 per minute |
 | `h2w_connections_refused_total` | counter | `reason` | connections closed at accept: `total` (the server's 1,024) or `per_client` (`server.max_connections_per_ip`) |
 | `h2w_sse_connections` | gauge | | open job event streams |
 
@@ -1182,7 +1216,13 @@ The backup copy above opened and verified (`audit chain OK: 39 entries; head 39 
 Every authentication outcome, job create and cancel, experiment, profile, secret and token change,
 and access denial is appended to a **SHA-256 hash chain** in the database: `hash = sha256(prev_hash
 || canonical JSON of the record)`. Records hold the actor, action, target, outcome, client address,
-request id and a short detail (never a secret value or a request body). A request with **no**
+request id and a short detail (never a secret value or a request body). **The actor names its
+kind:** `token:<name>` (an API token and its browser sessions), `proxy:<user>` (a user the reverse
+proxy authenticated), `cli` (the command line), `server` (the server itself, for example when it
+captures the bridge's key) or `anonymous` (a failed sign-in or authentication). A proxy user who
+calls itself `initial admin` is therefore `proxy:initial admin`, never the bootstrap token's
+`token:initial admin`. (`GET /auth/me` and the `created_by` of jobs and experiments keep the plain
+name.) A request with **no**
 credentials at all is only counted in `h2w_auth_failures_total`. A request that **presents** a
 credential that is refused (even a junk bearer token) is recorded, but **at most 10 such records
 per client and minute** are written (`auth.failed`, and denied `auth.login`); the rest are counted in
@@ -1191,6 +1231,17 @@ per client and minute** are written (`auth.failed`, and denied `auth.login`); th
 had measured about 33 MB of audit rows for 140,000 junk requests; with it a client adds at most 600
 rows an hour. Distinct client addresses each have their own allowance, so limit who can reach the
 listener, and let the reverse proxy limit request rates.
+
+**Refused requests** (`access.denied`: an authenticated caller without the role a route needs) are
+limited the same way, per principal (a token with its sessions, or one proxy user): at most 10
+records a minute, the rest counted in `h2w_audit_suppressed_total`. Verified: 500 refused requests
+from a viewer token left 10 records and raised the counter by 490, and a second principal's refusal
+was still recorded. **Not limited:** the records of job starts and cancels (`job.create` and
+`job.cancel`, successful or refused), which the job engine writes for operators and admins. An
+operator token, and any MCP agent holding one, can add one record per refused job start (a spec that
+fails validation, a kind above its role) or per cancel of a finished job; verified: 300 such
+requests added 300 records. Give operator tokens only to people and tools you trust with that, and
+let the reverse proxy limit request rates.
 
 ```console
 $ h2workbench audit verify
@@ -1305,8 +1356,9 @@ The `doctor` checks (id: what it looks for): `harness2` (installed, at the teste
 ## 17. What changed with the security review
 
 An independent code review (by a separate AI agent, not a human penetration test) led to the changes
-below before the first release. This table is for anyone who ran an earlier build; each row says
-where this guide describes the new behaviour. The exact messages are in
+below before the first release, and a second review of the fixed code (2026-10-24) led to the rows
+marked *second review*. This table is for anyone who ran an earlier build; each row says where this
+guide describes the new behaviour. The exact messages are in
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 | Area | Before | Now |
@@ -1326,7 +1378,13 @@ where this guide describes the new behaviour. The exact messages are in
 | Event streams | 64 in total, authorised once | also 8 per principal (`429`), credential checked at every heartbeat ([5](#5-configuration-reference)) |
 | Restart recovery | recorded pid and start time | boot id, and `H2W_JOB_ID` in the group's environment ([THREAT-MODEL.md](THREAT-MODEL.md) D7) |
 | The server's memory and environment | readable by a same-user job through `/proc` | the server and the egress proxy are non-dumpable (the note at the top, [10](#10-the-compose-reference-deployment)) |
-| Results of hostile experiments | per-file read caps | bounded per request, 4 reads at once, `413 too large` ([API.md](API.md#6-paging-filters-and-limits)) |
+| Results of hostile experiments | per-file read caps | bounded per request, 4 reads at once, `413 too large` ([API.md](API.md#6-paging-filters-and-limits)); *second review*: every results file is opened without blocking (a FIFO swapped in is refused, not waited on), a request has a read budget of bytes and sweeps, an abandoned request cancels its reads, a response is capped at 64 MiB, at most 200 sweeps are listed per experiment and a changed sweep may be shown as it was for one refresh |
+| Harness fingerprint and manifest digest (*second review*) | read every file whatever its size | a file over its cap (4 MiB in the fingerprint; 4 MiB for a summary and 32 MiB for a judged file in the digest) is recorded as `<too large: N bytes>` and never read; more than 64 MiB (fingerprint) or 1 GiB (digest) in all is `413` |
+| Job log pages and event-stream replay (*second review*) | up to 5,000 lines whatever their size | about 1 MiB (at least one line), with `next`; a reconnecting stream replays at most one page |
+| Refused requests in the audit log (*second review*) | one record each | at most 10 a minute per principal, the rest counted in `h2w_audit_suppressed_total` ([13](#13-audit-log)); job starts and cancels are not limited |
+| Audit actors (*second review*) | the plain name | `token:<name>`, `proxy:<user>`, `cli`, `server`, `anonymous` ([13](#13-audit-log)) |
+| Limiter keys behind a trusted proxy (*second review*) | one table, 10,000 clients, one shared overflow bucket | per peer: 1,024 clients each, then that peer's own bucket ([6.5](#65-failed-authentication-is-throttled)) |
+| Origin rule behind an `https` `public_url` (*second review*) | `http://<Host>` also passed; only the first `Origin` was read | only https origins; a repeated `Origin` header is `403` ([7](#7-reverse-proxy-and-tls)) |
 | Profile `extra_env` | a short list of names | many more reserved ([MODELS.md](MODELS.md#reserved-environment-variables)); saving a profile that uses one is `422`, and creating a job with a profile stored earlier that uses one is refused (`422` on `params.profile`: `profile <name> no longer passes validation (...); an administrator must update it`) |
 | Secret redaction | the literal value | also its base64 spellings ([6.4](#64-secrets)) |
 | Host paths in job results and `file://` URLs | shown | masked ([THREAT-MODEL.md](THREAT-MODEL.md) I4) |
