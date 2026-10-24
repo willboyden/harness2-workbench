@@ -44,8 +44,11 @@ Out of scope here, but please report to the right place:
 
 ## Design notes for reviewers
 
-- The threat model is in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) and the security
-  architecture in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §9.
+- The threat model is in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) (assets, trust boundaries, a
+  STRIDE analysis with the code behind each control, and the
+  [residual risks in plain words](docs/THREAT-MODEL.md#6-residual-risks-in-plain-words)) and the
+  security architecture in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §9. Operators: the
+  [hardening checklist](docs/ADMIN-GUIDE.md#15-hardening-checklist).
 - **Host isolation is upstream's behaviour and is powerful by design:** harness2's executors
   (OpenCode, Codex with its sandbox disabled) run agent tool calls with the server user's files
   and network. That includes the Studio's own data directory: a malicious or prompt-injected
