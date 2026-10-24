@@ -208,10 +208,16 @@ async fn shutdown_signal() {
 }
 
 fn serve(config: Option<&Path>) -> anyhow::Result<ExitCode> {
+    // First of all: the environment holds secrets (H2S_SECRET_*, the proxy secret) and
+    // host-mode jobs run as this user.
+    let dumpable = crate::util::make_non_dumpable();
     let cfg = load(config)?;
     let rt = runtime()?;
     rt.block_on(Box::pin(async move {
         let _telemetry = crate::telemetry::init(&cfg).map_err(anyhow::Error::msg)?;
+        if let Err(e) = dumpable {
+            tracing::warn!(error = %e, "could not make the server non-dumpable; processes of this user can read its environment");
+        }
         for (k, v) in cfg.describe_paths() {
             tracing::info!("{k}: {v}");
         }
@@ -545,10 +551,15 @@ fn audit_verify(config: Option<&Path>) -> anyhow::Result<ExitCode> {
 }
 
 fn egress_proxy(config: Option<&Path>) -> anyhow::Result<ExitCode> {
+    // The proxy may share a user (and an environment with secrets) with the server.
+    let dumpable = crate::util::make_non_dumpable();
     let cfg = load(config)?;
     let rt = runtime()?;
     rt.block_on(Box::pin(async move {
         let _telemetry = crate::telemetry::init(&cfg).map_err(anyhow::Error::msg)?;
+        if let Err(e) = dumpable {
+            tracing::warn!(error = %e, "could not make the egress proxy non-dumpable");
+        }
         let listener = tokio::net::TcpListener::bind(cfg.egress_listen)
             .await
             .with_context(|| format!("binding {}", cfg.egress_listen))?;

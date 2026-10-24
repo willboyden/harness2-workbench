@@ -91,6 +91,16 @@ pub fn b64url_decode(s: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
+/// Make this process non-dumpable (`prctl(PR_SET_DUMPABLE, 0)`): no core dumps, and no
+/// other process of the same user (a host-mode job) can read its `/proc/<pid>/environ` or
+/// memory, or ptrace it. Children are not affected: `execve` resets the attribute.
+///
+/// # Errors
+/// When the kernel refuses (not expected on Linux).
+pub fn make_non_dumpable() -> std::io::Result<()> {
+    nix::sys::prctl::set_dumpable(false).map_err(std::io::Error::from)
+}
+
 /// Create `dir` (and parents) and set its mode to 0700 explicitly.
 ///
 /// # Errors
@@ -242,6 +252,33 @@ mod tests {
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(&target, &link).unwrap();
         assert!(open_private_append(&link).is_err());
+    }
+
+    #[test]
+    fn the_process_can_be_made_non_dumpable() {
+        // Run in a child process: the attribute is process-wide and would also apply to
+        // the other tests of this binary.
+        let me = std::env::current_exe().unwrap();
+        if std::env::var_os("H2S_TEST_DUMPABLE_CHILD").is_some() {
+            make_non_dumpable().unwrap();
+            assert!(!nix::sys::prctl::get_dumpable().unwrap());
+            return;
+        }
+        let out = std::process::Command::new(me)
+            .args([
+                "--exact",
+                "util::tests::the_process_can_be_made_non_dumpable",
+                "--nocapture",
+            ])
+            .env("H2S_TEST_DUMPABLE_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(nix::sys::prctl::get_dumpable().unwrap());
     }
 
     #[test]

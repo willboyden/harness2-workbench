@@ -47,6 +47,14 @@ results; explanations and logs go to standard error.
 The CLI and a running server can use the same database at once (WAL, 10 s busy timeout). CLI
 token actions are audited with the actor `cli`.
 
+`serve` and `egress-proxy` first make themselves non-dumpable (`prctl(PR_SET_DUMPABLE, 0)`): no
+core dumps, and no other process of the same user, host-mode jobs included, can read their
+`/proc/<pid>/environ` (`H2S_SECRET_*`, the proxy secret) or memory, or ptrace them. Jobs
+themselves stay dumpable (`execve` resets the attribute). This does not protect files: a
+host-mode job runs as the server's user and can open `studio.db`; only container isolation
+separates them. Every data directory (the data directory itself, `logs`, `logs/jobs`, `jobs`,
+`splits`, `experiments`) is set to 0700 at startup, also when it already exists (a volume).
+
 ## Configuration
 
 `h2studio.toml` as in §11, with these precisions: empty `paths.*` mean the XDG data directory

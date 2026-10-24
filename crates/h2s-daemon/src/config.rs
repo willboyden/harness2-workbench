@@ -452,18 +452,24 @@ impl Paths {
         }
     }
 
-    /// Create every directory the server writes (0700).
+    /// Create every directory the server writes, and set each to 0700 (also when it already
+    /// existed, e.g. a volume mounted at `/data`).
     ///
     /// # Errors
     /// I/O errors, with the failing path in the message.
     pub fn ensure(&self) -> std::io::Result<()> {
+        let logs_parent = self.job_logs_dir.parent().map(Path::to_path_buf);
         for dir in [
-            &self.data_dir,
-            &self.experiments_dir,
-            &self.job_logs_dir,
-            &self.job_files_dir,
-            &self.splits_dir,
-        ] {
+            Some(&self.data_dir),
+            Some(&self.experiments_dir),
+            logs_parent.as_ref(),
+            Some(&self.job_logs_dir),
+            Some(&self.job_files_dir),
+            Some(&self.splits_dir),
+        ]
+        .into_iter()
+        .flatten()
+        {
             crate::util::ensure_private_dir(dir)
                 .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", dir.display())))?;
         }
@@ -1610,6 +1616,31 @@ mode = "proxy"
         assert_eq!(split_host_port("a:b"), None);
         assert_eq!(split_host_port("a b"), None);
         assert_eq!(split_host_port(""), None);
+    }
+
+    #[test]
+    fn data_directories_end_up_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let data = d.path().join("data");
+        // As a container volume or an earlier umask may leave them.
+        std::fs::create_dir_all(data.join("logs/jobs")).unwrap();
+        for p in [data.clone(), data.join("logs"), data.join("logs/jobs")] {
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let paths = Config::defaults_in(&data).unwrap().paths;
+        paths.ensure().unwrap();
+        for p in [
+            data.clone(),
+            data.join("logs"),
+            paths.job_logs_dir.clone(),
+            paths.job_files_dir.clone(),
+            paths.splits_dir.clone(),
+            paths.experiments_dir,
+        ] {
+            let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "{}", p.display());
+        }
     }
 
     #[test]

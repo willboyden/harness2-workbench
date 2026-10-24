@@ -321,6 +321,8 @@ async fn egress_proxy_runs_as_a_subcommand() {
     let mut c = cmd(&e.home);
     c.args(["egress-proxy", "--config", e.config.to_str().unwrap()]);
     let (child, line) = spawn_until_line(c);
+    // Non-dumpable: other processes of this user cannot read its environment.
+    assert!(std::fs::read(format!("/proc/{}/environ", child.id())).is_err());
     let addr: std::net::SocketAddr = line
         .strip_prefix("h2studio egress proxy listening on ")
         .unwrap_or_else(|| panic!("unexpected first line {line:?}"))
@@ -431,4 +433,98 @@ async fn jobs_inherit_only_the_allowed_server_variables() {
         !text.contains("server-only"),
         "a server-only variable leaked:\n{text}"
     );
+}
+
+/// A host-mode job runs as the server's user, but must not read the server's environment
+/// (`H2S_SECRET_*`, the proxy secret): `serve` makes itself non-dumpable, which closes
+/// `/proc/<pid>/environ` (and ptrace) to every other process of the same user.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jobs_cannot_read_the_server_environment() {
+    let e = env();
+    let h2 = e.root.join("harness2");
+    let bin = h2.join(".venv/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    // The stub's parent is the server: it tries to read the server's environment.
+    let stub = "#!/bin/sh\n# test stub: try to read the server's environment\n\
+                if cat /proc/$PPID/environ >/dev/null 2>&1; then echo 'environ: readable'; \
+                else echo 'environ: denied'; fi\n\
+                if tr '\\0' '\\n' </proc/$PPID/environ 2>/dev/null | grep -q '^H2S_SECRET_CANARY='; \
+                then echo 'canary: leaked'; fi\n\
+                echo \"parent: $PPID\"\nexit 0\n";
+    for name in ["harness2", "harness2-demo"] {
+        std::fs::write(bin.join(name), stub).unwrap();
+        std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::fs::create_dir_all(e.config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &e.config,
+        format!(
+            "[paths]\ndata_dir = \"{}\"\nharness2_home = \"{}\"\nharness2_managed = false\n",
+            e.root.join("data").display(),
+            h2.display()
+        ),
+    )
+    .unwrap();
+    let token = e.init();
+    let mut c = cmd(&e.home);
+    c.args(["serve", "--config", e.config.to_str().unwrap()])
+        .env("H2S_LISTEN", "127.0.0.1:0")
+        .env("H2S_SECRET_CANARY", "canary-value-0123456789");
+    let (child, line) = spawn_until_line(c);
+    let server_pid = child.id();
+    let url = line
+        .strip_prefix("h2studio listening on ")
+        .unwrap_or_else(|| panic!("unexpected first line {line:?}"))
+        .to_owned();
+    // The test runs as the same user (and is the server's parent): denied as well.
+    let own = std::fs::read(format!("/proc/{server_pid}/environ"));
+    assert!(
+        own.is_err(),
+        "the test process read the server's environment"
+    );
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let job: h2s_api::Job = client
+        .post(format!("{url}/api/v1/jobs"))
+        .bearer_auth(&token)
+        .header("x-h2s-request", "1")
+        .json(&serde_json::json!({"kind": "demo", "params": {"experiment": "peek", "k": 1}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let text = loop {
+        let log: h2s_api::LogChunk = client
+            .get(format!("{url}/api/v1/jobs/{}/log?limit=500", job.id))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if log.complete {
+            break log
+                .lines
+                .iter()
+                .map(|l| l.text.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        assert!(Instant::now() < deadline, "the job did not finish");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    let status = tokio::task::spawn_blocking(move || stop(child))
+        .await
+        .unwrap();
+    assert!(status.success(), "{status:?}");
+    assert!(
+        text.contains(&format!("parent: {server_pid}")),
+        "the stub's parent is not the server:\n{text}"
+    );
+    assert!(text.contains("environ: denied"), "{text}");
+    assert!(!text.contains("environ: readable"), "{text}");
+    assert!(!text.contains("canary: leaked"), "{text}");
 }
