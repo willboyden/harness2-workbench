@@ -2,7 +2,13 @@
 //!
 //! Install = `git init` + `git fetch --depth 1 origin <commit>` + `git checkout --detach
 //! FETCH_HEAD` (the commit id is the integrity check), `uv venv --python 3.12 .venv`,
-//! `uv pip install --python .venv/bin/python -e .[render(,bridge)]`, then an import check.
+//! `uv pip install --python .venv/bin/python --exclude-newer <cutoff> -e .[render(,bridge)]`,
+//! then an import check.
+//!
+//! harness2 has no lock file, so its dependencies are resolved at install time; the cutoff
+//! ([`crate::TESTED_HARNESS2_DEPS_CUTOFF`], the tested commit's date) keeps that resolution
+//! to packages uploaded before the tested commit. It applies to every commit: one that
+//! needs newer packages fails to install instead of pulling releases nobody tested.
 
 use std::path::Path;
 
@@ -10,7 +16,9 @@ use cap_std::fs::Dir;
 use h2s_api::{Harness2Status, InstallExtra};
 
 use crate::safefs::{self, EntryKind};
-use crate::{CoreError, HARNESS2_PYTHON, HARNESS2_REPO_URL, Result, names};
+use crate::{
+    CoreError, HARNESS2_PYTHON, HARNESS2_REPO_URL, Result, TESTED_HARNESS2_DEPS_CUTOFF, names,
+};
 
 /// One install step: run `program args...` in `cwd` (absolute) with no shell.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +192,8 @@ pub fn plan(
             "install",
             "--python",
             ".venv/bin/python",
+            "--exclude-newer",
+            TESTED_HARNESS2_DEPS_CUTOFF,
             "-e",
             target,
         ],
@@ -349,6 +359,8 @@ mod tests {
                 "install",
                 "--python",
                 ".venv/bin/python",
+                "--exclude-newer",
+                "2026-10-14T02:22:49Z",
                 "-e",
                 ".[render,bridge]"
             ]
@@ -357,6 +369,24 @@ mod tests {
         assert!(plan("relative", C, &[], false).is_err());
         assert!(plan(home, "abc", &[], false).is_err());
         assert!(plan("/", C, &[], false).is_err());
+    }
+
+    /// The cutoff is the tested commit's committer time in UTC: `git show -s --format=%cI
+    /// 1cfe254` gives 2026-10-13T21:22:49-05:00.
+    #[test]
+    fn deps_cutoff_is_the_tested_commit_time_in_utc() {
+        let committed = time::OffsetDateTime::parse(
+            "2026-10-13T21:22:49-05:00",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        let cutoff = time::OffsetDateTime::parse(
+            crate::TESTED_HARNESS2_DEPS_CUTOFF,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        assert_eq!(committed, cutoff);
+        assert_eq!(cutoff.offset(), time::UtcOffset::UTC);
     }
 
     #[test]
@@ -391,12 +421,29 @@ mod tests {
             steps[0].args,
             vec!["venv", "--clear", "--python", "3.12", ".venv"]
         );
+        assert_eq!(
+            &steps[1].args[4..],
+            [
+                "--exclude-newer",
+                crate::TESTED_HARNESS2_DEPS_CUTOFF,
+                "-e",
+                ".[render]"
+            ]
+        );
         let other = "0".repeat(40);
         let steps = plan(h, &other, &[], true).unwrap();
         assert_eq!(steps[0].name, "fetch");
         assert_eq!(
             steps[2].args,
             vec!["merge-base", "--is-ancestor", other.as_str(), "HEAD"]
+        );
+        // The cutoff applies to every commit, not only the tested one.
+        let install = steps.iter().find(|s| s.name == "install").unwrap();
+        assert!(
+            install
+                .args
+                .windows(2)
+                .any(|w| w == ["--exclude-newer", crate::TESTED_HARNESS2_DEPS_CUTOFF])
         );
 
         let st = read_status(&home, true);
