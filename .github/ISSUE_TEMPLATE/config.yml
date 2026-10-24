@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability (privately)
-    url: https://github.com/willboyden/harness2-studio/security/advisories/new
+    url: https://github.com/willboyden/harness2-workbench/security/advisories/new
     about: Please do not open public issues for security problems. See SECURITY.md.
   - name: Questions about harness2 itself (the research framework)
     url: https://github.com/google-research/harness2
-    about: Harness² Studio is an unofficial companion; harness2's own behaviour belongs upstream.
+    about: Harness² Workbench is an unofficial companion; harness2's own behaviour belongs upstream.

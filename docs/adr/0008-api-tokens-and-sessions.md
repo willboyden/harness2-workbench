@@ -1,11 +1,11 @@
-# ADR 0008: API tokens `h2s_<id>_<secret>`, stored as a SHA-256, with cookie sessions for browsers
+# ADR 0008: API tokens `h2w_<id>_<secret>`, stored as a SHA-256, with cookie sessions for browsers
 
 - **Status:** Accepted. Part of the v1.0 contract ([ARCHITECTURE.md](../ARCHITECTURE.md) §2, §9).
-- **Applies to:** `h2s-daemon` (`auth.rs`, `db/tokens.rs`, `db/sessions.rs`, `http/extract.rs`, `http/routes/auth.rs`, `ratelimit.rs`).
+- **Applies to:** `h2w-daemon` (`auth.rs`, `db/tokens.rs`, `db/sessions.rs`, `http/extract.rs`, `http/routes/auth.rs`, `ratelimit.rs`).
 
 ## Context
 
-The Studio needs credentials for people, scripts, CI jobs and AI agents, each with a role, an
+The Workbench needs credentials for people, scripts, CI jobs and AI agents, each with a role, an
 optional expiry and the possibility of instant revocation. It runs on a single machine for a small
 team, usually without an identity provider; where there is one, a reverse proxy can bring it
 ([ADMIN-GUIDE.md](../ADMIN-GUIDE.md#63-proxy-sso-mode)). The credential check runs on every request
@@ -13,7 +13,7 @@ and must not leak information through timing or error text.
 
 ## Decision
 
-- A token is **`h2s_` + an 8-character public id (`[a-z0-9]`) + `_` + a 256-bit random secret** in
+- A token is **`h2w_` + an 8-character public id (`[a-z0-9]`) + `_` + a 256-bit random secret** in
   43 characters of unpadded base64url. It is shown once, at creation.
 - The database stores the **id and the SHA-256 of the secret**, never the secret. Verification looks
   the row up **by id** (a single indexed read, no scan), hashes the presented secret and compares in
@@ -24,8 +24,8 @@ and must not leak information through timing or error text.
   needs no cache invalidation.
 - **Browsers** exchange a token for a **session**: a 256-bit random id in an `HttpOnly`,
   `SameSite=Strict` cookie, stored only as its hash, with a lifetime that never exceeds the token's.
-  When the public URL is https the cookie is `Secure` and named `__Host-h2s_session` (`Path=/`, no
-  `Domain`, so a sibling subdomain cannot plant one); over plain http it is `h2s_session`, because a
+  When the public URL is https the cookie is `Secure` and named `__Host-h2w_session` (`Path=/`, no
+  `Domain`, so a sibling subdomain cannot plant one); over plain http it is `h2w_session`, because a
   `__Host-` cookie needs `Secure`, which browsers drop on http. Revoking a token ends its sessions,
   and an open event stream notices at its next heartbeat. Login is rate-limited per client address.
 - **Failed authentication is throttled per client address** (60 a minute, then `429`), and at most 10
@@ -33,7 +33,7 @@ and must not leak information through timing or error text.
   guess nor flood. Valid credentials from the same address are not affected.
 - There are **no passwords** and no user table. A proxy mode accepts a user and groups asserted by a
   trusted reverse proxy instead, behind a shared secret, for deployments with SSO.
-- `h2studio init` mints the first admin token and prints it once.
+- `h2workbench init` mints the first admin token and prints it once.
 
 ## Consequences
 
@@ -71,7 +71,7 @@ Bad, and how it is managed:
 
 ## Evidence in the repository
 
-`crates/h2s-daemon/src/auth.rs` (format, `mint`, `secret_matches`, `ct_eq`), `http/extract.rs`
+`crates/h2w-daemon/src/auth.rs` (format, `mint`, `secret_matches`, `ct_eq`), `http/extract.rs`
 (`verify_token`, `proxy_principal`), `http/routes/auth.rs`, `ratelimit.rs`, `db/tokens.rs`,
 `db/sessions.rs`. Tests: `auth.rs` (bearer, expiry and revocation, cookie attributes, session end,
 rate limit, proxy mode, and `failed_authentication_cannot_flood_the_audit_log`,

@@ -1,7 +1,7 @@
 # User guide: the web UI
 
-This guide walks through the Harness² Studio web interface screen by screen: what each page shows,
-what you can do on it, and what your role decides. It assumes a running Studio server and an API
+This guide walks through the Harness² Workbench web interface screen by screen: what each page shows,
+what you can do on it, and what your role decides. It assumes a running Workbench server and an API
 token ([ADMIN-GUIDE.md](ADMIN-GUIDE.md) shows how to get both). If harness2's own vocabulary is new
 to you, read [CONCEPTS.md](CONCEPTS.md) first; the UI also explains every term in place (dotted
 underlines) and in its **Help** page.
@@ -9,15 +9,15 @@ underlines) and in its **Help** page.
 **What is real in the pictures.** Screenshots were taken on 2026-10-24 in headless Firefox 157
 (driven through geckodriver 0.37.1) against two backends:
 
-- **Real server** (most pictures): `h2studio` 0.1.0 with a real harness2 checkout at the tested
+- **Real server** (most pictures): `h2workbench` 0.1.0 with a real harness2 checkout at the tested
   commit, after running the free offline demo twice. Everything on those pages is what the server
   returned. The demo produces tasks, harness trees and library lessons but no scores, no improver
   sessions and no model calls.
 - **Mock API** (captions say *mock*): the pages that need judged scores, improver sessions or a
   running job (the report, the audit trail, a scored task, the wizard's later steps, a live job and
-  the comparison) use `tools/h2s-mock-api`, a development server with **fictional data**. Its
+  the comparison) use `tools/h2w-mock-api`, a development server with **fictional data**. Its
   numbers mean nothing; they show how a populated page looks. No model-backed sweep has been run
-  through the Studio.
+  through the Workbench.
 
 What the documentation author did and did not exercise is listed in [section 15](#15-what-was-verified).
 
@@ -34,13 +34,13 @@ Contents: [1 Before you start](#1-before-you-start) · [2 Signing in and out](#2
 
 - **Open the server's address** in a browser: `http://127.0.0.1:8722` by default, or the
   `public_url` your administrator set. The UI is a single-page application compiled to WebAssembly
-  and served by the Studio itself; it needs JavaScript and WebAssembly (the page's `<noscript>` text reads
-  *Harness² Studio needs JavaScript and WebAssembly*). The pictures and checks used Firefox; other current browsers were
+  and served by the Workbench itself; it needs JavaScript and WebAssembly (the page's `<noscript>` text reads
+  *Harness² Workbench needs JavaScript and WebAssembly*). The pictures and checks used Firefox; other current browsers were
   not tried.
 - **If the page says `UI not built`**, this server was built without the UI. Tell your
   administrator ([TROUBLESHOOTING.md](TROUBLESHOOTING.md#browser-and-reverse-proxy-symptoms)). The
   REST API works without it ([API.md](API.md)).
-- **You need an API token**: the first administrator token is printed once by `h2studio init`;
+- **You need an API token**: the first administrator token is printed once by `h2workbench init`;
   administrators create more under **Settings → API tokens**. The token decides your role:
   **viewer** (read everything except secrets, tokens and the audit log), **operator** (also create
   experiments and start or cancel jobs) or **admin** (also install, set up benchmarks, and manage
@@ -70,7 +70,7 @@ The messages you can meet here (all seen while testing):
 | Message | Meaning |
 |---|---|
 | `Paste your API token first.` | The field was empty. |
-| `That does not look like a Studio token: tokens start with “h2s_”.` | The text is not a token. |
+| `That does not look like a Workbench token: tokens start with “h2w_”.` | The text is not a token. |
 | `The server did not accept this token. Check that it was copied completely and has not been revoked or expired.` | Unknown, revoked or expired token (the server's own message is deliberately the same for all of them). |
 | `Too many sign-in attempts from this address. Wait a minute before trying again.` | The login rate limit; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#413-421-429). |
 
@@ -103,7 +103,7 @@ The dashboard answers "is my lab healthy?" at a glance:
 | **Experiments**, **Sweeps** | counts |
 | **Jobs running / allowed** | running jobs against `jobs.max_concurrent` |
 | **Recorded spend** | spend harness2 recorded for **improver and selection sessions only**; executor rollouts are not recorded, so real cost is higher |
-| **harness2** | whether it is installed, its version, the commit and the commit this Studio was tested with, the Python version, and whether the checkout is managed or an existing one that is never modified |
+| **harness2** | whether it is installed, its version, the commit and the commit this Workbench was tested with, the Python version, and whether the checkout is managed or an existing one that is never modified |
 | **Environment checks** | the doctor's counts (ok, warnings, failed) and each problem with its fix; **Re-run checks** refreshes (operators and admins) |
 | **Running and queued jobs**, **Recent experiments** | live progress and shortcuts |
 
@@ -262,7 +262,7 @@ coloured). Rollout files are written by models and by the task: treat them as un
 
 ### 6.4 Export
 
-**Export…** takes the shown harness out of the Studio.
+**Export…** takes the shown harness out of the Workbench.
 
 ![The export dialog](images/export-dialog.png)
 
@@ -327,8 +327,8 @@ summaries land (a task in flight finishes first, and it counts improver spend on
 spend is not recorded, so real cost is higher). Under host isolation a banner reads **Jobs run on
 the server host** and **Start the pipeline** stays disabled until you tick **I understand and want
 to run on the host**. The banner says what that means: the executor runs as the server's user, that
-user owns the Studio's database (stored secrets, token hashes), and so a malicious or
-prompt-injected executor is effectively a Studio administrator (see
+user owns the Workbench's database (stored secrets, token hashes), and so a malicious or
+prompt-injected executor is effectively a Workbench administrator (see
 [THREAT-MODEL.md](THREAT-MODEL.md)). Under container isolation the banner and the checkbox are not
 shown (read from the UI's source, not tried). If an administrator has set
 `isolation.preacknowledge_host_risks`, the banner and the checkbox are replaced by one line, *The
@@ -365,7 +365,7 @@ progress bar and the current task update, and log lines arrive as they are writt
 ![A running job (mock)](images/mock-job-live.png)
 
 *Mock data.* The log can be filtered with **Search the log** (case-insensitive) and the **stdout**,
-**stderr** and **server** switches (server lines are the Studio's own: step boundaries, isolation
+**stderr** and **server** switches (server lines are the Workbench's own: step boundaries, isolation
 notes); **Follow new lines** keeps the newest line in view; **Download** saves what the page holds.
 If the event stream drops, the page is designed to reconnect with a back-off and, after repeated
 failures, to poll (from the UI notes; the author did not break a stream to see it). **Cancel** (operators;
@@ -444,7 +444,7 @@ Secrets are **write-only**: the page shows a name, whether it is set and its len
 paste is easy to spot), never the value. **Add or replace a secret** takes a name (uppercase letters,
 digits and underscores) and a value (not shown again). Secrets that a profile references but that
 have no value are listed with **Set value**; stored ones offer **Replace value** and **Delete**. An
-environment variable `H2S_SECRET_<NAME>` on the server takes precedence over a stored value.
+environment variable `H2W_SECRET_<NAME>` on the server takes precedence over a stored value.
 
 ### 11.3 API tokens
 
@@ -554,13 +554,13 @@ are no per-experiment permissions.
 | **Start the pipeline** is disabled | Tick the host-isolation acknowledgement (it is not shown when the server pre-acknowledges host risks); or you are a viewer. |
 | *Before you continue: run the preview…* | The wizard needs a preview for the current options. |
 | *Jobs will be refused until these secrets are set* | A profile secret has no value: an admin sets it under **Settings → Secrets**. |
-| A tool is listed as `failed` or `warning` on the dashboard | The doctor found something; the fix is printed under it ([TROUBLESHOOTING.md](TROUBLESHOOTING.md#h2studio-doctor-checks)). |
+| A tool is listed as `failed` or `warning` on the dashboard | The doctor found something; the fix is printed under it ([TROUBLESHOOTING.md](TROUBLESHOOTING.md#h2workbench-doctor-checks)). |
 | Job logs do not update live | A reverse proxy is buffering server-sent events ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#7-reverse-proxy-and-tls)). |
 | Any API error | The toast shows the server's message; look it up in [TROUBLESHOOTING.md](TROUBLESHOOTING.md#http-errors-by-status). |
 
 **UI wording that was wrong in the first revision of this guide and has been fixed in the UI**
 (checked in headless Firefox on 2026-10-24 against the build of the same source as this text): the
-host-isolation banner and the Help FAQ now say that the executor can reach the Studio's own database;
+host-isolation banner and the Help FAQ now say that the executor can reach the Workbench's own database;
 the profile form says the egress-hosts list is informational and not applied by the server; the FAQ
 says an experiment keeps the profile it was created with or, without one, the profile of its first
 job that writes into it; and a comparison opened with `agg` or `seq` in the address selects

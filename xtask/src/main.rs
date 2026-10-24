@@ -1,4 +1,4 @@
-//! Build orchestration for Harness² Studio: `cargo xtask <command>`.
+//! Build orchestration for Harness² Workbench: `cargo xtask <command>`.
 //!
 //! Commands run other programs with explicit argv (no shell) and stop at the first failure,
 //! printing the command that failed.
@@ -16,7 +16,7 @@ mod cooldown;
 mod docs;
 
 #[derive(Parser)]
-#[command(name = "xtask", about = "Harness² Studio build tasks")]
+#[command(name = "xtask", about = "Harness² Workbench build tasks")]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -46,7 +46,7 @@ enum Cmd {
     Hooks,
     /// End-to-end suites: real server + real harness2 demo + headless Firefox + MCP client.
     E2e {
-        /// harness2 checkout with its .venv (default: $H2S_E2E_HARNESS2_HOME).
+        /// harness2 checkout with its .venv (default: $H2W_E2E_HARNESS2_HOME).
         #[arg(long)]
         harness2_home: Option<String>,
         /// Run one suite: server_demo, browser or mcp (default: all).
@@ -58,7 +58,7 @@ enum Cmd {
     },
 }
 
-/// The end-to-end suites (`crates/h2s-e2e/tests/<name>.rs`).
+/// The end-to-end suites (`crates/h2w-e2e/tests/<name>.rs`).
 const E2E_SUITES: &[&str] = &["server_demo", "browser", "mcp"];
 
 fn main() -> Result<()> {
@@ -71,7 +71,7 @@ fn main() -> Result<()> {
             run(
                 &root,
                 "cargo",
-                &["build", "--release", "-p", "h2s-daemon", "-p", "h2s-mcp"],
+                &["build", "--release", "-p", "h2w-daemon", "-p", "h2w-mcp"],
             )
         }
         Cmd::Cooldown { days } => cooldown::check(&root, days),
@@ -107,7 +107,7 @@ fn run(cwd: &Path, program: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Build `h2s-web` for wasm32, generate the JS bindings, and assemble `dist/web`.
+/// Build `h2w-web` for wasm32, generate the JS bindings, and assemble `dist/web`.
 fn build_web(root: &Path, dev: bool) -> Result<()> {
     let profile = if dev { "dev" } else { "release-web" };
     let profile_dir = if dev { "debug" } else { "release-web" };
@@ -117,7 +117,7 @@ fn build_web(root: &Path, dev: bool) -> Result<()> {
         &[
             "build",
             "-p",
-            "h2s-web",
+            "h2w-web",
             "--lib",
             "--target",
             "wasm32-unknown-unknown",
@@ -128,7 +128,7 @@ fn build_web(root: &Path, dev: bool) -> Result<()> {
     let wasm = root
         .join("target/wasm32-unknown-unknown")
         .join(profile_dir)
-        .join("h2s_web.wasm");
+        .join("h2w_web.wasm");
     if !wasm.is_file() {
         bail!("expected {} after the build", wasm.display());
     }
@@ -160,7 +160,7 @@ fn build_web(root: &Path, dev: bool) -> Result<()> {
     // rust-embed decides when the server is compiled whether `dist/web` exists, so a server
     // compiled without it keeps the "UI not built" page. Marking the embedding module changed
     // makes the next server build, debug or release, embed the UI just built.
-    let embed = root.join("crates/h2s-daemon/src/http/static_ui.rs");
+    let embed = root.join("crates/h2w-daemon/src/http/static_ui.rs");
     std::fs::File::options()
         .write(true)
         .open(&embed)
@@ -209,9 +209,9 @@ fn check(root: &Path) -> Result<()> {
         &[
             "clippy",
             "-p",
-            "h2s-web",
+            "h2w-web",
             "-p",
-            "h2s-api",
+            "h2w-api",
             "--target",
             "wasm32-unknown-unknown",
             "--",
@@ -241,19 +241,19 @@ fn e2e(
         bail!("unknown suite {s:?}; use one of {}", E2E_SUITES.join(", "));
     }
     let home = harness2_home
-        .or_else(|| std::env::var("H2S_E2E_HARNESS2_HOME").ok())
-        .context("pass --harness2-home <checkout with .venv> or set H2S_E2E_HARNESS2_HOME")?;
+        .or_else(|| std::env::var("H2W_E2E_HARNESS2_HOME").ok())
+        .context("pass --harness2-home <checkout with .venv> or set H2W_E2E_HARNESS2_HOME")?;
     if !Path::new(&home).join(".venv/bin/harness2-demo").is_file() {
-        bail!("{home} has no .venv/bin/harness2-demo; see crates/h2s-e2e/README.md");
+        bail!("{home} has no .venv/bin/harness2-demo; see crates/h2w-e2e/README.md");
     }
     build_web(root, true)?;
     run(
         root,
         "cargo",
-        &["build", "--locked", "-p", "h2s-daemon", "-p", "h2s-mcp"],
+        &["build", "--locked", "-p", "h2w-daemon", "-p", "h2w-mcp"],
     )?;
     let bin_dir = root.join("target/debug");
-    let mut args = vec!["test", "--locked", "-p", "h2s-e2e"];
+    let mut args = vec!["test", "--locked", "-p", "h2w-e2e"];
     if let Some(s) = suite {
         args.extend(["--test", s]);
     }
@@ -266,8 +266,8 @@ fn e2e(
     let mut child = Command::new("cargo")
         .args(&args)
         .current_dir(root)
-        .env("H2S_E2E_BIN_DIR", &bin_dir)
-        .env("H2S_E2E_HARNESS2_HOME", &home)
+        .env("H2W_E2E_BIN_DIR", &bin_dir)
+        .env("H2W_E2E_HARNESS2_HOME", &home)
         .stdout(std::process::Stdio::piped())
         .spawn()
         .context("could not start cargo test")?;

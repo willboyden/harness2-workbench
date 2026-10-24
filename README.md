@@ -1,10 +1,10 @@
-# Harness² Studio
+# Harness² Workbench
 
 **An unofficial GUI, REST API and MCP server for [google-research/harness2](https://github.com/google-research/harness2)**
 ("Harness²: Recursive Agent Harnessing for an Open World").
 
 > **Not affiliated with Google.** harness2 is the work of its authors at Google Research. Harness²
-> Studio is an independent project that drives harness2 through its command line and reads what it
+> Workbench is an independent project that drives harness2 through its command line and reads what it
 > writes; it is not endorsed by or supported by Google, and it does not modify harness2. All credit
 > for the method belongs to the harness2 authors: see the
 > [paper](https://arxiv.org/abs/2610.14224), the [project site](https://harness2.github.io) and
@@ -14,7 +14,7 @@ harness2 improves an AI agent's *harness* (prompts, guardrails, memory, tool gui
 skills, scripts, plugins) task by task, without touching model weights, and keeps what it learns for
 later tasks ([the ideas in five minutes](docs/CONCEPTS.md)). It is a research framework driven from a
 terminal: you set environment variables, start long runs by hand, watch them scroll, and read results
-as files. **Harness² Studio is what you put around it when more than one person, or one AI agent, needs
+as files. **Harness² Workbench is what you put around it when more than one person, or one AI agent, needs
 to use it safely**: sign-in and roles, a job queue with live logs, cancellation and cost guards, write-only
 secrets with best-effort log redaction, a hash-chained audit trail, browsing of everything harness2 writes
 (task summaries, harness trees and diffs, rollouts, experience libraries, reports), optional container
@@ -22,12 +22,12 @@ isolation with an egress allowlist, and an MCP server so coding agents can run a
 under the same rules as people.
 
 > **Before you run it: host isolation is not a sandbox.** By default harness2's executors run as the
-> user that runs the Studio. A malicious or prompt-injected executor can read the Studio's own
-> database (stored secrets, token hashes) and files and rewrite them, so it is, in effect, a Studio
+> user that runs the Workbench. A malicious or prompt-injected executor can read the Workbench's own
+> database (stored secrets, token hashes) and files and rewrite them, so it is, in effect, a Workbench
 > administrator plus that user. **Container isolation exists for this** ([quick start b](#quick-start-b-jobs-in-containers-with-an-egress-allowlist)).
 > The compose deployment ([quick start c](#quick-start-c-the-compose-reference-deployment))
-> contains the whole Studio from your host and network, but **its jobs are not isolated from the
-> Studio itself**. MCP agents: give them a viewer token; an operator token only when they must start
+> contains the whole Workbench from your host and network, but **its jobs are not isolated from the
+> Workbench itself**. MCP agents: give them a viewer token; an operator token only when they must start
 > jobs; never an admin token; and treat everything a tool returns as untrusted.
 
 <table>
@@ -63,7 +63,7 @@ Every feature below carries two words so you can see what is claimed and what is
 
 "Verified live" below means: by the documentation author on 2026-10-23 and 2026-10-24 on Linux x86_64
 with harness2 `1cfe254`, or by the project maintainers, as stated. **No model-backed sweep has been run
-through the Studio**: the only real harness2 workflow exercised end to end is the free offline demo.
+through the Workbench**: the only real harness2 workflow exercised end to end is the free offline demo.
 
 Most of this code and documentation was written by AI coding agents (Claude) under human direction
 and review; the `Co-Authored-By` trailers of the commits record which.
@@ -102,7 +102,7 @@ and review; the `Co-Authored-By` trailers of the commits record which.
 For one person on one machine, no containers. You need Linux, `git`, [`uv`](https://docs.astral.sh/uv/)
 (Python 3.12 available to it) and a Rust toolchain. Steps 2 and 3 and everything after them were run as
 written, with a scratch home directory, against an existing checkout of the pinned harness2 commit.
-Step 1 repeats what the Studio's `install_harness2` job runs (which was run live, with the same
+Step 1 repeats what the Workbench's `install_harness2` job runs (which was run live, with the same
 `uv pip install` and cutoff); the manual commands themselves were not re-run for this page.
 
 ```sh
@@ -110,19 +110,19 @@ Step 1 repeats what the Studio's `install_harness2` job runs (which was run live
 git clone https://github.com/google-research/harness2 /opt/harness2 && cd /opt/harness2   # any directory you can write
 git checkout 1cfe254e8d25b15f37048c3730134686abe60335
 uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python --exclude-newer 2026-10-14T02:22:49Z -e '.[render]'   # the Studio's own install uses this cutoff
+uv pip install --python .venv/bin/python --exclude-newer 2026-10-14T02:22:49Z -e '.[render]'   # the Workbench's own install uses this cutoff
 cd -
 
-# 2. the Studio (API and command line; the web UI needs `cargo xtask web` first)
-git clone https://github.com/willboyden/harness2-studio.git && cd harness2-studio
-cargo build --release --locked -p h2s-daemon -p h2s-mcp
+# 2. the Workbench (API and command line; the web UI needs `cargo xtask web` first)
+git clone https://github.com/willboyden/harness2-workbench.git && cd harness2-workbench
+cargo build --release --locked -p h2w-daemon -p h2w-mcp
 export PATH="$PWD/target/release:$PATH"
 
 # 3. configure and start
-h2studio init              # writes ~/.config/harness2-studio/h2studio.toml, prints your admin token ONCE
+h2workbench init              # writes ~/.config/harness2-workbench/h2workbench.toml, prints your admin token ONCE
 ```
 
-Open `~/.config/harness2-studio/h2studio.toml`, and in `[paths]` point the Studio at your checkout
+Open `~/.config/harness2-workbench/h2workbench.toml`, and in `[paths]` point the Workbench at your checkout
 (it will never modify it):
 
 ```toml
@@ -130,20 +130,20 @@ harness2_home = "/opt/harness2"   # the absolute path of your checkout
 harness2_managed = false
 ```
 
-(Leave both at their defaults instead and the Studio fetches and installs harness2 itself when an admin
+(Leave both at their defaults instead and the Workbench fetches and installs harness2 itself when an admin
 starts an `install_harness2` job.) Then:
 
 ```console
-$ h2studio doctor          # lists what is missing for each benchmark; harness2 should be OK
-$ h2studio serve
-h2studio listening on http://127.0.0.1:8722
+$ h2workbench doctor          # lists what is missing for each benchmark; harness2 should be OK
+$ h2workbench serve
+h2workbench listening on http://127.0.0.1:8722
 ```
 
 In another terminal, run the demo, which needs no credentials and no network, and look at the result:
 
 ```console
-$ TOKEN=$(cat ~/.config/harness2-studio/admin.token)
-$ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "x-h2s-request: 1" -H "content-type: application/json" \
+$ TOKEN=$(cat ~/.config/harness2-workbench/admin.token)
+$ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "x-h2w-request: 1" -H "content-type: application/json" \
        -d '{"kind":"demo","params":{"experiment":"demo","k":2}}' http://127.0.0.1:8722/api/v1/jobs
 {"id":"01a16c44-216a-75cb-8c29-f250b6fdee83","kind":"demo","status":"queued", ...}
 $ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8722/api/v1/jobs/01a16c44-216a-75cb-8c29-f250b6fdee83
@@ -163,15 +163,15 @@ or Podman. Verified live on rootless Docker by the maintainers; the commands com
 configuration's own comments.
 
 ```sh
-docker build -f deploy/docker/runner.Dockerfile -t harness2-studio-runner:0.1.0 .
-docker build -f deploy/docker/Dockerfile        -t harness2-studio:0.1.0 .
-docker network create --internal h2s-jobs && docker network create h2s-uplink
-# h2studio.toml: [isolation] mode = "container"; [isolation.container] network = "h2s-jobs",
-#   proxy = "http://h2s-egress:3128"; [egress] allow = ["github.com", "pypi.org", "files.pythonhosted.org", ...]
-docker run -d --name h2s-egress --network h2s-jobs -v "$PWD/h2studio.toml:/config/h2studio.toml:ro" \
-  harness2-studio:0.1.0 egress-proxy --config /config/h2studio.toml
-docker network connect h2s-uplink h2s-egress
-h2studio serve    # then run an install_harness2 job (admin) in this mode, then the demo
+docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.0 .
+docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.0 .
+docker network create --internal h2w-jobs && docker network create h2w-uplink
+# h2workbench.toml: [isolation] mode = "container"; [isolation.container] network = "h2w-jobs",
+#   proxy = "http://h2w-egress:3128"; [egress] allow = ["github.com", "pypi.org", "files.pythonhosted.org", ...]
+docker run -d --name h2w-egress --network h2w-jobs -v "$PWD/h2workbench.toml:/config/h2workbench.toml:ro" \
+  harness2-workbench:0.1.0 egress-proxy --config /config/h2workbench.toml
+docker network connect h2w-uplink h2w-egress
+h2workbench serve    # then run an install_harness2 job (admin) in this mode, then the demo
 ```
 
 The full procedure, the rootless/rootful user mapping, and the one mistake everyone makes (a harness2
@@ -180,28 +180,28 @@ installed on the host cannot run inside the container) are in
 
 ## Quick start (c): the compose reference deployment
 
-The whole Studio contained from your host: a server on an internal network, an egress proxy as its only
-way out, and a Caddy ingress with TLS. Jobs still run in host mode *inside* the Studio's container, so
-they are **not** isolated from the Studio itself (see the note at the top). Verified live by the
+The whole Workbench contained from your host: a server on an internal network, an egress proxy as its only
+way out, and a Caddy ingress with TLS. Jobs still run in host mode *inside* the Workbench's container, so
+they are **not** isolated from the Workbench itself (see the note at the top). Verified live by the
 maintainers on rootless Docker (2026-10-23).
 
 ```sh
-docker build -f deploy/docker/runner.Dockerfile -t harness2-studio-runner:0.1.0 .
-docker build -f deploy/docker/Dockerfile        -t harness2-studio:0.1.0 .
-cp deploy/examples/h2studio.compose.toml deploy/h2studio.toml   # then edit the EDIT lines; set your domain in deploy/examples/Caddyfile
-chmod 644 deploy/h2studio.toml     # it holds no secrets; the container user must read it
-docker compose -f deploy/compose.yaml run --rm studio init      # prints the first admin token
+docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.0 .
+docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.0 .
+cp deploy/examples/h2workbench.compose.toml deploy/h2workbench.toml   # then edit the EDIT lines; set your domain in deploy/examples/Caddyfile
+chmod 644 deploy/h2workbench.toml     # it holds no secrets; the container user must read it
+docker compose -f deploy/compose.yaml run --rm workbench init      # prints the first admin token
 docker compose -f deploy/compose.yaml up -d
-docker compose -f deploy/compose.yaml exec studio h2studio doctor
+docker compose -f deploy/compose.yaml exec workbench h2workbench doctor
 ```
 
-The ingress binds to loopback unless you set `H2S_INGRESS_BIND`. Rootless Docker cannot publish
+The ingress binds to loopback unless you set `H2W_INGRESS_BIND`. Rootless Docker cannot publish
 ports below 1024 without a host setting, and may need explicit network subnets: see
 [ADMIN-GUIDE §10](docs/ADMIN-GUIDE.md#10-the-compose-reference-deployment).
 
 ## Security in brief
 
-The Studio starts processes, holds model-provider keys and serves an admin interface, so it is built
+The Workbench starts processes, holds model-provider keys and serves an admin interface, so it is built
 to fail closed: it binds to loopback, refuses requests for unknown `Host` names (DNS rebinding) and
 state-changing requests without a custom header or from another origin (CSRF), sends a strict
 Content-Security-Policy, authenticates with 256-bit tokens stored only as hashes, checks roles in every
@@ -212,7 +212,7 @@ hash-chained audit log. Containers
 drop all capabilities and reach only the hosts you list.
 
 It does **not** make running model-written code safe. In host mode, anyone who can start a run can in
-effect run commands as the server's user, and that user owns the Studio's data: a host-mode job can
+effect run commands as the server's user, and that user owns the Workbench's data: a host-mode job can
 read the database (stored secrets, token hashes) and rewrite the audit chain. Secrets are plain text in
 a 0600 database; redaction of logs is best effort; the audit chain is a SHA-256 hash chain that is
 only as good as the head hash you keep elsewhere (not tamper-proof); MCP agents are prompt-injectable,
@@ -226,7 +226,7 @@ privately as described in [SECURITY.md](SECURITY.md).
 
 ## MCP in two lines
 
-`h2studio-mcp` gives Claude Code, opencode, Codex, Cursor, VS Code and other MCP clients 42 tools, 3
+`h2workbench-mcp` gives Claude Code, opencode, Codex, Cursor, VS Code and other MCP clients 42 tools, 3
 resources and 3 prompts for harness2, as a thin client that uses your API token, so server-side roles
 and the audit log apply to every agent. **Use a viewer token by default, an operator token only when the
 agent must start jobs, never an admin token**, and treat everything a tool returns (rollouts, logs,
@@ -238,7 +238,7 @@ configuration, the safety rules and every tool: [docs/MCP.md](docs/MCP.md).
 
 | Document | For | What it covers |
 |---|---|---|
-| [docs/CONCEPTS.md](docs/CONCEPTS.md) | newcomers | harness2 in plain terms: recursion, the eight harness components, modes, budgets; a glossary mapping harness2's words to the Studio |
+| [docs/CONCEPTS.md](docs/CONCEPTS.md) | newcomers | harness2 in plain terms: recursion, the eight harness components, modes, budgets; a glossary mapping harness2's words to the Workbench |
 | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | everyone who uses the web UI | a screen-by-screen walkthrough with screenshots: signing in, experiments and sweeps, a task's harnesses and diffs, starting a run, live jobs, comparing, settings, keyboard shortcuts, what each role sees |
 | [docs/ADMIN-GUIDE.md](docs/ADMIN-GUIDE.md) | administrators | install, every configuration key, authentication, TLS behind a proxy, container isolation, the egress allowlist, compose, observability, backups, upgrades, the audit log, systemd, a hardening checklist |
 | [docs/MODELS.md](docs/MODELS.md) | operators | model profiles for Vertex AI and OpenAI-compatible servers; which benchmark and executor works with which; judge rules; cost |
@@ -254,13 +254,13 @@ configuration, the safety rules and every tool: [docs/MCP.md](docs/MCP.md).
 ## Repository layout
 
 ```text
-crates/h2s-api      wire types shared by every component (compiles to native and WebAssembly)
-crates/h2s-core     domain logic: harness2 command lines, parsers, results reader, trees, estimates
-crates/h2s-daemon   the `h2studio` binary: server, jobs, SQLite, egress proxy, command line
-crates/h2s-web      the web UI (Leptos, compiled to WebAssembly); its static shell is in web/
-crates/h2s-mcp      the `h2studio-mcp` binary
-crates/h2s-e2e      end-to-end suites against real binaries and a real harness2
-tools/h2s-mock-api  fixture API with the production security headers, for UI development
+crates/h2w-api      wire types shared by every component (compiles to native and WebAssembly)
+crates/h2w-core     domain logic: harness2 command lines, parsers, results reader, trees, estimates
+crates/h2w-daemon   the `h2workbench` binary: server, jobs, SQLite, egress proxy, command line
+crates/h2w-web      the web UI (Leptos, compiled to WebAssembly); its static shell is in web/
+crates/h2w-mcp      the `h2workbench-mcp` binary
+crates/h2w-e2e      end-to-end suites against real binaries and a real harness2
+tools/h2w-mock-api  fixture API with the production security headers, for UI development
 deploy/             Dockerfiles, compose.yaml, example configuration, Caddyfile, systemd unit
 tests/fixtures/     harness2 output captured by running harness2 itself (never edited by hand)
 xtask/              build orchestration: `cargo xtask web | dist | check | docs | cooldown | e2e`
@@ -276,5 +276,5 @@ link in the Markdown files resolves: `cargo xtask docs`).
 
 [Apache License 2.0](LICENSE). harness2 is Apache-2.0 as well; the benchmarks it installs keep their own
 licences (WorkBuddy-Bench has a custom licence with a territorial limitation; read it before use).
-Parts of `h2s-core` are translated from harness2 (Copyright 2026 Google LLC, Apache-2.0) and
+Parts of `h2w-core` are translated from harness2 (Copyright 2026 Google LLC, Apache-2.0) and
 the test fixtures contain its output: see [NOTICE](NOTICE).

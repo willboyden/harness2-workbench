@@ -1,4 +1,4 @@
-# Contributing to Harness² Studio
+# Contributing to Harness² Workbench
 
 Thanks for helping. This guide covers the development setup, the git workflow and the bar every
 change has to meet. By contributing you agree that your contributions are licensed under the
@@ -7,7 +7,7 @@ change has to meet. By contributing you agree that your contributions are licens
 
 ## Development setup
 
-Linux is required: for harness2 itself, and for the Studio's server (it reads `/proc` and uses
+Linux is required: for harness2 itself, and for the Workbench's server (it reads `/proc` and uses
 Linux process controls). CI builds and tests on Linux x86_64.
 
 ```bash
@@ -24,15 +24,15 @@ Run it locally:
 
 ```bash
 cargo xtask web                                  # build the UI into dist/web (embedded by the server)
-cargo run -p h2s-daemon -- init                  # config + first admin token (printed once)
-cargo run -p h2s-daemon -- serve                 # http://127.0.0.1:8722
+cargo run -p h2w-daemon -- init                  # config + first admin token (printed once)
+cargo run -p h2w-daemon -- serve                 # http://127.0.0.1:8722
 ```
 
-UI work without a server: `cargo run -p h2s-mock-api -- --port 8799 --dist dist/web` serves
+UI work without a server: `cargo run -p h2w-mock-api -- --port 8799 --dist dist/web` serves
 fixture data with the production Content-Security-Policy.
 
 End-to-end tests need a harness2 checkout with its virtualenv, Firefox and geckodriver; see
-`crates/h2s-e2e/README.md`.
+`crates/h2w-e2e/README.md`.
 
 ## Git workflow
 
@@ -46,7 +46,7 @@ End-to-end tests need a harness2 checkout with its virtualenv, Firefox and gecko
   `BREAKING CHANGE:` footer.
 - Keep pull requests focused. They are squash-merged with the PR title as the commit subject;
   large multi-part features may be merged with a merge commit after review.
-- Stage explicit paths (`git add crates/h2s-core/src/tree.rs`), so you see exactly what you
+- Stage explicit paths (`git add crates/h2w-core/src/tree.rs`), so you see exactly what you
   commit. Never commit `.env` files, databases, tokens or generated `dist/` output.
 - Signed commits and tags are encouraged (`git commit -S`, `git tag -s`).
 
@@ -73,7 +73,7 @@ End-to-end tests need a harness2 checkout with its virtualenv, Firefox and gecko
   [docs/API.md](docs/API.md), [docs/MCP.md](docs/MCP.md) or
   [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) in the same pull request. State what you ran: write
   *verified live* (and against what), *fakes only* or *unverified*, never a date for something you did not
-  run. Paste real command output, trimmed, with tokens shown as `h2s_xxxxxxxx_<redacted>`, and use
+  run. Paste real command output, trimmed, with tokens shown as `h2w_xxxxxxxx_<redacted>`, and use
   `example.com`, `192.0.2.x` and `2001:db8::` for example addresses; no personal paths, names or hosts.
   `cargo xtask docs` fails on any broken relative link or `#anchor` in a Markdown file, and on a
   missing guide (`README.md`, `docs/USER-GUIDE.md`, `docs/THREAT-MODEL.md`, and so on). A decision that

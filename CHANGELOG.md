@@ -8,8 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- Initial workspace: wire-type contract (`h2s-api`), domain library (`h2s-core`), server
-  (`h2studio`), web UI (Leptos/WebAssembly), MCP server (`h2studio-mcp`), end-to-end tests and
+- Initial workspace: wire-type contract (`h2w-api`), domain library (`h2w-core`), server
+  (`h2workbench`), web UI (Leptos/WebAssembly), MCP server (`h2workbench-mcp`), end-to-end tests and
   build tooling (`cargo xtask`).
 - Supply-chain controls: 14-day dependency cooldown with security-fix exceptions, cargo-deny
   policy, SHA-pinned GitHub Actions, gitleaks, CodeQL, OpenSSF Scorecard, SBOM and build
@@ -36,10 +36,10 @@ Each change, its tests and how it was checked are in
 
 - Sign-in: failed authentication is throttled per client address (60 a minute, then `429`); at most
   10 failures a minute per client are written to the audit log (the rest are counted in
-  `h2s_audit_suppressed_total`); the rate-limit table never fails open; a token must match the exact
+  `h2w_audit_suppressed_total`); the rate-limit table never fails open; a token must match the exact
   format (ASCII only); a repeated proxy identity header is `401`; a repeated `Host` header is `400`
   and an absolute-form request target must name an allowed host; over https the session cookie is
-  `__Host-h2s_session`; an open event stream re-checks its credential at every heartbeat.
+  `__Host-h2w_session`; an open event stream re-checks its credential at every heartbeat.
 - Limits: connections per client address (`server.max_connections_per_ip`, default 256, trusted
   proxies exempt) and event streams per principal (`server.sse_max_per_principal`, default 8);
   at most four results reads at once; a stored-log cap (`jobs.max_log_bytes`, default 256 MiB) and
@@ -48,7 +48,7 @@ Each change, its tests and how it was checked are in
   command's environment; the server and the egress proxy are non-dumpable, so a same-user process can
   no longer read their `/proc` environment; more environment names and prefixes are reserved for
   profiles; restart recovery signals a process group only after matching its boot id and an
-  `H2S_JOB_ID` marker; `install_harness2` installs only the tested commit unless
+  `H2W_JOB_ID` marker; `install_harness2` installs only the tested commit unless
   `paths.allow_untested_harness2_rev = true`, and resolves harness2's Python dependencies with
   `--exclude-newer`.
 - Output: host paths in job results and `file://` URLs are masked; result files written by jobs are

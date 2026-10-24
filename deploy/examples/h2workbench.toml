@@ -1,0 +1,109 @@
+# Harness² Workbench configuration — annotated example (docs/ADMIN-GUIDE.md has the full reference).
+# `h2workbench init` writes a minimal one for you; `h2workbench config check` validates any file.
+# Unknown keys are errors, so a typo cannot silently fall back to a default.
+
+[server]
+# Loopback by default. Put a TLS reverse proxy in front to serve other machines.
+listen = "127.0.0.1:8722"
+# The URL people type. Sets the allowed Host header, the expected Origin, and Secure cookies
+# when it is https.
+public_url = "http://127.0.0.1:8722"
+# Extra Host values to accept (e.g. a DNS name behind your proxy).
+allowed_hosts = []
+# Proxies whose X-Forwarded-For (and x-request-id, and in proxy mode the identity headers) are
+# trusted (CIDRs). Empty = none. Behind a proxy, set it: rate limits are keyed by client address.
+trusted_proxies = []
+max_body_bytes = 1048576
+request_timeout_secs = 60
+sse_max_connections = 64
+# Live job streams per signed-in principal (a token and its browser sessions together).
+sse_max_per_principal = 8
+# Open connections per client address (IPv6 per /64); trusted proxies are exempt.
+max_connections_per_ip = 256
+login_attempts_per_minute = 10
+
+[auth]
+# "token": API tokens; the web UI exchanges one for an HttpOnly session cookie.
+# "proxy": a trusted SSO proxy (oauth2-proxy, Pomerium, ...) asserts the user; tokens still work.
+mode = "token"
+session_ttl_hours = 12
+
+[auth.proxy]
+user_header = "x-forwarded-user"
+groups_header = "x-forwarded-groups"
+# The proxy must also send this header with the shared secret from the environment variable.
+secret_header = "x-h2w-proxy-secret"
+secret_env = "H2W_PROXY_SECRET"
+admin_groups = ["h2w-admins"]
+operator_groups = ["h2w-operators"]
+viewer_groups = []
+
+[paths]
+# Database, job logs, generated job files and split files. Created 0700.
+data_dir = "~/.local/share/harness2-workbench"
+# Each experiment is one HARNESS2_RUNS_DIR under here. Default: <data_dir>/experiments
+experiments_dir = ""
+# The harness2 checkout. Default: <data_dir>/harness2 (installed by the Workbench).
+harness2_home = ""
+# false = use an existing checkout you manage yourself; the Workbench never modifies it.
+harness2_managed = true
+# install_harness2 jobs may name a commit other than the one this release was tested against.
+allow_untested_harness2_rev = false
+
+[jobs]
+max_concurrent = 2
+max_queued = 100
+timeout_hours = 48
+budget_poll_secs = 30
+log_retention_days = 90
+# Stored log per job (256 MiB); past it one marker line, then output is counted, not stored.
+max_log_bytes = 268435456
+# Stop jobs when the data directory's filesystem has less free space (MiB); 0 = off.
+min_free_disk_mb = 256
+
+[isolation]
+# "host": jobs run as this server's user, like harness2 itself (executors get your files and
+#         network; every run must be acknowledged unless preacknowledge_host_risks = true).
+# "container": each job runs in a hardened runner container (deploy/docker/runner.Dockerfile).
+mode = "host"
+preacknowledge_host_risks = false
+
+[isolation.container]
+runtime = "docker"
+image = "harness2-workbench-runner:0.1.0"
+# "none" for no network (the demo works; model calls and installs do not), or an internal
+# network you created with an `h2workbench egress-proxy` container on it (and on an uplink), e.g.
+#   docker network create --internal h2w-jobs
+#   docker network create h2w-uplink
+#   docker run -d --name h2w-egress --network h2w-jobs -v ./h2workbench.toml:/config/h2workbench.toml:ro \
+#     harness2-workbench:0.1.0 egress-proxy --config /config/h2workbench.toml
+#   docker network connect h2w-uplink h2w-egress
+network = "none"
+# The proxy as job containers reach it, e.g. "http://h2w-egress:3128". Set inside each job as
+# HTTPS_PROXY/HTTP_PROXY (and lowercase), with NO_PROXY=localhost,127.0.0.1,::1. Empty = none.
+proxy = ""
+cpus = 4.0
+memory_mb = 8192
+pids_limit = 2048
+# Empty = detected: 0:0 on rootless Docker/Podman (container root is your own unprivileged
+# user there), your uid:gid on a rootful runtime.
+user = ""
+
+[egress]
+# Used only by `h2workbench egress-proxy`. Hostnames, exact or "*.suffix", reachable on ports 443
+# and 80 unless the entry lists others. Private, loopback, link-local and metadata addresses
+# are always refused unless an entry allows them, e.g.
+#   allow = ["aiplatform.googleapis.com", { host = "litellm", allow_private = true, ports = [4000] }]
+# Loopback by default; anyone who can reach the proxy can use the allowlist. In a container
+# (deploy/compose.yaml) listen on 0.0.0.0 inside the internal jobs network.
+listen = "127.0.0.1:3128"
+allow = ["aiplatform.googleapis.com", "oauth2.googleapis.com"]
+
+[telemetry]
+log_format = "pretty"
+log_level = "info"
+# OTLP/HTTP collector, e.g. "http://127.0.0.1:4318". Empty = no trace export.
+otlp_endpoint = ""
+service_name = "harness2-workbench"
+# Name of a secret that Prometheus may present as a bearer token on /metrics.
+metrics_token_secret = ""

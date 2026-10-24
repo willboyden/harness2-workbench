@@ -24,7 +24,7 @@ fi
 
 # Added lines only (the leading '+'), excluding the diff headers ('+++').
 added=$(git diff --cached -U0 --no-color | grep -E '^\+' | grep -vE '^\+\+\+ ')
-pattern='(/home/[a-z_][a-z0-9_-]*/|/Users/[A-Za-z]|BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gho_[A-Za-z0-9]{20,}|hf_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|h2s_[A-Za-z0-9]{8}_[A-Za-z0-9_-]{30,})'
+pattern='(/home/[a-z_][a-z0-9_-]*/|/Users/[A-Za-z]|BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gho_[A-Za-z0-9]{20,}|hf_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|h2w_[A-Za-z0-9]{8}_[A-Za-z0-9_-]{30,})'
 if printf '%s\n' "$added" | grep -qE "$pattern"; then
     echo "pre-commit: the staged diff adds what looks like a personal path or a secret:" >&2
     printf '%s\n' "$added" | grep -nE "$pattern" | cut -c1-160 >&2

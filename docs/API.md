@@ -2,17 +2,17 @@
 
 Everything the web UI and the MCP server do goes through this API, and anything they can do you
 can do with `curl`. Base path: **`/api/v1`**. The wire types are Rust structs in the
-`h2s-api` crate; the machine-readable description is an **OpenAPI 3.1** document the server
+`h2w-api` crate; the machine-readable description is an **OpenAPI 3.1** document the server
 generates from the same code (section 9).
 
-The examples below were run against `h2studio` 0.1.0 and a real harness2 checkout (the offline
+The examples below were run against `h2workbench` 0.1.0 and a real harness2 checkout (the offline
 demo), and their output is pasted from those runs, trimmed. The server was bound to a random
 port; they are shown against the default `http://127.0.0.1:8722`. Request ids, timestamps and
-job ids differ on every run. Tokens are written `h2s_xxxxxxxx_<redacted>`.
+job ids differ on every run. Tokens are written `h2w_xxxxxxxx_<redacted>`.
 
 ```bash
 BASE=http://127.0.0.1:8722
-TOKEN=$(cat ~/.config/harness2-studio/admin.token)   # printed by `h2studio init`; see ADMIN-GUIDE.md
+TOKEN=$(cat ~/.config/harness2-workbench/admin.token)   # printed by `h2workbench init`; see ADMIN-GUIDE.md
 ```
 
 Contents: [conventions](#1-conventions) · [authentication](#2-authentication) ·
@@ -46,18 +46,18 @@ Contents: [conventions](#1-conventions) · [authentication](#2-authentication) �
 
 Two credentials are accepted, checked in this order:
 
-1. **`Authorization: Bearer h2s_<id>_<secret>`**: an API token. A malformed `Authorization`
+1. **`Authorization: Bearer h2w_<id>_<secret>`**: an API token. A malformed `Authorization`
    header is a `401`; it never falls through to the cookie.
-2. **The session cookie**: `h2s_session`, or `__Host-h2s_session` when `server.public_url` is
+2. **The session cookie**: `h2w_session`, or `__Host-h2w_session` when `server.public_url` is
    `https` (the server reads only the name it sets). `POST /auth/login` sets it; it exchanges a
    token for a browser session.
 
 In `auth.mode = "proxy"` a third credential exists, identity headers from a trusted reverse
 proxy; tokens keep working there. See [ADMIN-GUIDE.md](ADMIN-GUIDE.md).
 
-A token is `h2s_` + an 8-character id (`a-z`, `0-9`) + `_` + a 43-character secret (`A-Z`, `a-z`,
+A token is `h2w_` + an 8-character id (`a-z`, `0-9`) + `_` + a 43-character secret (`A-Z`, `a-z`,
 `0-9`, `-`, `_`); anything else, any non-ASCII character included, is a `401` before the database is
-asked. The server stores only the SHA-256 of the secret and compares in constant time. Create tokens with `h2studio token create`
+asked. The server stores only the SHA-256 of the secret and compares in constant time. Create tokens with `h2workbench token create`
 or `POST /tokens` (admin); the secret is shown **once**.
 
 ```console
@@ -67,9 +67,9 @@ $ curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/auth/me
 
 **Sessions.** `POST /auth/login` with `{"token": "..."}` returns the same `Principal` with
 `"kind":"session"` and sets a cookie that is `HttpOnly`, `SameSite=Strict` and `Path=/`. Over plain
-http it is named `h2s_session`; when `server.public_url` is `https` it is named
-`__Host-h2s_session` and is also `Secure` (browsers then refuse a `Domain` attribute or a cookie set
-by a sibling subdomain, and the server ignores a plain `h2s_session`). It lasts
+http it is named `h2w_session`; when `server.public_url` is `https` it is named
+`__Host-h2w_session` and is also `Secure` (browsers then refuse a `Domain` attribute or a cookie set
+by a sibling subdomain, and the server ignores a plain `h2w_session`). It lasts
 `auth.session_ttl_hours` (default 12) and never outlives its token; revoking a token ends its
 sessions; `POST /auth/logout` deletes the session and clears the cookie. Logins are rate-limited
 per client address (`server.login_attempts_per_minute`, a token bucket; IPv6 clients per /64):
@@ -83,11 +83,11 @@ credentials from the same address still succeed. A request that carries no crede
 answered `401` `authentication required` and does not count towards the limit.
 
 ```console
-$ curl -si -c cookies.txt -H "x-h2s-request: 1" -H "content-type: application/json" \
+$ curl -si -c cookies.txt -H "x-h2w-request: 1" -H "content-type: application/json" \
        -d "{\"token\":\"$TOKEN\"}" $BASE/api/v1/auth/login
 HTTP/1.1 200 OK
 content-type: application/json
-set-cookie: h2s_session=<session-id>; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200
+set-cookie: h2w_session=<session-id>; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200
 x-request-id: aeaa2dc2f6a54a99bae06cb7bdc5f897
 cache-control: no-store
 
@@ -95,7 +95,7 @@ cache-control: no-store
 ```
 
 Behind `server.public_url = "https://..."` the same header reads
-`set-cookie: __Host-h2s_session=<session-id>; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=43200`.
+`set-cookie: __Host-h2w_session=<session-id>; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=43200`.
 
 Prefer a bearer token for scripts: no cookie jar, and no Origin rule to think about.
 
@@ -107,7 +107,7 @@ event streams and the static UI alike.
 | Check | Rule | Refusal |
 |---|---|---|
 | `Host` | must be one the server answers to: the host of `server.public_url`, `server.allowed_hosts`, and `127.0.0.1:P`, `localhost:P`, `[::1]:P` for the bound port P. An absolute-form request target (`GET http://host/...`) must name an allowed host as well. More than one `Host` header is refused | `421` `misdirected_request`: `this server does not answer to that Host`; two `Host` headers: `400` `bad_request`: `the request has more than one Host header` |
-| `x-h2s-request` | every method except `GET`, `HEAD` and `OPTIONS` must send `x-h2s-request: 1`, **including login, logout and requests that carry a bearer token** | `403` `forbidden`: `state-changing requests need the header x-h2s-request: 1` |
+| `x-h2w-request` | every method except `GET`, `HEAD` and `OPTIONS` must send `x-h2w-request: 1`, **including login, logout and requests that carry a bearer token** | `403` `forbidden`: `state-changing requests need the header x-h2w-request: 1` |
 | `Origin` | when present on such a request, it must be the origin of `public_url`, or `http(s)://` + the request's own `Host`; `null` is refused. `curl` and SDKs send none | `403` `forbidden`: `cross-origin requests are refused` |
 | body size | declared or streamed body at most `server.max_body_bytes` (1 MiB) | `413` `payload_too_large`: `the request body is larger than N bytes` |
 | request time | at most `server.request_timeout_secs` (60 s) | `503` `unavailable`: `the request took too long` |
@@ -122,7 +122,7 @@ trusted proxy), a strict `Content-Security-Policy` and the other security header
 $ curl -si -X POST -H "Authorization: Bearer $TOKEN" $BASE/api/v1/experiments -d '{"name":"x","kind":"standard"}' \
        -H "content-type: application/json"
 HTTP/1.1 403 Forbidden
-{"error":{"code":"forbidden","message":"state-changing requests need the header x-h2s-request: 1","request_id":"82d0fd7a6ca4443ba8bae21278fc60cb"}}
+{"error":{"code":"forbidden","message":"state-changing requests need the header x-h2w-request: 1","request_id":"82d0fd7a6ca4443ba8bae21278fc60cb"}}
 ```
 
 ## 4. Roles and routes
@@ -296,7 +296,7 @@ are written for people and never contain secret values or quoted request input.
 | 400 | `bad_request` | body is not JSON or not `application/json`; unknown job `kind`; more than one `Host` header |
 | 405 | `bad_request` | the path exists but not for that method (the message is `method not allowed`; an `Allow` header lists the right ones) |
 | 401 | `unauthorized` | no or invalid credentials; expired or revoked token; ended session; in proxy mode a user, groups or secret header sent more than once |
-| 403 | `forbidden` | role too low (a job start says `starting a job of kind <kind> requires the <role> role`); missing `x-h2s-request`; foreign `Origin`; a proxy user whose groups grant no role |
+| 403 | `forbidden` | role too low (a job start says `starting a job of kind <kind> requires the <role> role`); missing `x-h2w-request`; foreign `Origin`; a proxy user whose groups grant no role |
 | 404 | `not_found` | unknown route, experiment, sweep, job, token |
 | 409 | `conflict` | experiment exists; wrong profile for a pinned experiment; archived experiment; job already finished; container isolation refuses WorkBuddy and the bridge |
 | 413 | `payload_too_large` | body over `server.max_body_bytes`; or a results read past one of the server's memory bounds (`too large: ...`, see section 6) |
@@ -307,7 +307,7 @@ are written for people and never contain secret values or quoted request input.
 | 500 | `internal` | a bug or an I/O failure; the message is generic, the cause is in the server log under the request id |
 
 ```console
-$ curl -s -X POST -H "Authorization: Bearer $OPERATOR" -H "x-h2s-request: 1" -H "content-type: application/json" \
+$ curl -s -X POST -H "Authorization: Bearer $OPERATOR" -H "x-h2w-request: 1" -H "content-type: application/json" \
        -d '{"kind":"run","params":{"experiment":"lab-glm-k1","cell":{"bench":"lab"},"options":{"k":1,"modes":["parallel"]},"profile":"local-glm"}}' \
        $BASE/api/v1/jobs
 {"error":{"code":"validation","message":"params.acknowledge_risks: jobs run on the server host without isolation (the executor gets the server user's files and network); set acknowledge_risks to true to proceed","details":[{"field":"params.acknowledge_risks","problem":"jobs run on the server host without isolation (the executor gets the server user's files and network); set acknowledge_risks to true to proceed"}],"request_id":"de7c630e310042e6955e73812d33babb"}}
@@ -401,7 +401,7 @@ stored (`N lines (X) of output were not stored (log limit)`).
 A real demo job, created and read back (trimmed):
 
 ```console
-$ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "x-h2s-request: 1" -H "content-type: application/json" \
+$ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "x-h2w-request: 1" -H "content-type: application/json" \
        -d '{"kind":"demo","params":{"experiment":"demo","k":2,"mode":"both"}}' $BASE/api/v1/jobs
 {"id":"01a16bcb-4ae0-7322-b121-6bf7509bb725","kind":"demo","spec":{"kind":"demo","params":{"experiment":"demo","k":2,"mode":"both"}},"status":"queued","created_by":"ci operator","created_at":"2026-10-24T02:44:07Z","isolation":"host","steps":[],"log_lines":0}
 
@@ -437,7 +437,7 @@ label). A finished job answers `409` `job <id> already finished (succeeded)`.
 **Estimating before running.**
 
 ```console
-$ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "x-h2s-request: 1" -H "content-type: application/json" \
+$ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "x-h2w-request: 1" -H "content-type: application/json" \
        -d '{"tasks":20,"k":2,"modes":["parallel","sequential"],"profile":"local-glm"}' $BASE/api/v1/estimate
 { "tasks": 20, "modes": 2, "k": 2, "rollouts": 280, "improver_sessions": 320, "basis": "heuristic",
   "notes": [ "Per task: 2 reference run(s) shared by the modes; per mode 6 candidate and final runs and 6 improver sessions.",
@@ -500,18 +500,18 @@ with any HTTP client that does not buffer the whole body.
 ## 9. The OpenAPI document
 
 ```console
-$ h2studio openapi > openapi.json            # needs no configuration and no running server
+$ h2workbench openapi > openapi.json            # needs no configuration and no running server
 $ python3 -c 'import json; d=json.load(open("openapi.json")); print(d["openapi"], len(d["paths"]), "paths")'
 3.1.0 43 paths
 ```
 
 The running server serves the same document at `GET /api/v1/openapi.json` (viewer). It describes
 the 49 operations of the table above, 134 schemas, and the two security schemes (`bearer`, and the
-session cookie, `h2s_session` or `__Host-h2s_session` over https). No Swagger UI is bundled, because the usual one loads a script from a CDN
+session cookie, `h2w_session` or `__Host-h2w_session` over https). No Swagger UI is bundled, because the usual one loads a script from a CDN
 and the server's Content-Security-Policy forbids that; open the file in any OpenAPI viewer or
 feed it to a client generator (not tried by the authors of this page).
 
-The OpenAPI document does not list the `x-h2s-request` header per operation; it states the rule
+The OpenAPI document does not list the `x-h2w-request` header per operation; it states the rule
 in its description. Generated clients must add the header to every state-changing call.
 
 ## 10. A curl walkthrough
@@ -519,7 +519,7 @@ in its description. Generated clients must add the header to every state-changin
 ```bash
 BASE=http://127.0.0.1:8722
 AUTH="Authorization: Bearer $TOKEN"      # an operator or admin token
-H='x-h2s-request: 1'; J='content-type: application/json'
+H='x-h2w-request: 1'; J='content-type: application/json'
 
 # 1. who am I, and what is the server like?
 curl -s -H "$AUTH" $BASE/api/v1/auth/me

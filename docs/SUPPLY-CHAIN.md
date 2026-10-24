@@ -1,6 +1,6 @@
 # Supply-chain policy
 
-Harness² Studio holds credentials and starts processes, so what goes into its build matters as
+Harness² Workbench holds credentials and starts processes, so what goes into its build matters as
 much as its own code. These are the rules and the tools that enforce them.
 
 ## 1. Dependency cooldown (14 days)
@@ -43,8 +43,8 @@ newer releases had already fixed.)
 
 ## 3. Upstream harness2
 
-The Studio drives harness2 through its CLI and pins the commit it was tested against
-(`TESTED_HARNESS2_COMMIT` in `crates/h2s-core/src/lib.rs`). The managed installer fetches exactly
+The Workbench drives harness2 through its CLI and pins the commit it was tested against
+(`TESTED_HARNESS2_COMMIT` in `crates/h2w-core/src/lib.rs`). The managed installer fetches exactly
 that 40-hex commit with `git fetch --depth 1 origin <commit>`, so the content is identified by its
 hash; a different commit can be installed deliberately by an administrator. harness2's own
 benchmark setup pins its dependencies by commit too (`harness2/config.py`).
@@ -56,7 +56,7 @@ Each release ships, for every Linux target, a tarball with both binaries and the
 - `SHA256SUMS` — verify with `sha256sum -c SHA256SUMS --ignore-missing`;
 - a CycloneDX SBOM of every crate in the build;
 - a SLSA build-provenance attestation signed through GitHub's OIDC — verify with
-  `gh attestation verify harness2-studio-<version>-<target>.tar.gz --repo willboyden/harness2-studio`.
+  `gh attestation verify harness2-workbench-<version>-<target>.tar.gz --repo willboyden/harness2-workbench`.
 
 Releases are created as drafts by CI from a version tag and published by a maintainer after the
 artifacts and attestations are checked ([RELEASING.md](RELEASING.md)).

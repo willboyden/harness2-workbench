@@ -1,4 +1,4 @@
-/* Harness² Studio design system.
+/* Harness² Workbench design system.
  * Tokens on :root (light), redefined for dark mode both when the system prefers dark
  * (unless the user chose light) and when the user chose dark explicitly.
  * No inline styles anywhere (strict CSP): dynamic sizes are SVG attributes or CSSOM. */

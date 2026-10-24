@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Build orchestration for Harness² Studio: web bundle, dist, gates, e2e, hooks"
+description = "Build orchestration for Harness² Workbench: web bundle, dist, gates, e2e, hooks"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

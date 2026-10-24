@@ -1,0 +1,36 @@
+# Harness² Workbench as a systemd *user* service (runs as you; no root needed).
+#
+#   install -Dm644 deploy/systemd/h2workbench.service ~/.config/systemd/user/h2workbench.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now h2workbench
+#   journalctl --user -u h2workbench -f
+#
+# To keep it running after you log out: loginctl enable-linger "$USER" (needs admin rights).
+
+[Unit]
+Description=Harness² Workbench (GUI + REST API for harness2)
+Documentation=https://github.com/willboyden/harness2-workbench
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/h2workbench serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+# Running jobs receive SIGTERM through the server, which stops each job's process group.
+KillMode=mixed
+UMask=0077
+
+# Hardening that is safe in a --user unit. ProtectSystem/ProtectHome/PrivateTmp are left out on
+# purpose: in a user unit they need user namespaces and can cut the server off from the harness2
+# checkout, your experiments directory, or a container runtime's socket.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target

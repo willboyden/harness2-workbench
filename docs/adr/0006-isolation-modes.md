@@ -1,7 +1,7 @@
 # ADR 0006: Two isolation modes, `host` and `container`
 
 - **Status:** Accepted. Part of the v1.0 contract ([ARCHITECTURE.md](../ARCHITECTURE.md) §2, §9), extended by addenda v1.2 (job egress, container `HOME`).
-- **Applies to:** `h2s-core` (`isolation.rs`, `env.rs`), `h2s-daemon` (`jobs/`, `egress.rs`), `deploy/`.
+- **Applies to:** `h2w-core` (`isolation.rs`, `env.rs`), `h2w-daemon` (`jobs/`, `egress.rs`), `deploy/`.
 
 ## Context
 
@@ -24,7 +24,7 @@ Offer two modes, chosen by `isolation.mode`:
 - **`container`**: each job runs in a throw-away container from a **pinned** runner image
   (`docker run` or `podman run`) with fixed hardening that no request can change: `--rm`,
   `--cap-drop ALL`, `--security-opt no-new-privileges`, pid, CPU and memory limits, the configured
-  network (`none`, or an internal network behind `h2studio egress-proxy`), three bind mounts at fixed
+  network (`none`, or an internal network behind `h2workbench egress-proxy`), three bind mounts at fixed
   points (the experiment read-write, the harness2 checkout read-only except during install and setup,
   the job's generated files read-only), a job label verified before any stop, and no `host` network.
   The **egress proxy** is a hostname allowlist with address checks, used with an internal network so
@@ -52,33 +52,33 @@ Bad, and how it is managed:
   rootful Docker or Podman.
 - **User mapping is subtle.** On a rootless runtime only container uid 0 can write the bind-mounted
   experiment (and it holds no capabilities); on a rootful one the server's own uid is passed. A runner
-  image must give that user a writable `HOME` (the shipped one sets `HOME=/h2s/home`).
+  image must give that user a writable `HOME` (the shipped one sets `HOME=/h2w/home`).
 - **harness2 must be installed in the same mode** it runs in: a virtual environment created on the host
   points at the host's Python and fails inside the image (`exec ... failed: No such file or directory`).
 - **The proxy is a hostname filter**: no TLS inspection, no client authentication; it governs only what
-  is forced through it. The Studio warns, at start-up and in `doctor` (`container_network`), when the
+  is forced through it. The Workbench warns, at start-up and in `doctor` (`container_network`), when the
   configured job network is not internal, but it cannot make the network internal or force a job
   through the proxy. The same list serves install and evaluation, which upstream wants kept apart
-  (the Studio documents the workflow; it does not automate it).
+  (the Workbench documents the workflow; it does not automate it).
 - **Secrets travel in a file, not on a command line.** A container job's variables go to the runtime
   in a 0600 `--env-file` that lives in the job's directory and is deleted with it (a value with a line
   break cannot be sent this way and fails the job). The first version passed `-e NAME` and kept the
   values in the runtime command's environment, which any process of the server's user can read while
   the command runs; the independent review of that version led to the file.
 - **More moving parts**: images, networks, the proxy container, a runtime socket for the server.
-- **Two ways of "contained"**: the compose deployment contains the Studio and its host-mode jobs
+- **Two ways of "contained"**: the compose deployment contains the Workbench and its host-mode jobs
   together; per-job containers separate jobs from the server. They protect different things.
 
 ## Alternatives considered
 
 - **Host mode only** (rejected in the original decision table): upstream's behaviour offers no
-  containment, and organisations that need it would have to build it around the Studio.
+  containment, and organisations that need it would have to build it around the Workbench.
 - **Container mode only**: not recorded as evaluated; the constraints above (WorkBuddy, the bridge,
   machines without a container runtime) and the wish to match upstream on a workstation point against it.
 
 ## Evidence in the repository
 
-`crates/h2s-core/src/isolation.rs` (`run_argv` and its refusals), `crates/h2s-daemon/src/jobs/`
+`crates/h2w-core/src/isolation.rs` (`run_argv` and its refusals), `crates/h2w-daemon/src/jobs/`
 (`container.rs`, `core_backend.rs`, `mod.rs`), `egress.rs`, `deploy/docker/`, `deploy/compose.yaml`.
 Tests: `jobs.rs::workbuddy_and_the_bridge_refuse_container_isolation`, `preacknowledged_host_risks_need_no_flag`,
 `core_real.rs::container_plans_use_fixed_hardening_and_numeric_users`, `cli.rs::container_jobs_get_their_environment_through_an_env_file`,
@@ -91,5 +91,5 @@ against a stand-in `docker` script; not on rootful Docker or Podman
 ## Revisit when
 
 a stronger sandbox (a user-space kernel, a micro-VM) becomes practical for the executors, when
-WorkBuddy-Bench can run its containers under the Studio's control, or when the proxy needs to inspect or
+WorkBuddy-Bench can run its containers under the Workbench's control, or when the proxy needs to inspect or
 authenticate traffic.

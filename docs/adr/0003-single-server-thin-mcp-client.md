@@ -1,7 +1,7 @@
 # ADR 0003: One server owns jobs, state and authentication; MCP is a thin client
 
 - **Status:** Accepted. Part of the v1.0 contract ([ARCHITECTURE.md](../ARCHITECTURE.md) §2, §13, §16).
-- **Applies to:** `h2s-daemon`, `h2s-mcp`.
+- **Applies to:** `h2w-daemon`, `h2w-mcp`.
 
 ## Context
 
@@ -13,8 +13,8 @@ dangerous of the two, because its input is shaped by model output and by documen
 
 ## Decision
 
-`h2studio serve` is the **only** component that authenticates, authorises, runs jobs, writes the
-database and appends to the audit log. `h2studio-mcp` is a **thin client** of its REST API:
+`h2workbench serve` is the **only** component that authenticates, authorises, runs jobs, writes the
+database and appends to the audit log. `h2workbench-mcp` is a **thin client** of its REST API:
 
 - it keeps no state of its own and runs no jobs;
 - every call it makes carries an API token. In stdio mode that is the one token it was started with
@@ -38,14 +38,14 @@ Good:
   configured to.
 - **Per-client attribution.** The audit log records the token that acted, not "the MCP server".
 - The MCP server is stateless and disposable: restart it, run several, put it anywhere that can reach
-  the Studio.
+  the Workbench.
 - Smaller privileged surface: the component that talks to an LLM holds no database, no secrets, no
   process control.
 
 Bad, and how it is managed:
 
 - **No offline mode.** MCP needs a reachable, running server; a connection failure is reported as
-  `unavailable: cannot connect to the Harness² Studio server at ...`.
+  `unavailable: cannot connect to the Harness² Workbench server at ...`.
 - **Every agent capability needs a REST route first**, and contract changes are additive in both.
 - **An extra hop** and a second place where limits live (the MCP server's wait and request caps do not
   replace the server's own limits).
@@ -68,10 +68,10 @@ Bad, and how it is managed:
 
 ## Evidence in the repository
 
-`crates/h2s-mcp/src/server.rs` (tools), `client.rs` (token handling), `http.rs` (guard and token
+`crates/h2w-mcp/src/server.rs` (tools), `client.rs` (token handling), `http.rs` (guard and token
 forwarding), `limits.rs`; the tool contract is frozen by
-`crates/h2s-mcp/tests/snapshots/tool_schemas.json`; the role refusals are exercised in
-`crates/h2s-e2e/tests/mcp.rs`.
+`crates/h2w-mcp/tests/snapshots/tool_schemas.json`; the role refusals are exercised in
+`crates/h2w-e2e/tests/mcp.rs`.
 
 ## Revisit when
 
