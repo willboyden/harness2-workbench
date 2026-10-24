@@ -48,8 +48,20 @@ Out of scope here, but please report to the right place:
   architecture in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §9.
 - **Host isolation is upstream's behaviour and is powerful by design:** harness2's executors
   (OpenCode, Codex with its sandbox disabled) run agent tool calls with the server user's files
-  and network. The Studio requires an explicit acknowledgement for such runs and offers container
-  isolation with an egress allowlist. A finding of the form "an executor in host mode can read the
-  server user's files" is expected behaviour, not a vulnerability; a way around the
+  and network. That includes the Studio's own data directory: a malicious or prompt-injected
+  executor in host mode can read the database (stored secrets, token hashes) and rewrite it, so it
+  is equivalent to a Studio administrator plus the server user. This also holds inside the
+  all-in-one container of `deploy/compose.yaml`, which contains the Studio and its jobs from your
+  host and network but not jobs from the Studio. The Studio requires an explicit acknowledgement
+  for host-mode runs and offers container isolation with an egress allowlist, which is the
+  boundary. Findings of the form "an executor in host mode can read the server user's files or
+  the Studio's data" are expected behaviour, not vulnerabilities; a way around the
   acknowledgement, the container hardening or the egress allowlist is.
+- **The audit log is a SHA-256 hash chain:** it shows edits by anyone who cannot rewrite the
+  whole chain, but not by someone with write access to the server's data directory (which
+  includes host-mode jobs). Copy `h2studio audit verify`'s head hash somewhere else if you need
+  stronger evidence.
+- **Redaction of job logs is best effort:** literal secret values are replaced; values a job
+  transforms (reverses, splits, encodes differently) are not caught, and job logs are readable by
+  every viewer.
 - Supply-chain controls are described in [docs/SUPPLY-CHAIN.md](docs/SUPPLY-CHAIN.md).
