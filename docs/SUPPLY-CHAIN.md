@@ -15,7 +15,8 @@ every crate version in `Cargo.lock` — direct and transitive — must have been
   transitive version back; direct dependencies are declared at a version that passed the cooldown.
 - The same rule applies to GitHub Actions (pinned by full commit SHA to a release at least 14 days
   old), Dependabot (`cooldown: default-days: 14`; Node majors are left to a person, because the
-  cooldown alone offered an odd Node line past its end of life), tool versions installed in CI
+  cooldown alone offered an odd Node line past its end of life, and uv entirely, see
+  [Bumping uv by hand](#bumping-uv-by-hand)), tool versions installed in CI
   (`wasm-bindgen-cli`, `cargo-deny`, `cargo-audit`, `cargo-cyclonedx`, `gitleaks`) and container
   base images (pinned by digest).
 
@@ -28,6 +29,32 @@ with the advisory it fixes and an expiry date (when it would pass the cooldown o
 (This rule exists because the first lockfile of this project, pinned strictly by age, pulled in
 `rustls`, `rustls-webpki`, `webpki-root-certs` and `tokio` versions with known advisories that
 newer releases had already fixed.)
+
+### Bumping uv by hand
+
+The runner image copies `uv` from `ghcr.io/astral-sh/uv`. That registry gives Dependabot no
+publication date, so the cooldown cannot apply: its first proposal was uv 0.13.5, two days after
+the release. Dependabot therefore ignores uv ([`.github/dependabot.yml`](../.github/dependabot.yml)),
+and a person moves it:
+
+1. Pick the newest release published at least 14 days ago (GitHub release dates):
+   ```console
+   $ gh release view 0.12.24 -R astral-sh/uv --json publishedAt --jq .publishedAt
+   2026-10-08T20:06:20Z
+   ```
+2. Look up the digest of its multi-platform image:
+   ```console
+   $ docker buildx imagetools inspect ghcr.io/astral-sh/uv:0.12.24
+   Name:      ghcr.io/astral-sh/uv:0.12.24
+   MediaType: application/vnd.oci.image.index.v1+json
+   Digest:    sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a
+   ```
+3. Put both in the `FROM ghcr.io/astral-sh/uv:<version>@sha256:<digest> AS uv` line of
+   [`deploy/docker/runner.Dockerfile`](../deploy/docker/runner.Dockerfile).
+4. Rebuild the runner and all-in-one images
+   ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#33-container-images)) and run one container-isolated job (the
+   free demo is enough, [ADMIN-GUIDE.md](ADMIN-GUIDE.md#8-container-isolation-step-by-step))
+   before merging: CI builds and smoke-tests the images but runs no harness2 job inside them.
 
 ## 2. cargo-deny
 
