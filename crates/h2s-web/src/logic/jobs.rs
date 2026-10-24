@@ -220,8 +220,11 @@ pub(crate) fn progress_fraction(p: &Progress) -> Option<f64> {
 pub(crate) fn progress_text(p: &Progress) -> String {
     let finished = p.done + p.failed;
     let base = match p.total {
-        Some(t) => format!("{finished} of {t} tasks"),
-        None => format!("{finished} tasks finished"),
+        Some(t) => format!(
+            "{finished} of {}",
+            super::format::plural(u64::from(t), "task", "tasks")
+        ),
+        None => super::format::plural(u64::from(finished), "task finished", "tasks finished"),
     };
     if p.failed > 0 {
         format!("{base} · {} failed", p.failed)
@@ -464,6 +467,17 @@ mod tests {
         };
         assert_eq!(progress_fraction(&unknown), None);
         assert_eq!(progress_text(&unknown), "6 tasks finished");
+        let one = Progress {
+            done: 1,
+            ..unknown.clone()
+        };
+        assert_eq!(progress_text(&one), "1 task finished");
+        let single = Progress {
+            total: Some(1),
+            done: 0,
+            ..unknown
+        };
+        assert_eq!(progress_text(&single), "0 of 1 task");
         let mut j = job();
         assert!(can_cancel(Role::Operator, &j));
         assert!(!can_cancel(Role::Viewer, &j));
