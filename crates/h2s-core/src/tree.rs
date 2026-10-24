@@ -1,3 +1,7 @@
+// Derived from harness2 (https://github.com/google-research/harness2) at commit 1cfe254:
+// harness2/core/tree.py and harness2/substrate/{opencode,codex}.py, Copyright 2026 Google LLC,
+// Apache License 2.0. Translated to Rust; see NOTICE.
+
 //! Harness component trees (c1..c8): read, classify, validate, diff, fingerprint.
 //!
 //! A port of upstream `harness2/core/tree.py` and the two `SurfaceSpec`s in

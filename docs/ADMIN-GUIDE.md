@@ -1327,7 +1327,7 @@ where this guide describes the new behaviour. The exact messages are in
 | Restart recovery | recorded pid and start time | boot id, and `H2S_JOB_ID` in the group's environment ([THREAT-MODEL.md](THREAT-MODEL.md) D7) |
 | The server's memory and environment | readable by a same-user job through `/proc` | the server and the egress proxy are non-dumpable (the note at the top, [10](#10-the-compose-reference-deployment)) |
 | Results of hostile experiments | per-file read caps | bounded per request, 4 reads at once, `413 too large` ([API.md](API.md#6-paging-filters-and-limits)) |
-| Profile `extra_env` | a short list of names | many more reserved ([MODELS.md](MODELS.md#reserved-environment-variables)); saving a profile that uses one is `422`, and a profile stored earlier that uses one starts its job (`201`) which then fails with `could not prepare the job: invalid input: extra_env.<NAME>: ...` |
+| Profile `extra_env` | a short list of names | many more reserved ([MODELS.md](MODELS.md#reserved-environment-variables)); saving a profile that uses one is `422`, and creating a job with a profile stored earlier that uses one is refused (`422` on `params.profile`: `profile <name> no longer passes validation (...); an administrator must update it`) |
 | Secret redaction | the literal value | also its base64 spellings ([6.4](#64-secrets)) |
 | Host paths in job results and `file://` URLs | shown | masked ([THREAT-MODEL.md](THREAT-MODEL.md) I4) |
 | Result files a job leaves (`demo.json`, split files) | read as they were | a symlink, FIFO or device is refused, over 16 MiB is refused |

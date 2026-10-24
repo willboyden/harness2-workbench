@@ -83,8 +83,9 @@ starting with `LD_`, `DYLD_`, `PYTHON`, `H2S_`, `UV_`, `PIP_`, `BUN_`, `NPM_CONF
 The list is a safety net for mistakes, not a security boundary: other variables that change what a
 program does are accepted (`CC`, `MAKEFLAGS` or `CARGO_HOME`, for example), and only an admin can write a
 profile, so treat the admin role accordingly. A profile that was stored before a name was reserved
-is not rewritten: its jobs are still accepted, then fail at start with `could not prepare the job:
-invalid input: extra_env.<NAME>: ...`; save the profile again without that variable.
+is not rewritten: creating a job with it is refused (`422`, field `params.profile`, `profile <name>
+no longer passes validation (...); an administrator must update it`); save the profile again
+without that variable.
 
 In container mode a job's variables, profile variables and secrets included, reach the container
 through a 0600 environment file in the job's directory (one `NAME=value` per line, deleted with the

@@ -65,6 +65,9 @@ Every feature below carries two words so you can see what is claimed and what is
 with harness2 `1cfe254`, or by the project maintainers, as stated. **No model-backed sweep has been run
 through the Studio**: the only real harness2 workflow exercised end to end is the free offline demo.
 
+Most of this code and documentation was written by AI coding agents (Claude) under human direction
+and review; the `Co-Authored-By` trailers of the commits record which.
+
 | Feature | Status | Verification | Notes |
 |---|---|---|---|
 | REST API: 49 operations, OpenAPI 3.1 | Implemented | verified live (curl against a real server and the real demo) | [API.md](docs/API.md) |
@@ -104,7 +107,7 @@ Step 1 repeats what the Studio's `install_harness2` job runs (which was run live
 
 ```sh
 # 1. harness2 itself, at the commit this release was tested against
-git clone https://github.com/google-research/harness2 ~/harness2 && cd ~/harness2
+git clone https://github.com/google-research/harness2 /opt/harness2 && cd /opt/harness2   # any directory you can write
 git checkout 1cfe254e8d25b15f37048c3730134686abe60335
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python --exclude-newer 2026-10-14T02:22:49Z -e '.[render]'   # the Studio's own install uses this cutoff
@@ -202,7 +205,8 @@ The Studio starts processes, holds model-provider keys and serves an admin inter
 to fail closed: it binds to loopback, refuses requests for unknown `Host` names (DNS rebinding) and
 state-changing requests without a custom header or from another origin (CSRF), sends a strict
 Content-Security-Policy, authenticates with 256-bit tokens stored only as hashes, checks roles in every
-route, throttles failed authentication, never returns or logs a secret value, validates every
+route, throttles failed authentication, never returns a secret value and redacts known values from
+logs (best effort), validates every
 identifier and resolves every path without following symlinks, and appends every sensitive action to a
 hash-chained audit log. Containers
 drop all capabilities and reach only the hosts you list.
@@ -272,3 +276,5 @@ link in the Markdown files resolves: `cargo xtask docs`).
 
 [Apache License 2.0](LICENSE). harness2 is Apache-2.0 as well; the benchmarks it installs keep their own
 licences (WorkBuddy-Bench has a custom licence with a territorial limitation; read it before use).
+Parts of `h2s-core` are translated from harness2 (Copyright 2026 Google LLC, Apache-2.0) and
+the test fixtures contain its output: see [NOTICE](NOTICE).

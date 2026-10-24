@@ -7,7 +7,8 @@ change has to meet. By contributing you agree that your contributions are licens
 
 ## Development setup
 
-Linux is required for harness2 itself; the Studio builds on Linux and macOS.
+Linux is required: for harness2 itself, and for the Studio's server (it reads `/proc` and uses
+Linux process controls). CI builds and tests on Linux x86_64.
 
 ```bash
 # Rust: the exact toolchain is pinned in rust-toolchain.toml and installed automatically.

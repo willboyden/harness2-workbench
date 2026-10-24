@@ -1,6 +1,6 @@
 # Notes: running harness2 on OpenAI-compatible (local or self-hosted) models
 
-Coordinator notes for the user guide. Status of each claim is given explicitly.
+Notes behind the user guide's model chapter. Status of each claim is given explicitly.
 
 harness2's documentation only describes Google Vertex AI. These facts, read from the pinned
 sources, show where an OpenAI-compatible endpoint (LiteLLM, vLLM, SGLang, Ollama, a gateway) can

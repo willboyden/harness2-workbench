@@ -1,0 +1,3 @@
+# gitleaks false positives (fingerprint = commit:path:rule:line). Review every entry.
+# A test literal shaped like an API key ("sk-test-0123456789"), not a credential.
+14669eb14b7e5a03a5d2c8efd0547df6588e9b74:crates/h2s-core/src/env.rs:generic-api-key:710

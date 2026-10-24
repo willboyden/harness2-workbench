@@ -5,6 +5,10 @@ Everything here was produced by **harness2 itself** at commit
 benchmark checkout. `golden/regenerate.py` rebuilds the whole directory (see below). The
 `h2s-core` tests read these files; nothing here is executed.
 
+The files are harness2's output, including prompt text it rendered (`_audit/*.mission.md`):
+harness2 is Copyright 2026 Google LLC and licensed under the Apache License, Version 2.0
+(see the repository's NOTICE).
+
 Every absolute path harness2 wrote was rewritten to a neutral prefix:
 
 | Prefix in the files | Was |

@@ -115,7 +115,7 @@ pub(crate) fn Secrets() -> impl IntoView {
     };
     view! {
         <p class="muted">
-            "Values are write-only: the server never returns them, and they never appear in logs (each job's output is redacted). This page shows only whether a secret is set and its length, so a truncated paste is easy to spot. Environment variables "
+            "Values are write-only: the server never returns them, and it redacts known values from job logs (best effort: a value a job transforms is not caught, and every viewer can read job logs). This page shows only whether a secret is set and its length, so a truncated paste is easy to spot. Environment variables "
             <code>"H2S_SECRET_<NAME>"</code>" on the server take precedence."
         </p>
         <Card title="Add or replace a secret">

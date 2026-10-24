@@ -22,6 +22,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 FROM harness2-studio-runner:0.1.0
 COPY --from=build /out/h2studio /out/h2studio-mcp /usr/local/bin/
+COPY LICENSE NOTICE /usr/share/doc/harness2-studio/
 # The server and its host-mode jobs run as node, so they get node's private home back (the
 # runner's shared HOME is for container jobs of any uid). H2S_CONFIG lets every subcommand
 # (`init`, `token create`, `doctor`, ...) find the mounted configuration without --config.
