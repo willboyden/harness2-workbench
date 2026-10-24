@@ -96,6 +96,8 @@ table says otherwise.
 | rollout directory listing | 20,000 entries | `TooLarge` |
 | any directory listing | 250,000 entries | `TooLarge` |
 | harness tree | 2,000 on-surface files, 64 MiB, 4 MiB per file, 20,000 entries walked | `TooLarge`, decided from the listing before any file is read |
+| harness fingerprint (every file, on-surface or not) | 4 MiB per file, 64 MiB in total | a file over 4 MiB is digested as `<too large: N bytes>`; past the total `TooLarge` |
+| results digest (manifest) | 4 MiB per summary, 32 MiB per judged file, 1 GiB in total, 10,000 summaries per namespace | an over-cap file is digested as `<too large: N bytes>`; past the total or count `TooLarge` |
 | `export`, `tar_gz` input | one harness: 2,000 files, 64 MiB (`tar_gz` allows the joined `AGENTS.md` on top) | `TooLarge` |
 
 The list views (tasks, sweeps, spend, report, scores) parse each file into a typed view
@@ -111,7 +113,31 @@ cap. Two consequences for odd input: a key repeated inside one object (harness2'
 summary that is a symlink or not a regular file is listed as `unreadable`, and such a
 library file is skipped, instead of failing the whole view.
 
-How many of these views run at once is the server's to limit.
+The digests record an over-cap file by its size instead of failing: every view that would
+show such a file refuses it, so its contents are never used, and the size keeps the digest
+deterministic and still sensitive to change. Past a digest's total they refuse instead, since
+markers there would let shown content change without changing the digest. Files under every
+cap digest exactly as upstream does (the golden fingerprints and digests are unchanged); a
+tree with an over-cap file fingerprints differently from upstream's `runmark.fingerprint`.
+
+**Per-request budget.** The caps above are per call. `results::ReadBudget` adds a total
+across the calls of one request: bytes of results files (each file is charged its size before
+it is read), a number of sweeps, and an optional cancellation flag checked before every file
+and sweep. The `*_with(&mut ReadBudget)` methods (`sweep_with`, `sweeps_with`, `tasks_with`,
+`scores_with`, `report_with`, `spend_usd_with`, `results_digest_with`) take it; running out is
+`TooLarge`, a set flag is `CoreError::Cancelled`. The methods without `_with` are those calls
+with `ReadBudget::unlimited()`. How many views run at once is the server's to limit.
+
+**Opening untrusted files.** Every file read goes through `safefs::open_file`: `lstat` (a
+symlink or anything but a regular file is refused), open with `O_NONBLOCK | O_NOFOLLOW`, then
+`fstat` the handle, which must be a regular file with the device and inode the `lstat` saw.
+A FIFO, socket or symlink renamed over the file between the two is refused at once; a
+blocking open would wait on a FIFO forever. The flag values are spelled out per target in
+`safefs::sys` (`std` has no `O_*` constants and the crate has no libc dependency); a target
+not listed there does not build. `O_NOFOLLOW` takes effect where the kernel resolves the
+name (`openat2`, Linux 5.6+); cap-std's fallback resolver follows a link that stays inside
+the root, and the inode check then refuses what it opened. `O_NONBLOCK` stays set on the
+handle; regular files ignore it.
 
 ## Job environments (`env`)
 
