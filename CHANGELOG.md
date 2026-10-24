@@ -16,3 +16,12 @@ All notable changes to this project are documented here. The format follows
   provenance for releases.
 - Deployment artifacts: runner and all-in-one container images, a contained reference Compose
   stack with an egress allowlist proxy and TLS ingress, and a systemd user unit.
+- Documentation: README with a feature matrix that separates what is implemented from what was
+  verified live; web UI user guide with screenshots; administrator's guide with the full
+  configuration reference; REST API and MCP guides; model-profile guide (Vertex AI and
+  OpenAI-compatible endpoints); concepts and glossary; threat model (STRIDE, trust boundaries,
+  residual risks); troubleshooting indexed by exact message; eight architecture decision records.
+- `cargo xtask docs`: fails on a broken relative link or `#anchor` in any Markdown file (GitHub's
+  heading-anchor rules) and on a missing required document (the README that release archives
+  contain, the guides the governance files point to); it is also one of the gates of
+  `cargo xtask check`.
