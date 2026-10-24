@@ -119,7 +119,7 @@ server's log line for that request and the audit record. Start there.
 | Everybody gets `429` | The proxy is not in `trusted_proxies`, so all users share one login bucket. |
 | The job log does not update live, or arrives in bursts | The proxy buffers server-sent events. Caddy: `flush_interval -1`. nginx: `proxy_buffering off`. The server already sends `x-accel-buffering: no`. |
 | A live log stops after about an hour, or ten idle minutes | By design: the stream ends and the client reconnects with `Last-Event-ID`. |
-| `curl` works but the page shows `UI not built — run cargo xtask web, then rebuild the server.` | This server was built without `dist/web`. Build the UI and the server again (`cargo xtask dist`). The API works regardless. |
+| `curl` works but the page shows `UI not built — run cargo xtask web, then rebuild the server.` | This server was built without `dist/web`. Build the UI, then rebuild the server (`cargo xtask dist` does both in order; if you built the server first, `touch crates/h2s-daemon/src/http/static_ui.rs` so cargo rebuilds it: it does not notice `dist/web` appearing). The API works regardless. |
 | The audit log shows the proxy's address for every user | `server.trusted_proxies` does not include the proxy. |
 
 ## Starting the server

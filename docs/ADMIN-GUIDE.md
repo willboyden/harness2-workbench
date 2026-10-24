@@ -115,7 +115,12 @@ times and sizes above are from a run with warm dependency caches and without the
 embeds the web UI at compile time when `dist/web/` exists; build it first
 with `cargo xtask web` (needs `wasm-bindgen-cli` 0.2.129 and the `wasm32-unknown-unknown` target,
 which `rust-toolchain.toml` installs). `cargo xtask dist` does both steps. **Without `dist/web/` the
-server still builds and runs**: the API works and `/` shows a page saying `UI not built`.
+server still builds and runs**: the API works and `/` shows a page saying `UI not built`. Cargo does
+not notice that `dist/web/` appeared after a server build (verified: a `cargo build` after
+`cargo xtask web` finished at once and the server still served that page), so build the UI first, or
+run `touch crates/h2s-daemon/src/http/static_ui.rs` before rebuilding the server. `cargo xtask web`
+builds a release-size UI (a 3.4 MB `.wasm` here); `cargo xtask web --dev` builds a faster debug one
+(about 150 MB).
 
 ### 3.2 Release archives (not yet published)
 
