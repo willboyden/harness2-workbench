@@ -161,7 +161,8 @@ comparison with this sweep (its first mode) chosen as A. The four tabs are bound
 you can link to them.
 
 **Tasks.** One row per task: status (`ok`, `skipped`, `partial`, `base-failed`, `running`,
-`exception`), the harness each mode adopted (`agg1`, `c1`, or *kept base*), its score, and spend.
+`exception`, or `unreadable` / `too-large` for a summary file the server could not or would not
+read), the harness each mode adopted (`agg1`, `c1`, or *kept base*), its score, and spend.
 Filter by **Domain** and **Status**; the table pages. A score is a percentage of the judge's points
 with an *all pass* or *not all pass* note; badges such as `1 fell back` (a stage fell back after two
 rejected proposals) and `1 error` explain odd rows. A task that was not graded shows `—`: ungraded

@@ -270,6 +270,12 @@ already have.
   OK    harness2           harness2 0.1.0 at 1cfe254e8d25, Python 3.12
   ```
 
+  The `install` step runs `uv pip install --python .venv/bin/python --exclude-newer
+  2026-10-14T02:22:49Z -e .[render]` (seen in the job log; the same run, repeated on 2026-10-24 with
+  warm caches, took 2 seconds). harness2 has no lock file, so the Studio resolves its Python
+  dependencies as of the tested commit's date: a commit that needs newer packages fails to install
+  instead of pulling releases nobody tested.
+
   Options: `rev` (a full 40-hex commit of google-research/harness2), `extras` (`bridge` adds the
   LiteLLM proxy the Codex bridge needs), `reinstall` (re-create the virtual environment).
 - *Existing checkout:* set `paths.harness2_home` to it and `paths.harness2_managed = false`. The
@@ -280,10 +286,11 @@ already have.
   ```sh
   git clone https://github.com/google-research/harness2 ~/harness2 && cd ~/harness2
   git checkout 1cfe254e8d25b15f37048c3730134686abe60335    # the tested commit
-  uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e '.[render]'
+  uv venv --python 3.12 .venv
+  uv pip install --python .venv/bin/python --exclude-newer 2026-10-14T02:22:49Z -e '.[render]'
   ```
 
-  `doctor` warns when the installed commit differs from the tested one, and warns about a `.env`
+  (`--exclude-newer` gives you the dependency versions the Studio's own install uses.) `doctor` warns when the installed commit differs from the tested one, and warns about a `.env`
   file in the checkout: harness2 loads it for every variable a job does not set, bypassing the
   Studio's profiles and secrets.
 
@@ -542,9 +549,10 @@ A secret is handed to a job only when the job's profile references it, and only 
 environment (never the command line: a step whose argv would contain a secret value is refused).
 Every log line, error message and audit detail passes through a redactor that replaces values with
 `[REDACTED:<NAME>]` (including a value's JSON-escaped form and each line of a multi-line value).
-**Redaction is best effort**: it matches the literal value, so a value that a job reverses, splits,
-spaces out or encodes (base64 forms are planned, not in this commit) is not recognised, and **job
-logs are readable by every viewer**. Do not give a job a secret you cannot afford to see in a log.
+**Redaction is best effort**: it matches the literal value, its JSON-escaped form and its standard
+and URL-safe base64 spellings (padded or not), so a value that a job reverses, splits, spaces out,
+hex- or percent-encodes, or base64-encodes together with other text (an HTTP Basic `user:password`
+header) is not recognised, and **job logs are readable by every viewer**. Do not give a job a secret you cannot afford to see in a log.
 **Secrets stored in the database are not encrypted at rest**; the file is mode 0600 in a 0700
 directory. See [THREAT-MODEL.md](THREAT-MODEL.md) for what that implies, in particular for host-mode
 jobs and for backups.
@@ -1031,8 +1039,11 @@ The backup copy above opened and verified (`audit chain OK: 39 entries; head 39 
    harness2, start `install_harness2` with `reinstall: true` (and `rev` for another commit; any
    40-character commit id is accepted today, and the job builds whatever it finds there, so use
    only commits you trust; restricting this to the tested commit unless a configuration flag
-   allows others is planned, not in this commit) in managed mode, or update your own checkout and re-run its setup; completed sweeps are unaffected,
-   but a resumed sweep should use the harness2 it started with.
+   allows others is planned, not in this commit) in managed mode, or update your own checkout and
+   re-run its setup. The dependency cutoff stays at the tested commit's date, so a newer commit that
+   needs newer packages fails to install in managed mode: install it yourself in an unmanaged
+   checkout. Completed sweeps are unaffected, but a resumed sweep should use the harness2 it started
+   with.
 5. Restart `h2studio-mcp` and re-check client configuration if the MCP tool list changed.
 
 ## 13. Audit log
@@ -1163,5 +1174,4 @@ elsewhere are to be turned into plain statements.
 | The session cookie is named `__Host-h2s_session` over https | `h2s_session` | [API.md](API.md#2-authentication) |
 | `paths.allow_untested_harness2_rev`: `install_harness2` accepts only the tested commit unless this is `true` | any 40-hex commit id | [section 12](#12-data-backups-and-upgrades) |
 | Container jobs receive their variables through a 0600 environment file | `-e NAME`, values in the runtime command's environment | [section 8](#8-container-isolation-step-by-step) |
-| Redaction also covers base64 forms of a secret | literal value and its JSON-escaped form | [section 6.4](#64-secrets) |
 | Duplicate identity headers in proxy mode are refused with `401` | first user value, union of groups | [section 6.3](#63-proxy-sso-mode) |

@@ -282,7 +282,7 @@ are written for people and never contain secret values or quoted request input.
 | 403 | `forbidden` | role too low; missing `x-h2s-request`; foreign `Origin`; a proxy user whose groups grant no role |
 | 404 | `not_found` | unknown route, experiment, sweep, job, token |
 | 409 | `conflict` | experiment exists; wrong profile for a pinned experiment; archived experiment; job already finished; container isolation refuses WorkBuddy and the bridge |
-| 413 | `payload_too_large` | body over `server.max_body_bytes` |
+| 413 | `payload_too_large` | body over `server.max_body_bytes`; or a results read past one of the server's memory bounds (`too large: ...`, see section 6) |
 | 421 | `misdirected_request` | unknown `Host` |
 | 422 | `validation` | a field is wrong: `details` names it. Also unknown or unparsable **query parameters** (field `query`) |
 | 429 | `rate_limited` | too many login attempts; `Retry-After` says how long |
@@ -316,7 +316,12 @@ are strict: an unknown name or a value that does not parse is a `422` on the fie
 | `GET /jobs/{id}/log` | `from` (0-based line), `limit` | 500 / 5000 |
 
 Other bounds: request body 1 MiB (configurable); rollout and audit-text files 2 MiB; a job log line
-64 KiB (longer lines are cut with ` … [line truncated]`); `POST /harness/validate` at most 5,000
+64 KiB (longer lines are cut with ` … [line truncated]`); **reads of files that jobs may rewrite**
+(`413` `too large: ...` past a bound, nothing partial): a `summary.json` 4 MiB (in a task list a
+larger one appears as a row with status `too-large`, and a file that cannot be read as
+`unreadable`), 10,000 tasks per sweep, 256 MiB of summaries per list view, 100,000 judged rows, a
+harness tree or export 2,000 files and 64 MiB, any directory listing 250,000 entries (the full list
+is in `docs/notes/core.md`); `POST /harness/validate` at most 5,000
 files; secret values at most 64 KiB; experiment descriptions 4,000 characters and 32 tags.
 
 ## 7. Jobs

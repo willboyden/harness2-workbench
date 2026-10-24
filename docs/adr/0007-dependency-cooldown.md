@@ -43,9 +43,10 @@ Bad, and how it is managed:
 - **It does not protect against a compromise that has already aged**, nor against a malicious version
   nobody has noticed in 14 days. It narrows one window; it is not a review.
 - **Its scope is the Studio's own build.** It covers the Rust crates, CI actions, container base
-  images and Dependabot updates. It does **not** cover harness2's Python dependencies (resolved at
-  install time by `uv pip install -e`, with no lock file and no `--exclude-newer`) or the npm and Bun
-  packages that benchmark setup installs.
+  images and Dependabot updates. It does **not** cover harness2's Python dependencies: harness2 has no
+  lock file, so the install job resolves them with `uv pip install -e --exclude-newer <the tested
+  commit's date>`, which fixes the versions to what existed then but is a different control (a date,
+  not an age) and vets nothing; nor the npm and Bun packages that benchmark setup installs.
 - **It needs the network** at check time (one request per locked crate to `index.crates.io`, through
   `curl`), and trusts the index's `pubtime`.
 - **Maintenance cost**: pinning back transitive versions with `cargo update -p ... --precise ...`,

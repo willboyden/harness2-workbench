@@ -98,13 +98,15 @@ through the Studio**: the only real harness2 workflow exercised end to end is th
 For one person on one machine, no containers. You need Linux, `git`, [`uv`](https://docs.astral.sh/uv/)
 (Python 3.12 available to it) and a Rust toolchain. Steps 2 and 3 and everything after them were run as
 written, with a scratch home directory, against an existing checkout of the pinned harness2 commit.
-Step 1 is upstream's own installation recipe, which was not re-run for this page.
+Step 1 repeats what the Studio's `install_harness2` job runs (which was run live, with the same
+`uv pip install` and cutoff); the manual commands themselves were not re-run for this page.
 
 ```sh
 # 1. harness2 itself, at the commit this release was tested against
 git clone https://github.com/google-research/harness2 ~/harness2 && cd ~/harness2
 git checkout 1cfe254e8d25b15f37048c3730134686abe60335
-uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e '.[render]'
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python --exclude-newer 2026-10-14T02:22:49Z -e '.[render]'   # the Studio's own install uses this cutoff
 cd -
 
 # 2. the Studio (API and command line; the web UI needs `cargo xtask web` first)
