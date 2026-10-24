@@ -110,6 +110,26 @@ async fn wait_for(c: &Client, css: &str) -> fantoccini::elements::Element {
         .unwrap_or_else(|e| panic!("element {css} did not appear: {e}"))
 }
 
+/// Wait until the element at `css` contains `needle`. Content fetched after its element
+/// appears (a job log, a library, a diff) must be waited for, not read at once: a slow CI
+/// runner once read a job log before its lines had arrived.
+async fn wait_for_text(c: &Client, css: &str, needle: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        // The element can be replaced while it renders; a failed read just tries again.
+        let text = wait_for(c, css).await.text().await.unwrap_or_default();
+        if text.contains(needle) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{css} never contained {needle:?}; last text: {:?}",
+            text.chars().take(300).collect::<String>()
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 #[tokio::test]
 #[ignore = "end-to-end: run with `cargo xtask e2e`"]
 async fn login_browse_the_demo_and_diff_a_harness() {
@@ -210,15 +230,8 @@ async fn login_browse_the_demo_and_diff_a_harness() {
         .click()
         .await
         .expect("library tab");
-    let lib = wait_for(&c, &tid("library-view"))
-        .await
-        .text()
-        .await
-        .expect("text");
-    assert!(
-        lib.contains("credits and debits"),
-        "library view shows the demo lesson"
-    );
+    // The library view shows the demo lesson.
+    wait_for_text(&c, &tid("library-view"), "credits and debits").await;
     shot(&c, "04-sweep-library").await;
     wait_for(&c, &tid("tab-tasks"))
         .await
@@ -243,7 +256,7 @@ async fn login_browse_the_demo_and_diff_a_harness() {
     c.goto(&url)
         .await
         .expect("direct link works (SPA fallback)");
-    let diff = wait_for(&c, &tid("diff-view")).await;
+    wait_for(&c, &tid("diff-view")).await;
     // Choose base -> agg1 if the selects exist with those options.
     if let Ok(from) = c
         .find(Locator::Css(&format!(
@@ -263,12 +276,8 @@ async fn login_browse_the_demo_and_diff_a_harness() {
     {
         to.click().await.expect("pick agg1");
     }
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let diff_text = diff.text().await.expect("diff text");
-    assert!(
-        diff_text.contains("summarize.py"),
-        "the diff names the edited script"
-    );
+    // The diff names the edited script.
+    wait_for_text(&c, &tid("diff-view"), "summarize.py").await;
     shot(&c, "06-task-diff").await;
 
     // Jobs list and the finished job page.
@@ -281,12 +290,8 @@ async fn login_browse_the_demo_and_diff_a_harness() {
         .await
         .expect("text");
     assert_eq!(status.trim(), "succeeded");
-    let log = wait_for(&c, &tid("job-log"))
-        .await
-        .text()
-        .await
-        .expect("text");
-    assert!(log.contains("Local demo"), "job log is shown");
+    // The job log is shown once its lines have been fetched.
+    wait_for_text(&c, &tid("job-log"), "Local demo").await;
     shot(&c, "07-job").await;
 
     // Phone width renders without horizontal scrolling.
