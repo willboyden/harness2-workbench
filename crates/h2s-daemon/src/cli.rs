@@ -326,17 +326,26 @@ fn init(config: Option<&Path>, force: bool, data_dir: Option<&Path>) -> anyhow::
         None,
         "bootstrap token from h2studio init",
     )?;
-    let token_file = config_dir.join(ADMIN_TOKEN_FILE);
-    crate::util::write_private_replace(&token_file, format!("{token}\n").as_bytes())
-        .with_context(|| format!("writing {}", token_file.display()))?;
+    // The token is in the database now, so print it before anything else can fail: a second
+    // `init` refuses, and a token nobody saw would lock the administrator out.
     let mut out = std::io::stdout().lock();
     writeln!(out, "{token}")?;
     out.flush()?;
-    eprintln!(
-        "Created admin token {} (also saved to {}, mode 0600).\nStart the server with `h2studio serve` and sign in with this token.",
-        rec.id,
-        token_file.display()
-    );
+    // The saved copy is a convenience. The configuration directory may be read-only (a
+    // config file bind-mounted into a container, as in deploy/compose.yaml).
+    let token_file = config_dir.join(ADMIN_TOKEN_FILE);
+    match crate::util::write_private_replace(&token_file, format!("{token}\n").as_bytes()) {
+        Ok(()) => eprintln!(
+            "Created admin token {} (also saved to {}, mode 0600).\nStart the server with `h2studio serve` and sign in with this token.",
+            rec.id,
+            token_file.display()
+        ),
+        Err(e) => eprintln!(
+            "Created admin token {}. It is shown only above: it could not be saved to {} ({e}).\nStart the server with `h2studio serve` and sign in with this token.",
+            rec.id,
+            token_file.display()
+        ),
+    }
     Ok(ExitCode::SUCCESS)
 }
 

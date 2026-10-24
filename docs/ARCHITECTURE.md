@@ -456,7 +456,9 @@ lockfile) to stream SSE.
 
 **v1.2 (2026-10-23) — job egress.** Host-mode jobs also receive the server's own proxy and CA
 variables when set (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` and their lowercase
-forms; `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`), so the
+forms; `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`; and every
+`UV_*`, `PIP_*` and `NPM_CONFIG_*` variable, such as the runner image's
+`UV_PYTHON_INSTALL_DIR` or a corporate index mirror: `h2s_core::env::is_passed_through`), so the
 compose deployment, where the Studio sits on an internal network, reaches the allowlisted hosts
 through `h2studio egress-proxy`. Profiles cannot set the uppercase proxy names (`RESERVED_ENV`).
 Container jobs get none of the server's variables; `[isolation.container] proxy =
