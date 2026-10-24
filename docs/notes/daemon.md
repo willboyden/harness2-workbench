@@ -101,7 +101,9 @@ Keys beyond §11 (all optional, defaults shown):
   sessions; logout deletes the session and clears the cookie (`Max-Age=0`).
 - Login is rate-limited per client address (IPv6 per /64): `server.login_attempts_per_minute`
   attempts, successful or not, then 429 with `Retry-After`. End-to-end suites that sign in more
-  often should raise the limit in their configuration.
+  often should raise the limit in their configuration. Each limiter tracks up to 10,000 clients;
+  when its table is full, clients whose bucket has refilled are forgotten first and newcomers
+  that still do not fit share one overflow bucket, so the limit never fails open.
 - Proxy mode roles: any `admin_groups` member is admin, else any `operator_groups` member is
   operator, else viewer when `viewer_groups` is empty or matches, else 403. Requests carrying the
   user header from an address outside `trusted_proxies`, or with a wrong shared secret, are 401.
