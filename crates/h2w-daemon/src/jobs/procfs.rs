@@ -57,6 +57,17 @@ pub const JOB_MARKER_ENV: &str = "H2W_JOB_ID";
 /// Largest `/proc/<pid>/environ` read when looking for the marker.
 const MAX_ENVIRON: u64 = 4 * 1024 * 1024;
 
+/// Reads of an environment that comes back empty or denied before the process counts as
+/// unmarked; the pause before each new read doubles from 1 ms ([`environ_pause`], about 0.25 s
+/// in all). Both happen for a moment during an exec: the new program's name is set before its
+/// environment (`/proc/<pid>/environ` reads empty, under 0.2 ms when measured on Linux 7.0),
+/// and a child of a non-dumpable process is unreadable until the exec makes it dumpable.
+const ENVIRON_READS: u32 = 9;
+
+fn environ_pause(retry: u32) -> std::time::Duration {
+    std::time::Duration::from_millis(1 << retry)
+}
+
 /// The id of the running boot (`/proc/sys/kernel/random/boot_id`).
 #[must_use]
 pub fn boot_id() -> Option<String> {
@@ -68,19 +79,41 @@ pub fn boot_id() -> Option<String> {
 }
 
 /// `true` when the environment of `pid` holds `H2W_JOB_ID=<job_id>` (readable only for
-/// processes of the same user that are dumpable, as job processes are).
+/// processes of the same user that are dumpable, as job processes are). An environment that
+/// reads empty or denied is read again ([`ENVIRON_READS`]) before the process counts as
+/// unmarked.
 #[must_use]
 pub fn carries_marker(pid: i32, job_id: &str) -> bool {
+    let mut state = marker_state(pid, job_id);
+    for retry in 0..ENVIRON_READS - 1 {
+        if state.is_some() {
+            break;
+        }
+        std::thread::sleep(environ_pause(retry));
+        state = marker_state(pid, job_id);
+    }
+    state == Some(true)
+}
+
+/// What one read of the environment of `pid` says about the marker of `job_id`; `None` when
+/// it reads empty or is denied (mid-exec; also an exiting process, an empty environment or
+/// another user's process, which stay unmarked after the last read).
+fn marker_state(pid: i32, job_id: &str) -> Option<bool> {
     use std::io::Read;
-    let Ok(f) = std::fs::File::open(format!("/proc/{pid}/environ")) else {
-        return false;
+    let f = match std::fs::File::open(format!("/proc/{pid}/environ")) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return None,
+        Err(_) => return Some(false),
     };
     let mut buf = Vec::new();
     if f.take(MAX_ENVIRON).read_to_end(&mut buf).is_err() {
-        return false;
+        return Some(false);
+    }
+    if buf.is_empty() {
+        return None;
     }
     let want = format!("{JOB_MARKER_ENV}={job_id}");
-    buf.split(|b| *b == 0).any(|e| e == want.as_bytes())
+    Some(buf.split(|b| *b == 0).any(|e| e == want.as_bytes()))
 }
 
 /// What was recorded about a step's leader when it started.
@@ -105,12 +138,23 @@ pub enum Termination {
 
 /// Live members of the recorded group that carry the job's marker. The group id is the
 /// leader's pid; members started no earlier than the leader (a necessary condition) and
-/// the marker is the identification.
-fn marked_members(rec: &Recorded) -> Vec<i32> {
-    group_members(rec.pid, rec.start)
-        .into_iter()
-        .filter(|p| carries_marker(*p, &rec.job_id))
-        .collect()
+/// the marker is the identification. Like [`carries_marker`], without blocking the runtime.
+async fn marked_members(rec: &Recorded) -> Vec<i32> {
+    let mut marked = Vec::new();
+    for pid in group_members(rec.pid, rec.start) {
+        let mut state = marker_state(pid, &rec.job_id);
+        for retry in 0..ENVIRON_READS - 1 {
+            if state.is_some() {
+                break;
+            }
+            tokio::time::sleep(environ_pause(retry)).await;
+            state = marker_state(pid, &rec.job_id);
+        }
+        if state == Some(true) {
+            marked.push(pid);
+        }
+    }
+    marked
 }
 
 /// Live (non-zombie) members of process group `pgid` that started at or after `min_start`.
@@ -160,17 +204,17 @@ pub async fn terminate_recorded_group(rec: &Recorded, grace: std::time::Duration
     if boot_id().as_deref() != Some(rec.boot_id.as_str()) {
         return Termination::OtherBoot;
     }
-    if marked_members(rec).is_empty() || signal_group(rec.pid, Signal::SIGTERM).is_err() {
+    if marked_members(rec).await.is_empty() || signal_group(rec.pid, Signal::SIGTERM).is_err() {
         return Termination::NotFound;
     }
     let deadline = tokio::time::Instant::now() + grace;
     while tokio::time::Instant::now() < deadline {
-        if marked_members(rec).is_empty() {
+        if marked_members(rec).await.is_empty() {
             return Termination::Signalled;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    if !marked_members(rec).is_empty() {
+    if !marked_members(rec).await.is_empty() {
         let _ = signal_group(rec.pid, Signal::SIGKILL);
     }
     Termination::Signalled
@@ -232,6 +276,31 @@ mod tests {
             job_id: "job-1".into(),
         };
         (child, rec)
+    }
+
+    /// An exec names the new program before its environment is in place, and for that
+    /// moment `/proc/<pid>/environ` reads empty: the marker check must look again, not
+    /// answer "unmarked". (Until the new name is set, a child started by `spawn` may still
+    /// share this process's memory, so the test waits for it first.)
+    #[test]
+    fn a_process_caught_mid_exec_still_carries_its_marker() {
+        for _ in 0..50 {
+            let mut child = std::process::Command::new("sleep")
+                .arg("30")
+                .env(JOB_MARKER_ENV, "job-1")
+                .spawn()
+                .unwrap();
+            let pid = i32::try_from(child.id()).unwrap();
+            while std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                .is_ok_and(|c| c.trim() != "sleep")
+            {
+                std::hint::spin_loop();
+            }
+            let marked = carries_marker(pid, "job-1");
+            let _ = child.kill();
+            let _ = child.wait();
+            assert!(marked, "a process just started lost its marker");
+        }
     }
 
     #[test]

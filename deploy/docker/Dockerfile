@@ -6,6 +6,11 @@
 # Build from the repository root:
 #   docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.0 .
 #   docker build -f deploy/docker/Dockerfile -t harness2-workbench:0.1.0 .
+# `--build-arg RUNNER_IMAGE=<name:tag>` builds on another runner image.
+
+# Built locally from runner.Dockerfile, never pulled. Naming it through an argument also keeps
+# Dependabot from looking it up on Docker Hub.
+ARG RUNNER_IMAGE=harness2-workbench-runner:0.1.0
 
 FROM docker.io/library/rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd3dacff4d457ca7cccd781e02297cc6 AS build
 RUN rustup target add wasm32-unknown-unknown \
@@ -20,7 +25,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && cargo build --release --locked -p h2w-daemon -p h2w-mcp \
     && install -D -m 0755 -t /out target/release/h2workbench target/release/h2workbench-mcp
 
-FROM harness2-workbench-runner:0.1.0
+FROM ${RUNNER_IMAGE}
 COPY --from=build /out/h2workbench /out/h2workbench-mcp /usr/local/bin/
 COPY LICENSE NOTICE /usr/share/doc/harness2-workbench/
 # The server and its host-mode jobs run as node, so they get node's private home back (the
