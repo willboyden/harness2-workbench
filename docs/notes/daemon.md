@@ -59,6 +59,12 @@ lowercase); `network` is `none` or a user-defined network (never `host`/`bridge`
 Proxy mode needs `server.trusted_proxies` and the shared secret (at least 16 characters) in the
 environment variable `auth.proxy.secret_env` when the server starts.
 
+Keys beyond §11 (all optional, defaults shown):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `paths.allow_untested_harness2_rev` | `false` | `install_harness2` with a `rev` other than the tested commit (`h2s_core::TESTED_HARNESS2_COMMIT`) is 422 on `params.rev` unless `true`: a fork can make any commit fetchable from the upstream repository, and installing runs its build code. |
+
 ## HTTP
 
 - **Host allowlist**: `public_url`'s host (with its port; without a port when it is the scheme's

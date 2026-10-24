@@ -64,6 +64,8 @@ pub struct JobSettings {
     pub log_retention: Duration,
     pub isolation: Isolation,
     pub preacknowledged: bool,
+    /// `paths.allow_untested_harness2_rev`.
+    pub allow_untested_rev: bool,
     pub paths: Paths,
     pub container: ContainerSection,
 }
@@ -81,6 +83,7 @@ impl JobSettings {
             log_retention: Duration::from_secs(u64::from(j.log_retention_days) * 86_400),
             isolation: cfg.file.isolation.mode,
             preacknowledged: cfg.file.isolation.preacknowledge_host_risks,
+            allow_untested_rev: cfg.file.paths.allow_untested_harness2_rev,
             paths: cfg.paths.clone(),
             container: cfg.file.isolation.container.clone(),
         }
@@ -501,11 +504,25 @@ impl JobManager {
                  user's files and network); set acknowledge_risks to true to proceed",
             ));
         }
-        if matches!(spec, JobSpec::InstallHarness2(_)) {
+        if let JobSpec::InstallHarness2(p) = &spec {
             if !self.settings.paths.harness2_managed {
                 return Err(ApiError::conflict(
                     "harness2_home is an existing checkout (paths.harness2_managed = false); \
                      the server does not modify it",
+                ));
+            }
+            if let Some(rev) = &p.rev
+                && rev != h2s_core::TESTED_HARNESS2_COMMIT
+                && !self.settings.allow_untested_rev
+            {
+                return Err(ApiError::invalid(
+                    "params.rev",
+                    format!(
+                        "only the tested harness2 commit {} can be installed; an \
+                         administrator can allow others with \
+                         paths.allow_untested_harness2_rev = true",
+                        h2s_core::TESTED_HARNESS2_COMMIT
+                    ),
                 ));
             }
         } else if !self.harness2_installed() {

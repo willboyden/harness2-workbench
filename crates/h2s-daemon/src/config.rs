@@ -137,6 +137,10 @@ pub struct PathsSection {
     pub harness2_home: String,
     /// `false` = point at an existing checkout, which is never modified.
     pub harness2_managed: bool,
+    /// Let `install_harness2` check out a `rev` other than the tested commit. A fork can
+    /// make any commit fetchable from the upstream repository, and installing runs its
+    /// build code, so this stays off unless an administrator chooses otherwise.
+    pub allow_untested_harness2_rev: bool,
 }
 
 impl Default for PathsSection {
@@ -146,6 +150,7 @@ impl Default for PathsSection {
             experiments_dir: String::new(),
             harness2_home: String::new(),
             harness2_managed: true,
+            allow_untested_harness2_rev: false,
         }
     }
 }

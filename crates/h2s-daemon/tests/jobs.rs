@@ -8,7 +8,7 @@ mod common;
 use std::time::Duration;
 
 use common::*;
-use h2s_api::{ErrorBody, Job, JobResult, JobStatus, LogChunk, LogStream, Page, Role};
+use h2s_api::{ErrorBody, ErrorCode, Job, JobResult, JobStatus, LogChunk, LogStream, Page, Role};
 use serde_json::json;
 
 fn mt() -> tokio::runtime::Runtime {
@@ -580,6 +580,50 @@ async fn creation_is_validated_before_anything_runs() {
         .await
         .unwrap();
     assert!(page.items.is_empty(), "{:?}", page.items);
+    t.stop().await;
+}
+
+/// `install_harness2` checks out only the tested commit unless the configuration allows
+/// others (a fork can make any commit fetchable from the upstream repository).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn installing_an_untested_harness2_commit_needs_the_config_switch() {
+    let other = "0123456789abcdef0123456789abcdef01234567";
+    let tested = h2s_core::TESTED_HARNESS2_COMMIT;
+    let install = |rev: Option<&str>| match rev {
+        Some(r) => json!({"kind": "install_harness2", "params": {"rev": r}}),
+        None => json!({"kind": "install_harness2", "params": {}}),
+    };
+
+    let t = TestServer::start_with(|s| s.file.paths.harness2_managed = true).await;
+    let r = t.create_job(&t.admin, install(Some(other))).await;
+    assert_eq!(r.status(), 422);
+    let e: ErrorBody = r.json().await.unwrap();
+    assert_eq!(e.error.code, ErrorCode::Validation);
+    assert!(
+        e.error.details.iter().any(|d| d.field == "params.rev"),
+        "{e:?}"
+    );
+    assert!(
+        e.error.message.contains("allow_untested_harness2_rev"),
+        "{e:?}"
+    );
+    for rev in [Some(tested), None] {
+        let r = t.create_job(&t.admin, install(rev)).await;
+        assert_eq!(r.status(), 201, "{rev:?}: {}", r.text().await.unwrap());
+        let j: Job = r.json().await.unwrap();
+        t.wait_terminal(&j.id, 30).await;
+    }
+    t.stop().await;
+
+    let t = TestServer::start_with(|s| {
+        s.file.paths.harness2_managed = true;
+        s.file.paths.allow_untested_harness2_rev = true;
+    })
+    .await;
+    let r = t.create_job(&t.admin, install(Some(other))).await;
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    let j: Job = r.json().await.unwrap();
+    t.wait_terminal(&j.id, 30).await;
     t.stop().await;
 }
 
