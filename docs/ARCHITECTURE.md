@@ -18,7 +18,8 @@ Agent Harnessing for an Open World"). It is not affiliated with Google.
 2. **The same, for AI agents**: an MCP server exposing all of it as tools, resources and prompts.
 3. **Safe by default for teams**: authentication, role-based access, CSRF/DNS-rebinding
    protection, secrets that are write-only and redacted from every log, optional container
-   isolation with an egress allowlist, a tamper-evident audit log, cost guards.
+   isolation with an egress allowlist, a hash-chained audit log (it shows edits by anyone who
+   cannot rewrite the server's data directory; see SECURITY.md), cost guards.
 4. **Better than the CLI for newcomers and experts**: onboarding, an environment doctor, cost
    estimates, harness diffs and exports, cross-sweep comparisons with a sign test,
    reproducibility manifests, OpenTelemetry and Prometheus.
@@ -31,7 +32,7 @@ Non-goals (v0.1): modifying harness2 itself; hosting models; multi-node job sche
 | # | Decision | Why | Rejected |
 |---|---|---|---|
 | 0001 | Wrap the harness2 **CLI** (argv, no shell) and read its **files**; never import its Python | harness2 exposes no library API; the CLI + on-disk layout is its contract; process boundary isolates crashes | Embedding Python (PyO3): couples to internals, no isolation |
-| 0002 | Rust workspace: `h2s-api` (wire types) · `h2s-core` (domain) · `h2s-daemon` (server) · `h2s-web` (Leptos CSR → WASM) · `h2s-mcp` (rmcp) | One language, shared types end to end, memory safety, single static binaries | TS frontend: duplicated types; SSR: more attack surface |
+| 0002 | Rust workspace: `h2s-api` (wire types) · `h2s-core` (domain) · `h2s-daemon` (server) · `h2s-web` (Leptos CSR → WASM) · `h2s-mcp` (rmcp) | One language, shared types end to end, memory safety, self-contained binaries (UI embedded; glibc-linked) | TS frontend: duplicated types; SSR: more attack surface |
 | 0003 | One server process owns jobs, state and auth; the MCP server is a **thin client** that forwards the caller's token | One enforcement point for RBAC and audit; MCP holds no extra power | MCP server with its own job runner |
 | 0004 | SQLite (bundled, WAL) for state; files for logs; experiments stay plain harness2 directories | Zero-ops, portable, harness2 tools keep working on the same dirs | Postgres: ops burden for a single-node tool |
 | 0005 | Strict CSP; WASM loaded by an external module script; no inline script or style attributes | XSS defence in depth for an admin UI that can start processes | Trunk's inline bootstrap (needs `unsafe-inline`) |
@@ -209,8 +210,8 @@ container isolation in v0.1 (409); host isolation requires `acknowledge_risks: t
 **Transport/origin.** Bind loopback by default. `Host` must be in the allowlist (derived from
 `server.public_url` + loopback forms of the listen port + `server.allowed_hosts`) else 421.
 Unsafe methods need `x-h2s-request: 1` and, when an `Origin` header is present, it must equal the
-public origin, else 403. No CORS headers, ever. `X-Forwarded-*` honoured only from
-`server.trusted_proxies`.
+public origin, else 403. No CORS headers, ever. `X-Forwarded-For`, `x-request-id` and (proxy mode)
+the identity headers are honoured only from `server.trusted_proxies`.
 
 **Authentication.** `Authorization: Bearer h2s_<id>_<secret>` or the `h2s_session` cookie
 (HttpOnly, SameSite=Strict, Path=/, Secure when `public_url` is https; 32-byte random id, stored
@@ -332,10 +333,11 @@ cpus = 4.0
 memory_mb = 8192
 pids_limit = 2048
 user = ""
+proxy = ""                           # http://host:port of the egress proxy on `network` (v1.2)
 
 [egress]                             # used by `h2studio egress-proxy`
-listen = "0.0.0.0:3128"
-allow = []                           # ["aiplatform.googleapis.com", "*.googleapis.com", {host="litellm", allow_private=true}]
+listen = "127.0.0.1:3128"            # compose sets 0.0.0.0 explicitly (audit F14)
+allow = []                           # ["aiplatform.googleapis.com", {host="litellm", allow_private=true, ports=[4000]}]; ports default 443, 80
 
 [telemetry]
 log_format = "pretty"                # pretty | json
@@ -431,7 +433,8 @@ percentage points). Percent (0..100) is used only by `ModeScore`, `ModeSummary` 
 **v1.1 (2026-10-23) — server CLI for automation.** `h2studio serve` accepts port 0 and prints one
 STDOUT line `h2studio listening on http://<ip>:<port>` once bound. `init` and `token create`
 accept `--config` and print the new token as the only STDOUT line (explanations on stderr);
-`init` refuses to overwrite an existing configuration unless `--force`.
+`init` never rewrites an existing configuration; when an admin token already exists it refuses
+unless `--force`, which mints another bootstrap token.
 
 **v1.1 (2026-10-23) — MCP argument names.** Tool arguments mirror the REST names:
 `experiment`, `sweep` (summary namespace id), `task` (slug), `mode`, `label`, `from`/`to`, `path`,
