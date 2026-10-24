@@ -723,6 +723,22 @@ impl Config {
         self.trusted_proxies.iter().any(|n| n.contains(&ip))
     }
 
+    /// Valid but risky settings, for the startup log and `config check`.
+    #[must_use]
+    pub fn warnings(&self) -> Vec<String> {
+        let mut w = Vec::new();
+        if self.public_https && self.trusted_proxies.is_empty() {
+            w.push(
+                "server.public_url is https but server.trusted_proxies is empty: when a reverse \
+                 proxy terminates TLS in front of this server, every client has the proxy's \
+                 address (one login rate limit and one connection limit for all, the proxy's \
+                 address in the audit log); list the proxy's address in server.trusted_proxies"
+                    .to_owned(),
+            );
+        }
+        w
+    }
+
     /// Lines describing the resolved locations, for the startup log and `config check`.
     #[must_use]
     pub fn describe_paths(&self) -> Vec<(String, String)> {
@@ -1684,6 +1700,21 @@ mode = "proxy"
             let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o700, "{}", p.display());
         }
+    }
+
+    #[test]
+    fn https_without_trusted_proxies_is_a_warning() {
+        let plain = cfg_from("").unwrap();
+        assert!(plain.warnings().is_empty());
+        let https = cfg_from("[server]\npublic_url = \"https://studio.example.com\"\n").unwrap();
+        let w = https.warnings();
+        assert_eq!(w.len(), 1);
+        assert!(w[0].contains("server.trusted_proxies"), "{w:?}");
+        let proxied = cfg_from(
+            "[server]\npublic_url = \"https://studio.example.com\"\ntrusted_proxies = [\"10.0.0.2\"]\n",
+        )
+        .unwrap();
+        assert!(proxied.warnings().is_empty());
     }
 
     #[test]

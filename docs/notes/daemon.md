@@ -67,6 +67,10 @@ lowercase); `network` is `none` or a user-defined network (never `host`/`bridge`
 Proxy mode needs `server.trusted_proxies` and the shared secret (at least 16 characters) in the
 environment variable `auth.proxy.secret_env` when the server starts.
 
+`serve` and `config check` warn about valid but risky settings: `public_url` on https with no
+`server.trusted_proxies` (behind a TLS-terminating proxy every client would share the proxy's
+address for rate limits, connection limits and the audit log).
+
 Keys beyond §11 (all optional, defaults shown):
 
 | Key | Default | Meaning |

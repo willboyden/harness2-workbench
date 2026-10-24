@@ -224,6 +224,9 @@ fn serve(config: Option<&Path>) -> anyhow::Result<ExitCode> {
         for w in crate::telemetry::environment_warnings(&process_env) {
             tracing::warn!("{w}");
         }
+        for w in cfg.warnings() {
+            tracing::warn!("{w}");
+        }
         if cfg.isolation() == h2s_api::Isolation::Host {
             tracing::warn!(
                 "isolation.mode = \"host\": jobs run as this user with its files and network (upstream behaviour)"
@@ -514,7 +517,10 @@ fn config_check(config: Option<&Path>) -> anyhow::Result<ExitCode> {
     }
     println!("  listen: {}", cfg.listen);
     println!("  public url: {}", cfg.public_url);
-    for w in crate::telemetry::environment_warnings(&process_env) {
+    for w in crate::telemetry::environment_warnings(&process_env)
+        .into_iter()
+        .chain(cfg.warnings())
+    {
         eprintln!("warning: {w}");
     }
     if cfg.file.auth.mode == h2s_api::AuthMode::Proxy {
