@@ -7,11 +7,18 @@
 #   HTTP(S)_PROXY and can reach exactly the hosts in `[egress] allow` of the mounted config.
 # - `ingress` publishes the UI; set your domain in deploy/examples/Caddyfile (or replace it
 #   with your organisation's reverse proxy, adding it to `server.trusted_proxies`).
-# - First run: docker compose run --rm studio init   (prints the first admin token once).
 #
 # Usage (from the repository root, after building both images — see deploy/docker/):
-#   cp deploy/examples/h2studio.toml deploy/h2studio.toml   # then edit it
+#   cp deploy/examples/h2studio.compose.toml deploy/h2studio.toml   # then edit the EDIT lines
+#   chmod 644 deploy/h2studio.toml    # no secrets in it; the container user must read it
+#   docker compose -f deploy/compose.yaml run --rm studio init   # prints the first admin token
 #   docker compose -f deploy/compose.yaml up -d
+#   docker compose -f deploy/compose.yaml exec studio h2studio doctor
+#
+# Rootless Docker cannot publish ports below 1024 unless the host allows it (sysctl
+# net.ipv4.ip_unprivileged_port_start); publish e.g. 8443:443 instead. If `up` fails with "all
+# predefined address pools have been fully subnetted", give the three networks explicit
+# `ipam` subnets in an override file.
 
 name: harness2-studio
 
@@ -45,6 +52,12 @@ services:
     security_opt: ["no-new-privileges:true"]
     pids_limit: 256
     mem_limit: 256m
+    # The image's own health check probes the Studio's port; the proxy listens on 3128.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   ingress:
     image: docker.io/library/caddy:2.11-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f

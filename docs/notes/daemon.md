@@ -122,7 +122,8 @@ environment variable `auth.proxy.secret_env` when the server starts.
   and its secrets (422 naming the secret), split file (exists and matches the cell), queue cap.
   The first writing job with a profile pins it to an experiment that has none.
 - `check` without a profile uses the profile named `default` when one exists.
-- **Processes**: argv only; `env_clear()` + `BASE_ENV_PASSTHROUGH` + the job environment (runtime
+- **Processes**: argv only; `env_clear()` + `BASE_ENV_PASSTHROUGH` and the `UV_`/`PIP_`/`NPM_CONFIG_`
+  prefixes (`h2s_core::env::is_passed_through`) + the job environment (runtime
   CLIs also get `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `XDG_RUNTIME_DIR`,
   `CONTAINER_HOST`, `CONTAINERS_CONF`, `REGISTRY_AUTH_FILE` when set); each step is its own
   process group; a step is refused when a secret value would appear in its argv. When a step's

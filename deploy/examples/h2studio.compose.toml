@@ -1,0 +1,38 @@
+# Harness² Studio configuration for deploy/compose.yaml (see the full annotated reference in
+# deploy/examples/h2studio.toml). Copy it to deploy/h2studio.toml and change the EDIT lines.
+#
+# It holds no secrets (API keys live in the Studio's database or in H2S_SECRET_* variables),
+# and the container user (uid 1000) must be able to read it: chmod 644.
+
+[server]
+# Inside the container, on the internal `jobs` network the ingress reaches it through.
+listen = "0.0.0.0:8722"
+# EDIT: the URL people type, the site address in deploy/examples/Caddyfile.
+public_url = "https://studio.example.com"
+# The ingress forwards X-Forwarded-For from its address on the `jobs` network. Docker picks
+# that network's subnet; narrow this to it once known (`docker network inspect`).
+trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+[paths]
+# Data lives in the studio-data volume at /data (H2S_DATA_DIR in the image).
+harness2_managed = true
+
+[isolation]
+# Jobs run inside the studio container, which reaches the network only through the egress
+# proxy below. Every run still needs `acknowledge_risks` unless you set
+# preacknowledge_host_risks = true.
+mode = "host"
+
+[egress]
+listen = "0.0.0.0:3128"
+# EDIT: every host jobs may reach. github.com, pypi.org and files.pythonhosted.org install
+# harness2; add your model endpoints (Vertex AI: aiplatform.googleapis.com and
+# oauth2.googleapis.com). Benchmark setup needs more: each refused host is logged by the
+# egress container (`docker compose logs egress`, decision="deny").
+allow = [
+  "github.com",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "aiplatform.googleapis.com",
+  "oauth2.googleapis.com",
+]

@@ -168,6 +168,36 @@ fn init_prints_only_the_token_and_refuses_a_second_bootstrap() {
     assert!(stdout(&o).contains("audit chain OK"));
 }
 
+/// A read-only configuration directory (a config file bind-mounted into a container) must
+/// not lose the token: it is already in the database, so a failed save cannot be retried.
+#[test]
+fn init_prints_the_token_even_when_it_cannot_save_a_copy() {
+    let e = env();
+    let dir = e.config.parent().unwrap().to_path_buf();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        &e.config,
+        format!(
+            "[paths]\ndata_dir = \"{}\"\n",
+            e.root.join("data").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let o = e.run(&["init"]);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(o.status.success(), "{}", stderr(&o));
+    let token = stdout(&o).trim().to_owned();
+    assert!(is_token(&token), "stdout must be the token: {token:?}");
+    if !dir.join("admin.token").exists() {
+        // Root ignores the mode bits; everyone else gets the warning.
+        assert!(stderr(&o).contains("could not be saved"), "{}", stderr(&o));
+    }
+    let o = e.run(&["token", "list", "--json"]);
+    let list: Vec<h2s_api::TokenInfo> = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(list.len(), 1);
+}
+
 #[test]
 fn init_takes_the_data_dir_from_the_environment() {
     let e = env();
@@ -311,4 +341,94 @@ async fn egress_proxy_runs_as_a_subcommand() {
         .await
         .unwrap();
     assert!(status.success(), "{status:?}");
+}
+
+/// What a job process sees of the server's environment, measured through a real server and a
+/// stub `harness2-demo` that prints its environment: proxy, CA and package-tool variables
+/// pass through (contract addendum v1.2); anything else does not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jobs_inherit_only_the_allowed_server_variables() {
+    let e = env();
+    let h2 = e.root.join("harness2");
+    let bin = h2.join(".venv/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let stub = "#!/bin/sh\n# test stub: print the environment a job sees\nenv | sort\nexit 0\n";
+    for name in ["harness2", "harness2-demo"] {
+        std::fs::write(bin.join(name), stub).unwrap();
+        std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::fs::create_dir_all(e.config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &e.config,
+        format!(
+            "[paths]\ndata_dir = \"{}\"\nharness2_home = \"{}\"\nharness2_managed = false\n",
+            e.root.join("data").display(),
+            h2.display()
+        ),
+    )
+    .unwrap();
+    let token = e.init();
+    let mut c = cmd(&e.home);
+    c.args(["serve", "--config", e.config.to_str().unwrap()])
+        .env("H2S_LISTEN", "127.0.0.1:0")
+        .env("HTTPS_PROXY", "http://proxy.invalid:3128")
+        .env("UV_PYTHON_INSTALL_DIR", "/opt/uv/python")
+        .env("NPM_CONFIG_REGISTRY", "https://registry.example.com/")
+        .env("H2S_TEST_CANARY", "server-only")
+        .env("AWS_SECRET_ACCESS_KEY", "server-only");
+    let (child, line) = spawn_until_line(c);
+    let url = line
+        .strip_prefix("h2studio listening on ")
+        .unwrap_or_else(|| panic!("unexpected first line {line:?}"))
+        .to_owned();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let job: h2s_api::Job = client
+        .post(format!("{url}/api/v1/jobs"))
+        .bearer_auth(&token)
+        .header("x-h2s-request", "1")
+        .json(&serde_json::json!({"kind": "demo", "params": {"experiment": "env", "k": 1}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let text = loop {
+        let log: h2s_api::LogChunk = client
+            .get(format!("{url}/api/v1/jobs/{}/log?limit=500", job.id))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if log.complete {
+            break log
+                .lines
+                .iter()
+                .map(|l| l.text.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        assert!(Instant::now() < deadline, "the job did not finish");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    let status = tokio::task::spawn_blocking(move || stop(child))
+        .await
+        .unwrap();
+    assert!(status.success(), "{status:?}");
+    for seen in [
+        "HTTPS_PROXY=http://proxy.invalid:3128",
+        "UV_PYTHON_INSTALL_DIR=/opt/uv/python",
+        "NPM_CONFIG_REGISTRY=https://registry.example.com/",
+        "HARNESS2_RUNS_DIR=",
+    ] {
+        assert!(text.contains(seen), "{seen} missing in:\n{text}");
+    }
+    assert!(
+        !text.contains("server-only"),
+        "a server-only variable leaked:\n{text}"
+    );
 }

@@ -46,6 +46,23 @@ pub const BASE_ENV_PASSTHROUGH: &[&str] = &[
     "NODE_EXTRA_CA_CERTS",
 ];
 
+/// Prefixes of further variables copied from the server's own environment: package-tool
+/// settings, such as where a managed Python lives (`UV_PYTHON_INSTALL_DIR` in the runner
+/// image) or a corporate index or registry mirror (`UV_INDEX_URL`, `PIP_INDEX_URL`,
+/// `NPM_CONFIG_REGISTRY`). Such a URL may carry credentials, and jobs can read it.
+pub const BASE_ENV_PASSTHROUGH_PREFIXES: &[&str] = &["UV_", "PIP_", "NPM_CONFIG_"];
+
+/// Whether a variable of the server's own environment is passed to jobs and tool probes:
+/// a name in [`BASE_ENV_PASSTHROUGH`] or one starting with a
+/// [`BASE_ENV_PASSTHROUGH_PREFIXES`] entry.
+#[must_use]
+pub fn is_passed_through(name: &str) -> bool {
+    BASE_ENV_PASSTHROUGH.contains(&name)
+        || BASE_ENV_PASSTHROUGH_PREFIXES
+            .iter()
+            .any(|p| name.starts_with(p))
+}
+
 /// The proxy variables set inside a container job when `[isolation.container] proxy` is
 /// configured (Python, Node/Bun, git, curl and uv each read a different subset).
 pub const CONTAINER_PROXY_VARS: &[&str] =
@@ -790,6 +807,35 @@ mod tests {
             runs_dir: "/data/experiments/e1".into(),
             opencode_config_path: "/data/jobs/j1/opencode.json".into(),
             gcp_credentials_path: "/data/jobs/j1/gcp.json".into(),
+        }
+    }
+
+    #[test]
+    fn server_variables_passed_to_jobs() {
+        for yes in [
+            "PATH",
+            "HTTPS_PROXY",
+            "no_proxy",
+            "SSL_CERT_FILE",
+            "UV_PYTHON_INSTALL_DIR",
+            "UV_INDEX_URL",
+            "PIP_INDEX_URL",
+            "NPM_CONFIG_REGISTRY",
+        ] {
+            assert!(is_passed_through(yes), "{yes}");
+        }
+        for no in [
+            "H2S_SECRET_OPENAI",
+            "H2S_PROXY_SECRET",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "AWS_SECRET_ACCESS_KEY",
+            "OPENAI_API_KEY",
+            "SSH_AUTH_SOCK",
+            "LD_PRELOAD",
+            "uv_index_url",
+            "XUV_X",
+        ] {
+            assert!(!is_passed_through(no), "{no}");
         }
     }
 
