@@ -47,6 +47,12 @@ estimates, egress hosts, and the secrets it references with set/unset state (val
 returned). Runs, judging and pipelines need a profile whose secrets are all set, and an \
 experiment only accepts the profile it was created with. Admins manage profiles in the web UI.";
 
+pub(crate) const CHECK_PROFILE: &str = "Check a model profile before starting work with it: \
+returns warnings (what the profile cannot do, e.g. no judge model, a judge LAB does not \
+recognise, WorkBuddy without Vertex Gemini models) and missing_secrets (referenced secrets with \
+no value; jobs with the profile are refused until an admin sets them in the web UI). Read-only; \
+never returns secret values.";
+
 pub(crate) const LIST_EXPERIMENTS: &str = "List experiments. An experiment is one harness2 \
 results directory holding any number of sweeps; a sweep is one (benchmark cell, k, seed, tag) \
 group identified by its summary namespace, e.g. lab-oc-agg1-s7 — the `sweep` argument of the \
@@ -304,8 +310,9 @@ WorkBuddy-Bench), then judges and reports. This MCP server is a thin client of a
 Studio server: every call runs with your API token's role (viewer < operator < admin) and is \
 audited by that server.
 
-Tool families: status (server_info, doctor, list_benchmarks, list_profiles); experiments \
-(list_experiments, create_experiment, get_experiment, update_experiment, get_manifest); \
+Tool families: status (server_info, doctor, list_benchmarks, list_profiles, check_profile); \
+experiments (list_experiments, create_experiment, get_experiment, update_experiment, \
+get_manifest); \
 planning (preview_run, estimate_cost, list_splits); jobs (run_demo, check_benchmark, \
 start_pipeline, start_run, start_judge, start_report, create_split, setup_benchmark, \
 install_harness2, start_bridge, list_jobs, \

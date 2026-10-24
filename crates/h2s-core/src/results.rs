@@ -281,8 +281,8 @@ fn role_of(label: &str) -> HarnessRole {
 }
 
 /// Judge points exactly as harness2 wrote them. JobBench's weighted judging writes floats
-/// (`total_score`/`max_score`), which the `u32` wire fields cannot hold; these raw values are
-/// what optional `points_*` fields will carry once the wire types have them.
+/// (`total_score`/`max_score`), which the `u32` wire fields cannot hold; the rows carry these
+/// raw values as `points_passed`/`points_max`.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct Points {
     passed: Option<f64>,
@@ -329,6 +329,8 @@ fn judged_row(v: &Value) -> Option<JudgedRow> {
         graded,
         error: text(field(v, "error")),
         metric,
+        points_passed: passed,
+        points_max: criteria,
     })
 }
 
@@ -354,6 +356,8 @@ fn base_row(v: &Value) -> (BaseJudgedRow, Option<f64>) {
             Some(Value::Null) | None => None,
             Some(other) => Some(truthy(other)),
         },
+        points_passed: passed,
+        points_max: criteria,
     };
     (row, frac)
 }
@@ -1860,7 +1864,39 @@ mod tests {
             graded: frac.is_some(),
             error: String::new(),
             metric: None,
+            points_passed: None,
+            points_max: None,
         }
+    }
+
+    /// JobBench's weighted judging writes fractional points: the integer fields stay empty
+    /// and the raw values travel as `points_*`, with `frac` computed from them.
+    #[test]
+    fn weighted_points_are_kept_exactly() {
+        let v = serde_json::json!({
+            "task_id": "t1", "mode": "agg", "k": 1, "label": "agg1", "run_id": "ns/t1/agg1",
+            "chosen_is_base": false, "n_passed": 7.5, "n_criteria": 10.0, "all_pass": false,
+        });
+        let r = judged_row(&v).unwrap();
+        assert_eq!((r.n_passed, r.n_criteria), (None, Some(10)));
+        assert_eq!((r.points_passed, r.points_max), (Some(7.5), Some(10.0)));
+        assert_eq!(r.frac, Some(0.75));
+        let v = serde_json::json!({
+            "task_id": "t2", "mode": "seq", "k": 1, "label": "seq1", "run_id": "ns/t2/seq1",
+            "chosen_is_base": false, "n_passed": 3, "n_criteria": 4, "all_pass": false,
+        });
+        let r = judged_row(&v).unwrap();
+        assert_eq!((r.n_passed, r.n_criteria), (Some(3), Some(4)));
+        assert_eq!((r.points_passed, r.points_max), (Some(3.0), Some(4.0)));
+        let (b, frac) = base_row(&serde_json::json!({
+            "task": "t1", "label": "base", "run_id": "ns/t1/base",
+            "score": {"n_passed": 2.25, "n_criteria": 3, "all_pass": false},
+        }));
+        assert_eq!(
+            (b.n_passed, b.points_passed, b.points_max),
+            (None, Some(2.25), Some(3.0))
+        );
+        assert_eq!(frac, Some(0.75));
     }
 
     #[test]

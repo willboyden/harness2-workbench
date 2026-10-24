@@ -222,6 +222,12 @@ pub static ROUTES: &[RouteDef] = &[
     },
     RouteDef {
         method: Method::GET,
+        path: "/api/v1/profiles/{name}/check",
+        access: V,
+        handler: || get(admin::check_profile),
+    },
+    RouteDef {
+        method: Method::GET,
         path: "/api/v1/secrets",
         access: A,
         handler: || get(admin::list_secrets),

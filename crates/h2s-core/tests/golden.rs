@@ -111,6 +111,8 @@ fn report_matches_upstream_summarise_and_render() {
                     graded,
                     error: String::new(),
                     metric: r["metric"].as_str().map(str::to_owned),
+                    points_passed: passed,
+                    points_max: criteria,
                 }
             })
             .collect();

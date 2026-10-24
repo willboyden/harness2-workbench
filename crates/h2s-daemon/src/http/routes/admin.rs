@@ -5,7 +5,7 @@ use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use h2s_api::{
     AuditEvent, AuditOutcome, AuditVerification, CreateTokenRequest, ErrorBody, ModelProfile, Page,
-    SecretInfo, SetSecretRequest, TokenCreated, TokenInfo,
+    ProfileCheck, SecretInfo, SetSecretRequest, TokenCreated, TokenInfo,
 };
 use http::StatusCode;
 use serde::Deserialize;
@@ -45,6 +45,35 @@ pub async fn list_profiles(
         out.push(with_secret_infos(&state, p).await?);
     }
     Ok(Json(out))
+}
+
+/// What jobs with a profile would lack: `h2s_core::env::profile_warnings` and the referenced
+/// secrets without a value (job creation refuses those with 422).
+#[utoipa::path(get, path = "/api/v1/profiles/{name}/check", tag = "profiles",
+    params(("name" = String, Path, description = "Profile name")),
+    responses((status = 200, body = ProfileCheck), (status = "default", description = "Error", body = ErrorBody)))]
+pub async fn check_profile(
+    _auth: Auth<ViewerRole>,
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<ProfileCheck>, ApiError> {
+    check_name("name", h2s_core::names::profile_name(&name))?;
+    let n = name.clone();
+    let profile = state
+        .db
+        .call(move |c| crate::db::profiles::get(c, &n))
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("no profile named {name}")))?;
+    let mut missing_secrets = Vec::new();
+    for secret in crate::db::profiles::referenced_secrets(&profile) {
+        if !state.secrets.info(&secret).await?.set {
+            missing_secrets.push(secret);
+        }
+    }
+    Ok(Json(ProfileCheck {
+        warnings: h2s_core::env::profile_warnings(&profile),
+        missing_secrets,
+    }))
 }
 
 /// Create or replace a profile.

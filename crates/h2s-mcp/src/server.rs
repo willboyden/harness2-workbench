@@ -11,8 +11,8 @@ use std::{
 use h2s_api::{
     AuditSession, BenchmarkStatus, Comparison, CostEstimate, DoctorReport, Experiment,
     ExportBundle, FileContent, FileEntry, HarnessDiff, HarnessTree, Job, JobResult, JobSpec,
-    JobStatus, LibraryDomain, LogChunk, Manifest, ModelProfile, Page, Principal, Role, ScoreReport,
-    Scores, SplitInfo, SystemInfo, TaskDetail, TaskRow, ValidationReport,
+    JobStatus, LibraryDomain, LogChunk, Manifest, ModelProfile, Page, Principal, ProfileCheck,
+    Role, ScoreReport, Scores, SplitInfo, SystemInfo, TaskDetail, TaskRow, ValidationReport,
 };
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
@@ -36,9 +36,9 @@ use crate::{
         AuditSessionInput, BridgeInput, CheckInput, CompareInput, CreateExperimentInput, DemoInput,
         DiffInput, DoctorInput, EstimateInput, ExperimentInput, ExportInput, HarnessInput,
         InstallInput, JobInput, JobLogInput, JudgeInput, ListExperimentsInput, ListJobsInput,
-        ListTasksInput, MAX_WAIT_SECS, NoArgs, PipelineInput, PreviewInput, ReportInput,
-        RolloutFileInput, RolloutFilesInput, RunInput, SetupInput, SplitInput, SweepInput,
-        TaskInput, UpdateExperimentInput, ValidateInput, WaitInput,
+        ListTasksInput, MAX_WAIT_SECS, NoArgs, PipelineInput, PreviewInput, ProfileInput,
+        ReportInput, RolloutFileInput, RolloutFilesInput, RunInput, SetupInput, SplitInput,
+        SweepInput, TaskInput, UpdateExperimentInput, ValidateInput, WaitInput,
     },
     prompts, resources,
     schema::{Args, input_schema},
@@ -532,6 +532,34 @@ impl H2sMcp {
     ) -> rmcp::model::CallToolResult {
         self.get_json::<Vec<ModelProfile>>(&ctx, &["profiles"], &[], Role::Viewer, "")
             .await
+    }
+
+    #[tool(
+        name = "check_profile",
+        title = "Check a model profile",
+        description = d::CHECK_PROFILE,
+        input_schema = input_schema::<ProfileInput>(),
+        annotations(
+            title = "Check a model profile",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn check_profile(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Args(input): Args<ProfileInput>,
+    ) -> rmcp::model::CallToolResult {
+        self.get_json::<ProfileCheck>(
+            &ctx,
+            &["profiles", &input.profile, "check"],
+            &[],
+            Role::Viewer,
+            "",
+        )
+        .await
     }
 
     // ----------------------------------------------------------------------- experiments
