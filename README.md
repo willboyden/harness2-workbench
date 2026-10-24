@@ -73,16 +73,17 @@ and review; the `Co-Authored-By` trailers of the commits record which.
 | REST API: 49 operations, OpenAPI 3.1 | Implemented | verified live (curl against a real server and the real demo) | [API.md](docs/API.md) |
 | Sign-in with API tokens and browser sessions | Implemented | verified live | roles viewer < operator < admin; [ADR 0008](docs/adr/0008-api-tokens-and-sessions.md) |
 | Single sign-on through a trusted reverse proxy | Implemented | verified live with simulated proxy headers; not with a real SSO proxy | headers plus a shared secret; a repeated identity header is refused; [ADMIN-GUIDE](docs/ADMIN-GUIDE.md#63-proxy-sso-mode) |
-| Host, CSRF and Origin protection; strict security headers | Implemented | verified live | no CORS, ever; a repeated `Host` header is refused |
-| Abuse limits: failed-authentication throttle (60 a minute per client), connection cap per address, event-stream cap per principal, job-log cap, free-disk floor | Implemented | verified live by the author on 2026-10-24 against a scratch server (job output from a stand-in harness2 script) | no general request-rate limit; [THREAT-MODEL](docs/THREAT-MODEL.md) rows D1 and D3 |
+| Host, CSRF and Origin protection; strict security headers | Implemented | verified live | no CORS, ever; a repeated `Host` or `Origin` header is refused; behind an `https` public URL only https origins pass |
+| Abuse limits: failed-authentication throttle (60 a minute per client), connection cap per address, event-stream cap per principal, job-log cap, free-disk floor | Implemented | verified live by the author on 2026-10-24 against a scratch server (job output from a stand-in harness2 script) | no general request-rate limit; the limiters are kept apart per proxy peer; [THREAT-MODEL](docs/THREAT-MODEL.md) rows D1, D3 and S1 |
+| Bounded reads of what jobs write: files opened without blocking, per-request read budgets, cancellation, 64 MiB response cap, about 1 MiB log pages | Implemented | verified live by the author on 2026-10-24 against scratch servers (a FIFO swapped over `summary.json` 9 million times while tasks were listed; 1 TiB and 32 GiB sparse files; a 262 MB log); a negative control against the earlier code was not run | a hostile experiment can still make results views slow or refused (`413`), and a changed sweep can be shown as it was for one refresh; [THREAT-MODEL](docs/THREAT-MODEL.md) row T3 |
 | Write-only secrets; best-effort redaction of logs, errors and audit | Implemented | fakes only for redaction (stub processes print planted secrets); set/list verified live | not encrypted at rest; a value a job transforms is not caught; every viewer reads job logs; the server and the egress proxy refuse `/proc` reads by a same-user job (verified live), the database file stays readable to it |
-| Hash-chained audit log | Implemented | verified live (verification; an edit to a copy detected) | not tamper-proof: anyone who can write the data directory, host-mode jobs included, can rewrite the whole chain; failed authentications are recorded at most 10 a minute per client; [THREAT-MODEL](docs/THREAT-MODEL.md) |
+| Hash-chained audit log | Implemented | verified live (verification; an edit to a copy detected) | not tamper-proof: anyone who can write the data directory, host-mode jobs included, can rewrite the whole chain; failed authentications are recorded at most 10 a minute per client and refused requests 10 a minute per principal (job starts and cancels are not limited); actors name their kind (`token:<name>`, `proxy:<user>`); [THREAT-MODEL](docs/THREAT-MODEL.md) |
 | Job engine: queue, live logs over SSE, cancel, timeout, budget guard, restart recovery | Implemented | verified live for queueing, SSE, cancelling a queued job and, with a stand-in harness2 script, restart recovery after `kill -9`, the log cap and the free-disk floor; fakes only for running-job cancel, timeout and budget | stub executables stand in for harness2 |
 | Managed harness2 install (pinned commit) or an existing checkout | Implemented | verified live | a few seconds with warm caches; only the tested commit can be installed unless an administrator sets `paths.allow_untested_harness2_rev` |
 | Free demo workflow (`harness2-demo`) | Implemented | verified live (real harness2) | also through MCP |
 | Benchmark `check` and `setup` | Implemented | `check` verified live (failure path on an uninstalled benchmark); `setup` against recorded dry-run output only | real setup is network-heavy and unverified |
 | Sweeps: `preview`, `run`, `judge`, `report`, `split`, `pipeline` | Implemented | fakes only | parsers checked against recorded harness2 output and output of upstream's own code run offline |
-| Browsing results: tasks, harness trees, diffs, exports, rollouts, libraries, improver audit, comparisons with a sign test, manifests | Implemented | verified live on the demo; JobBench, LAB and WorkBuddy layouts against recorded fixtures only | read-only, path-checked |
+| Browsing results: tasks, harness trees, diffs, exports, rollouts, libraries, improver audit, comparisons with a sign test, manifests | Implemented | verified live on the demo; JobBench, LAB and WorkBuddy layouts against recorded fixtures only | read-only, path-checked, bounded (row above); a sweep list shows at most the newest 200 sweeps of an experiment |
 | Cost estimates | Implemented | verified live (the arithmetic) | judging and retries excluded |
 | Model profiles: Vertex AI | Implemented | fakes only | [MODELS](docs/MODELS.md) |
 | Model profiles: OpenAI-compatible endpoints (LiteLLM, vLLM, SGLang, Ollama) | Implemented | fakes only; compatibility read from upstream sources | open questions listed |
@@ -216,10 +217,11 @@ effect run commands as the server's user, and that user owns the Workbench's dat
 read the database (stored secrets, token hashes) and rewrite the audit chain. Secrets are plain text in
 a 0600 database; redaction of logs is best effort; the audit chain is a SHA-256 hash chain that is
 only as good as the head hash you keep elsewhere (not tamper-proof); MCP agents are prompt-injectable,
-which is why MCP cannot write profiles, secrets or tokens. An independent review of the code by a
-separate AI agent found issues; their fixes are in this revision
-([ADMIN-GUIDE §17](docs/ADMIN-GUIDE.md#17-what-changed-with-the-security-review)) and have not been
-reviewed independently a second time. No human penetration test has been done. Read
+which is why MCP cannot write profiles, secrets or tokens. Two independent reviews of the
+code by a separate AI agent found issues; the second, on 2026-10-24, confirmed the first round's
+fixes (some are partial or by design, as documented) and found ten more, which are fixed in this
+revision ([ADMIN-GUIDE §17](docs/ADMIN-GUIDE.md#17-what-changed-with-the-security-review)); **those
+last fixes have not been re-reviewed independently**. No human penetration test has been done. Read
 [THREAT-MODEL.md](docs/THREAT-MODEL.md) for the assets, trust boundaries, a STRIDE analysis with the
 code that implements each control, and the residual risks in plain words. Report vulnerabilities
 privately as described in [SECURITY.md](SECURITY.md).
