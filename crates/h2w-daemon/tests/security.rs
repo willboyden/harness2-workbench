@@ -214,7 +214,7 @@ async fn unsafe_methods_need_the_csrf_header_and_a_same_origin() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn https_deployments_accept_only_https_origins_and_one_origin_header() {
     let t = TestServer::start_with(|s| {
-        s.file.server.public_url = "https://studio.example.com".into();
+        s.file.server.public_url = "https://workbench.example.com".into();
     })
     .await;
     let port = t.port();
@@ -233,11 +233,11 @@ async fn https_deployments_accept_only_https_origins_and_one_origin_header() {
     let https = format!("https://127.0.0.1:{port}");
     let http = format!("http://127.0.0.1:{port}");
     for (origins, status) in [
-        (vec!["https://studio.example.com".to_owned()], 200),
+        (vec!["https://workbench.example.com".to_owned()], 200),
         (vec![https.clone()], 200),
         (vec![http.clone()], 403),
         (vec![https.clone(), https.clone()], 403),
-        (vec!["https://studio.example.com".to_owned(), http], 403),
+        (vec!["https://workbench.example.com".to_owned(), http], 403),
     ] {
         let raw = raw_http(addr, login(origins.clone()).as_bytes()).await;
         assert_eq!(status_of(&raw), status, "{origins:?}: {raw}");
