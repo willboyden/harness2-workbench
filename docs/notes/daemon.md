@@ -121,7 +121,10 @@ Keys beyond §11 (all optional, defaults shown):
 ## Authentication and authorization
 
 - Order: `Authorization: Bearer` (a malformed header is 401, never a fall-through), then the
-  `h2s_session` cookie, then (proxy mode) the proxy headers. Tokens keep working in proxy mode.
+  session cookie, then (proxy mode) the proxy headers. Tokens keep working in proxy mode.
+- The session cookie is `h2s_session` (HttpOnly, SameSite=Strict, Path=/, no Domain). When
+  `public_url` is `https` it is `__Host-h2s_session` and `Secure`: browsers then refuse a
+  cookie of that name set by a sibling subdomain, and a plain `h2s_session` cookie is ignored.
 - A presented token must be exactly `h2s_` + 8 of `[a-z0-9]` + `_` + 43 of `[A-Za-z0-9_-]`;
   anything else, including any non-ASCII character, is malformed (401), at login and as a bearer.
 - Sessions last `auth.session_ttl_hours` and never outlive their token; revoking a token ends its

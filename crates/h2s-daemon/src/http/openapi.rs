@@ -25,7 +25,8 @@ impl Modify for Security {
             "session",
             SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::with_description(
                 h2s_api::SESSION_COOKIE,
-                "Browser session from POST /api/v1/auth/login",
+                "Browser session from POST /api/v1/auth/login (named __Host-h2s_session when \
+                 the server's public URL is https)",
             ))),
         );
         let reqs = vec![

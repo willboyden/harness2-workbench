@@ -374,6 +374,63 @@ async fn login_attempts_are_rate_limited_per_client() {
     t.stop().await;
 }
 
+/// Behind HTTPS the session cookie carries the `__Host-` prefix (Secure, Path=/, no Domain:
+/// a sibling subdomain cannot plant one), and a plain `h2s_session` cookie is ignored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn https_deployments_use_a_host_prefixed_session_cookie() {
+    let t = TestServer::start_with(|s| {
+        s.file.server.public_url = "https://studio.example.com".into();
+    })
+    .await;
+    let r = t
+        .post("/api/v1/auth/login", None)
+        .json(&json!({ "token": t.viewer }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let set = r.headers()["set-cookie"].to_str().unwrap().to_owned();
+    assert!(set.starts_with("__Host-h2s_session="), "{set}");
+    for attr in ["HttpOnly", "SameSite=Strict", "Secure", "Path=/"] {
+        assert!(set.contains(attr), "{attr} missing: {set}");
+    }
+    assert!(!set.to_ascii_lowercase().contains("domain="), "{set}");
+    let pair = set.split(';').next().unwrap().to_owned();
+    let value = pair.split_once('=').unwrap().1.to_owned();
+    let with_cookie = |cookie: String| {
+        t.client
+            .get(t.url("/api/v1/auth/me"))
+            .header("cookie", cookie)
+            .send()
+    };
+    assert_eq!(with_cookie(pair.clone()).await.unwrap().status(), 200);
+    // The same session under the plain name is not accepted over HTTPS.
+    assert_eq!(
+        with_cookie(format!("h2s_session={value}"))
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    // Logout clears the prefixed cookie.
+    let r = t
+        .client
+        .post(t.url("/api/v1/auth/logout"))
+        .header("cookie", &pair)
+        .header("x-h2s-request", "1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let cleared = r.headers()["set-cookie"].to_str().unwrap();
+    assert!(
+        cleared.starts_with("__Host-h2s_session=;") && cleared.contains("Max-Age=0"),
+        "{cleared}"
+    );
+    assert_eq!(with_cookie(pair).await.unwrap().status(), 401);
+    t.stop().await;
+}
+
 async fn audit_rows(t: &TestServer) -> u64 {
     t.srv()
         .state

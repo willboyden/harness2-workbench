@@ -326,12 +326,30 @@ fn token_principal(rec: &TokenRecord, kind: PrincipalKind) -> Principal {
     }
 }
 
-/// The value of the session cookie, when present.
-pub(crate) fn session_cookie(headers: &http::HeaderMap) -> Option<String> {
+/// Name of the session cookie over HTTPS. The `__Host-` prefix makes browsers refuse it
+/// unless it is `Secure`, has `Path=/` and no `Domain`, so a sibling subdomain cannot plant
+/// ("toss") a session cookie for this host.
+pub const SECURE_SESSION_COOKIE: &str = "__Host-h2s_session";
+
+/// The session cookie's name: [`SECURE_SESSION_COOKIE`] when `public_url` is `https`, else
+/// `h2s_session` (`__Host-` cookies need `Secure`, which browsers drop over plain HTTP).
+#[must_use]
+pub fn session_cookie_name(public_https: bool) -> &'static str {
+    if public_https {
+        SECURE_SESSION_COOKIE
+    } else {
+        h2s_api::SESSION_COOKIE
+    }
+}
+
+/// The value of the session cookie named `name`, when present (a cookie under any other
+/// name, the plain `h2s_session` included when the server uses the `__Host-` name, is
+/// ignored).
+pub(crate) fn session_cookie(headers: &http::HeaderMap, name: &str) -> Option<String> {
     for v in headers.get_all(http::header::COOKIE) {
         let Ok(s) = v.to_str() else { continue };
         for c in cookie::Cookie::split_parse(s).flatten() {
-            if c.name() == h2s_api::SESSION_COOKIE {
+            if c.name() == name {
                 return Some(c.value().to_owned());
             }
         }
@@ -384,7 +402,7 @@ async fn resolve(
             }),
         };
     }
-    if let Some(value) = session_cookie(headers) {
+    if let Some(value) = session_cookie(headers, session_cookie_name(state.cfg.public_https)) {
         let hash = crate::auth::session_hash(&value).ok_or(AuthFailure::SessionInvalid)?;
         let now = now_unix();
         let rec = state
@@ -672,11 +690,23 @@ mod tests {
             http::header::COOKIE,
             "a=1; h2s_session=abc; b=2".parse().unwrap(),
         );
-        assert_eq!(session_cookie(&h).as_deref(), Some("abc"));
+        assert_eq!(session_cookie(&h, "h2s_session").as_deref(), Some("abc"));
         let mut h = http::HeaderMap::new();
         h.append(http::header::COOKIE, "a=1".parse().unwrap());
         h.append(http::header::COOKIE, "h2s_session=zz".parse().unwrap());
-        assert_eq!(session_cookie(&h).as_deref(), Some("zz"));
+        assert_eq!(session_cookie(&h, "h2s_session").as_deref(), Some("zz"));
+        // Over HTTPS only the __Host- name counts.
+        assert_eq!(session_cookie(&h, SECURE_SESSION_COOKIE), None);
+        h.append(
+            http::header::COOKIE,
+            "__Host-h2s_session=hh".parse().unwrap(),
+        );
+        assert_eq!(
+            session_cookie(&h, SECURE_SESSION_COOKIE).as_deref(),
+            Some("hh")
+        );
+        assert_eq!(session_cookie_name(true), "__Host-h2s_session");
+        assert_eq!(session_cookie_name(false), "h2s_session");
     }
 
     #[tokio::test]
