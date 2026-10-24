@@ -1,6 +1,6 @@
 [package]
 name = "h2s-api"
-description = "Wire types shared by the Harness² Studio server, web UI and MCP server (LOCKED contract)"
+description = "Wire types shared by the Harness² Studio server, web UI and MCP server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

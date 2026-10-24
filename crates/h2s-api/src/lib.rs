@@ -1,8 +1,8 @@
 //! Wire types shared by every Harness² Studio component.
 //!
-//! **This crate is the LOCKED contract** between the server (`h2s-daemon`), the web UI
-//! (`h2s-web`) and the MCP server (`h2s-mcp`). Changes after the initial fan-out are
-//! additive only and must be recorded in `docs/ARCHITECTURE.md` §9 (contract addenda).
+//! **This crate is the contract** between the server (`h2s-daemon`), the web UI (`h2s-web`)
+//! and the MCP server (`h2s-mcp`). Changes are additive only and are recorded in
+//! `docs/ARCHITECTURE.md` §16 (contract addenda).
 //!
 //! Conventions (see `docs/ARCHITECTURE.md` §4):
 //! - JSON field names are `snake_case`; enums serialize as `snake_case` strings.

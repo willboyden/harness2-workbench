@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# commit-msg: require a Conventional Commits subject line (docs/CONTRIBUTING.md):
+# commit-msg: require a Conventional Commits subject line (CONTRIBUTING.md):
 #   <type>(<optional scope>)!?: <description>
 # types: build chore ci docs feat fix perf refactor revert security style test
 set -u

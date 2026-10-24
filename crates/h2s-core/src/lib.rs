@@ -1,8 +1,8 @@
 //! Harness² Studio domain logic, free of any server or UI framework.
 //!
-//! **The public signatures in this crate are a LOCKED interface** (docs/ARCHITECTURE.md §6).
-//! `h2s-daemon` codes against them while they are implemented. Changes are additive only and
-//! go through the coordinator.
+//! **The public signatures in this crate are a stable interface** (docs/ARCHITECTURE.md §6)
+//! that `h2s-daemon` codes against. Changes are additive only and are recorded in
+//! `docs/ARCHITECTURE.md` §16.
 //!
 //! What lives here:
 //! - [`cli`]: the exact argv for every harness2 command, from validated API types.

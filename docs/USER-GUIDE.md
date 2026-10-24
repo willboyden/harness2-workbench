@@ -464,7 +464,7 @@ smallest role it needs, and keep MCP agents on **viewer** tokens unless they mus
 
 Every sign-in, job start and cancel, and every change to experiments, profiles, secrets and tokens is
 appended to a SHA-256 hash chain; values and request bodies are never recorded. **Verify the chain**
-re-walks it (*The chain is intact: all 28 entries link correctly* in this picture). Treat that as
+re-walks it (*The chain is intact: all N entries link correctly*, with N the number of records). Treat that as
 evidence of accidental or casual edits, **not as a tamper-proof record**: anyone who can write the
 server's data directory, host-mode jobs included, can rewrite the whole chain and the check will
 still pass. Keep the head hash somewhere the server's user cannot write

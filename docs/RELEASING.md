@@ -13,6 +13,20 @@ therefore run only when the repository variable `CODE_SCANNING_ENABLED` is `true
 `gh variable set CODE_SCANNING_ENABLED --body true` once the repository is public. Tag the first
 release only after that.
 
+When the repository becomes public, also turn on what the governance files promise: private
+vulnerability reporting (SECURITY.md), Discussions (SUPPORT.md), branch protection for `main`
+(CONTRIBUTING.md; with a single code owner, decide whether code-owner review is required, since it
+blocks your own pull requests), and create the `triage` label the issue forms use.
+
+## Build artifacts
+
+Publish only what CI builds. A binary or WebAssembly bundle built on your machine embeds your
+paths (`/home/<you>/...`, from panic locations and debug info); if you ever must, build with
+`RUSTFLAGS="--remap-path-prefix=$HOME=/build --remap-path-prefix=$PWD=/src"`. Before the first
+release, add the third-party licence texts to the release archives and both images (for example
+with `cargo-about`, pinned and cooldown-checked like any other tool): the archives carry LICENSE
+and NOTICE, but not the licences of the crates compiled in.
+
 ## Checklist
 
 1. **Changelog.** Move the *Unreleased* entries of [CHANGELOG.md](../CHANGELOG.md) under a new
