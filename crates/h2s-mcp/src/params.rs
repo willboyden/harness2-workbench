@@ -110,6 +110,14 @@ pub(crate) struct ExperimentInput {
 impl ToolInput for ExperimentInput {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ProfileInput {
+    /// Model profile name (see list_profiles).
+    pub(crate) profile: String,
+}
+
+impl ToolInput for ProfileInput {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CreateExperimentInput {
     #[serde(flatten)]
     pub(crate) request: CreateExperimentRequest,

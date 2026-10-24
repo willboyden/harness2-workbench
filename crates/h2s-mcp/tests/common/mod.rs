@@ -483,6 +483,11 @@ impl Studio {
             .await;
         self.json(get_route(&api("/profiles"), token), profiles())
             .await;
+        self.json(
+            get_route(&api("/profiles/local/check"), token),
+            json!({"warnings": [], "missing_secrets": []}),
+        )
+        .await;
         self.json(get_route(&api("/splits"), token), splits()).await;
         self.json(
             get_route(&api("/experiments"), token),

@@ -676,6 +676,13 @@ pub struct JudgedRow {
     /// `metric` unit from the judge (`points`, `criteria`), when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metric: Option<String>,
+    /// Points earned exactly as the judge wrote them. JobBench's weighted judging writes
+    /// fractional points, which `n_passed` cannot hold (it is then empty).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points_passed: Option<f64>,
+    /// Points available exactly as the judge wrote them (see `points_passed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points_max: Option<f64>,
 }
 
 /// One row of `base_judged.json` (a reference execution, scored with `--bases`).
@@ -698,6 +705,13 @@ pub struct BaseJudgedRow {
     /// Every criterion passed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all_pass: Option<bool>,
+    /// Points earned exactly as the judge wrote them (fractional for JobBench's weighted
+    /// judging, when `n_passed` is empty).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points_passed: Option<f64>,
+    /// Points available exactly as the judge wrote them (see `points_passed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points_max: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

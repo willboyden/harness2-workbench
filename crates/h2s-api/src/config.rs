@@ -162,6 +162,19 @@ pub struct SecretInfo {
     pub updated_at: Option<String>,
 }
 
+/// `GET /api/v1/profiles/{name}/check`: what jobs with this profile would lack.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ProfileCheck {
+    /// What the profile cannot do (no judge model, a judge LAB does not recognise, WorkBuddy
+    /// without Vertex Gemini, ...). Jobs still start; harness2 may then refuse or skip work.
+    pub warnings: Vec<String>,
+    /// Referenced secrets with no value (neither stored nor `H2S_SECRET_<NAME>`). Jobs with
+    /// this profile are refused (422) until they are set.
+    pub missing_secrets: Vec<String>,
+}
+
 /// Body of `PUT /api/v1/secrets/{name}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

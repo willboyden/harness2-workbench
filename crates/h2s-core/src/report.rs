@@ -250,6 +250,8 @@ mod tests {
             graded: frac.is_some(),
             error: String::new(),
             metric: None,
+            points_passed: None,
+            points_max: None,
         }
     }
 

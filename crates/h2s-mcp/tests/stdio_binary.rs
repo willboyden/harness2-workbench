@@ -49,7 +49,7 @@ async fn the_binary_serves_mcp_over_stdio() {
     let client = TestClient::default().serve(transport).await.unwrap();
 
     let tools = client.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 41);
+    assert_eq!(tools.len(), 42);
     let info = call(&client, "server_info", json!({})).await;
     assert_eq!(payload(&info)["principal"]["name"], "alice");
     let demo = call(&client, "run_demo", json!({"experiment": EXP})).await;

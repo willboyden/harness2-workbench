@@ -227,12 +227,13 @@ HTTP, prompting once for the token (stored by VS Code's secret storage):
 
 ## 4. What agents get
 
-**41 tools** — the 39 of ARCHITECTURE.md §13 plus `list_splits` and `update_experiment`
+**42 tools** — the 39 of ARCHITECTURE.md §13 plus `list_splits`, `update_experiment` and (contract
+addendum v1.2) `check_profile`
 (§16, v1.1). Each is one REST capability; the role is the minimum the server requires.
 
 | Family | Tools | Role |
 |---|---|---|
-| Status | `server_info`, `doctor`, `list_benchmarks`, `list_profiles` | viewer (`doctor` refresh: operator) |
+| Status | `server_info`, `doctor`, `list_benchmarks`, `list_profiles`, `check_profile` | viewer (`doctor` refresh: operator) |
 | Experiments | `list_experiments`, `get_experiment`, `get_manifest`, `list_splits` | viewer |
 | | `create_experiment`, `update_experiment` | operator |
 | Planning | `estimate_cost` | viewer |

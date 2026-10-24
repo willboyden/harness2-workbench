@@ -24,9 +24,10 @@ use wiremock::{
 };
 
 /// Every tool, sorted (tools/list sorts by name).
-const EXPECTED_TOOLS: [&str; 41] = [
+const EXPECTED_TOOLS: [&str; 42] = [
     "cancel_job",
     "check_benchmark",
+    "check_profile",
     "compare_sweeps",
     "create_experiment",
     "create_split",
@@ -98,6 +99,7 @@ fn cases() -> Vec<(&'static str, Value)> {
         ("setup_benchmark", json!({"bench": "lab", "dry_run": true})),
         ("check_benchmark", json!({"cell": cell()})),
         ("list_profiles", json!({})),
+        ("check_profile", json!({"profile": "local"})),
         ("list_experiments", json!({})),
         ("list_experiments", json!({"include_archived": true})),
         (
@@ -210,6 +212,7 @@ fn check_payload(tool: &str, args: &Value, p: &Value) {
         "setup_benchmark" => p["kind"] == "setup" && p["result"]["dry_run"] == true,
         "check_benchmark" => p["result"]["ready"] == true,
         "list_profiles" => p[0]["name"] == "local",
+        "check_profile" => p["missing_secrets"].as_array().is_some_and(Vec::is_empty),
         "list_experiments" => p[0]["name"] == EXP,
         "create_experiment" => p["name"] == "exp1",
         "get_experiment" => p["sweeps"][0]["id"] == SWEEP,
@@ -309,6 +312,7 @@ async fn tools_list_is_complete_described_and_annotated() {
         "doctor",
         "list_benchmarks",
         "list_profiles",
+        "check_profile",
         "list_experiments",
         "get_experiment",
         "get_manifest",

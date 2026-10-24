@@ -154,6 +154,7 @@ Unsafe methods (POST/PUT/PATCH/DELETE) require header `x-h2s-request: 1`.
 | GET | `/profiles` | viewer | | `Vec<ModelProfile>` |
 | PUT | `/profiles/{name}` | admin | `ModelProfile` | `ModelProfile` |
 | DELETE | `/profiles/{name}` | admin | | 204 (409 if an experiment pins it) |
+| GET | `/profiles/{name}/check` | viewer | | `ProfileCheck` (addendum v1.2) |
 | GET | `/secrets` | admin | | `Vec<SecretInfo>` |
 | PUT | `/secrets/{name}` | admin | `SetSecretRequest` | `SecretInfo` |
 | DELETE | `/secrets/{name}` | admin | | 204 |
@@ -473,3 +474,13 @@ every capability dropped, which cannot write `/home/node`. The runner image ther
 `HOME=/h2s/home`, a sticky world-writable directory in the throwaway container layer; the
 all-in-one image sets `HOME=/home/node` back for the server user. Custom runner images must give
 the job user a writable `HOME`.
+
+**v1.2 (2026-10-24) — raw judge points.** `JudgedRow` and `BaseJudgedRow` gain
+`points_passed`/`points_max: Option<f64>`, the points exactly as the judge wrote them (always set
+when present). `n_passed`/`n_criteria` stay integers and are empty when the value is fractional,
+as with JobBench's weighted judging; `frac` is computed from the raw values.
+
+**v1.2 (2026-10-24) — profile check.** `GET /api/v1/profiles/{name}/check` (viewer) returns
+`ProfileCheck { warnings, missing_secrets }`: `h2s_core::env::profile_warnings` and the referenced
+secrets with no value (stored or `H2S_SECRET_<NAME>`), which job creation refuses with 422.
+404 for an unknown profile. MCP tool `check_profile` (`profile`; read-only, viewer).

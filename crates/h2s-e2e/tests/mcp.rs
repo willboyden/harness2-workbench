@@ -24,6 +24,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "setup_benchmark",
     "check_benchmark",
     "list_profiles",
+    "check_profile",
     "list_experiments",
     "create_experiment",
     "get_experiment",

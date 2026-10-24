@@ -48,7 +48,7 @@ impl Modify for Security {
         root::healthz, root::readyz, root::metrics,
         auth::login, auth::logout, auth::me,
         system::info, system::doctor, system::benchmarks, system::openapi,
-        admin::list_profiles, admin::put_profile, admin::delete_profile,
+        admin::list_profiles, admin::put_profile, admin::delete_profile, admin::check_profile,
         admin::list_secrets, admin::put_secret, admin::delete_secret,
         admin::list_tokens, admin::create_token, admin::revoke_token,
         admin::list_audit, admin::verify_audit,
