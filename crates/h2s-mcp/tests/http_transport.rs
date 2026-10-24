@@ -490,3 +490,34 @@ async fn each_token_has_its_own_cap_on_concurrent_waits() {
     let again = call(&alice, "wait_for_job", short).await;
     assert_eq!(again.is_error, Some(false), "{}", text(&again));
 }
+
+#[tokio::test]
+async fn the_risk_acknowledgement_setting_reaches_http_handlers() {
+    let studio = Studio::start().await;
+    studio.mount_happy(TOKEN, "alice", "operator").await;
+    for allow in [false, true] {
+        let mcp = McpHttp::start(
+            &studio.url(),
+            HttpOptions {
+                allow_risk_acknowledgement: allow,
+                ..HttpOptions::default()
+            },
+        )
+        .await;
+        let client = mcp.client(TOKEN).await;
+        let info = payload(&call(&client, "server_info", json!({})).await);
+        assert_eq!(
+            info["mcp_server"]["policy"]["allow_risk_acknowledgement"],
+            allow
+        );
+        let run = call(
+            &client,
+            "start_run",
+            json!({"experiment": "e1", "cell": {"bench": "lab"},
+                   "options": {"k": 1, "modes": ["parallel"]}, "profile": "local",
+                   "acknowledge_risks": true}),
+        )
+        .await;
+        assert_eq!(run.is_error, Some(!allow), "{}", text(&run));
+    }
+}

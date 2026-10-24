@@ -59,6 +59,8 @@ pub struct HttpOptions {
     pub max_concurrent_requests: usize,
     /// Most concurrent waits (`wait_for_job`, or job tools with `wait_secs`) per API token.
     pub max_waits_per_token: usize,
+    /// Pass `acknowledge_risks=true` from MCP clients on to the server (off by default).
+    pub allow_risk_acknowledgement: bool,
 }
 
 /// Default for [`HttpOptions::max_concurrent_requests`].
@@ -72,6 +74,7 @@ impl Default for HttpOptions {
             max_body_bytes: 1024 * 1024,
             max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
             max_waits_per_token: DEFAULT_WAITS_PER_TOKEN,
+            allow_risk_acknowledgement: false,
         }
     }
 }
@@ -119,9 +122,12 @@ pub fn router(
         .with_cancellation_token(shutdown);
     // One limiter for every per-request handler, so the cap holds across requests.
     let waits = WaitLimiter::new(options.max_waits_per_token);
+    let allow_risk_acknowledgement = options.allow_risk_acknowledgement;
     let service = StreamableHttpService::new(
         move || {
-            Ok(H2sMcp::new(api.clone(), Credentials::PerRequest).with_wait_limiter(waits.clone()))
+            Ok(H2sMcp::new(api.clone(), Credentials::PerRequest)
+                .with_wait_limiter(waits.clone())
+                .with_risk_acknowledgement(allow_risk_acknowledgement))
         },
         Arc::new(NeverSessionManager::default()),
         config,
