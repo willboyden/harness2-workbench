@@ -554,6 +554,7 @@ async fn every_tool_happy_path_against_the_mock_server() {
             }
             JobSpec::Pipeline(p) => assert!(p.judge_bases),
             JobSpec::Demo(p) => assert_eq!((p.experiment.as_str(), p.k), (EXP, 2)),
+            JobSpec::InstallHarness2(p) => assert_eq!(p.rev, None, "always the tested commit"),
             _ => {}
         }
     }
@@ -711,6 +712,11 @@ async fn bad_arguments_are_tool_errors_and_never_reach_the_server() {
             "get_experiment",
             json!({"experiment": ".."}),
             "bad_request: invalid identifier \"..\"",
+        ),
+        (
+            "install_harness2",
+            json!({"rev": "0123456789abcdef0123456789abcdef01234567"}),
+            "unknown argument `rev` (allowed here: extras, reinstall, wait_secs)",
         ),
     ];
     for (tool, args, expected) in cases {

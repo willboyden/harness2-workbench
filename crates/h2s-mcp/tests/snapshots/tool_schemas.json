@@ -927,13 +927,13 @@
       "readOnlyHint": false,
       "title": "Install harness2 (admin)"
     },
-    "description": "Install or reinstall harness2 on the server (admin role): fetch google-research/harness2 at a pinned commit (rev; default the commit this Studio release was tested against), create its Python 3.12 environment and install it with extras (render is always installed; bridge adds the LiteLLM proxy start_bridge needs). Needs network access and takes minutes, no model spend. reinstall=true recreates the environment. Most job tools answer `unavailable` until this succeeds. Returns the queued job; follow with wait_for_job, then run doctor.",
+    "description": "Install or reinstall harness2 on the server (admin role): fetch google-research/harness2 at the commit this Studio release was tested against (MCP clients cannot choose another), create its Python 3.12 environment and install it with extras (render is always installed; bridge adds the LiteLLM proxy start_bridge needs). Needs network access and takes minutes, no model spend. reinstall=true recreates the environment. Most job tools answer `unavailable` until this succeeds. Returns the queued job; follow with wait_for_job, then run doctor.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "extras": {
           "default": [],
-          "description": "Optional extras: `render` (always installed) and `bridge` (the LiteLLM proxy `harness2-bridge` needs).",
+          "description": "Optional extras: render (always installed) and bridge (the LiteLLM proxy start_bridge needs).",
           "items": {
             "description": "Optional extras of the harness2 Python package.",
             "oneOf": [
@@ -955,13 +955,6 @@
           "default": false,
           "description": "Re-create the virtual environment even if harness2 is already installed.",
           "type": "boolean"
-        },
-        "rev": {
-          "description": "Full 40-hex commit of google-research/harness2. `None` = the commit this Studio\nrelease was tested against.",
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "wait_secs": {
           "default": 0,

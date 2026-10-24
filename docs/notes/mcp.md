@@ -258,6 +258,8 @@ addendum v1.2) `check_profile`
 - `wait_for_job` (and job tools with `wait_secs`) follow the server's job event stream, fall
   back to polling, and send MCP progress notifications (finished tasks / total, current task,
   with a heartbeat at least every 10 s) when the client sends a progress token.
+- `install_harness2` always installs the commit this Studio release was tested against: the
+  tool has no `rev` argument (security audit F13).
 - Units: percent (0..100) in reports and headlines (`get_report`, `get_experiment`); fractions
   (0..1) in judge rows, task rows and comparisons (`get_scores`, `list_tasks`, `get_task`,
   `compare_sweeps`). Ungraded is not zero.

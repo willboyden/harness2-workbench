@@ -935,7 +935,7 @@ impl H2sMcp {
     ) -> rmcp::model::CallToolResult {
         self.start_job(
             &ctx,
-            JobSpec::InstallHarness2(input.params),
+            JobSpec::InstallHarness2(input.params()),
             input.wait_secs,
         )
         .await

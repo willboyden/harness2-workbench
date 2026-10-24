@@ -287,8 +287,8 @@ all summaries and judge results. Use it to report how results were produced or t
 them.";
 
 pub(crate) const INSTALL_HARNESS2: &str = "Install or reinstall harness2 on the server (admin \
-role): fetch google-research/harness2 at a pinned commit (rev; default the commit this Studio \
-release was tested against), create its Python 3.12 environment and install it with extras \
+role): fetch google-research/harness2 at the commit this Studio release was tested against \
+(MCP clients cannot choose another), create its Python 3.12 environment and install it with extras \
 (render is always installed; bridge adds the LiteLLM proxy start_bridge needs). Needs network \
 access and takes minutes, no model spend. reinstall=true recreates the environment. Most job \
 tools answer `unavailable` until this succeeds. Returns the queued job; follow with \
