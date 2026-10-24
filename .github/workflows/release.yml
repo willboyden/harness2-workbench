@@ -50,7 +50,7 @@ jobs:
           name="harness2-studio-${GITHUB_REF_NAME}-${TARGET}"
           mkdir -p "pkg/${name}/bin"
           cp target/release/h2studio target/release/h2studio-mcp "pkg/${name}/bin/"
-          cp LICENSE README.md CHANGELOG.md SECURITY.md "pkg/${name}/"
+          cp LICENSE NOTICE README.md CHANGELOG.md SECURITY.md "pkg/${name}/"
           cp -r docs deploy "pkg/${name}/"
           tar -C pkg -czf "${name}.tar.gz" "${name}"
       - name: SBOM (CycloneDX)

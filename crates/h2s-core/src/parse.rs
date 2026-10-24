@@ -1,3 +1,6 @@
+// Parses the output formats of harness2 (https://github.com/google-research/harness2) at
+// commit 1cfe254, Copyright 2026 Google LLC, Apache License 2.0; see NOTICE.
+
 //! Typed results from harness2's output.
 //!
 //! Every parser is total: unexpected input yields `None`/defaults or

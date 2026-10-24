@@ -1,3 +1,7 @@
+// Derived from harness2 (https://github.com/google-research/harness2) at commit 1cfe254:
+// harness2/core/report.py, Copyright 2026 Google LLC, Apache License 2.0. Translated to Rust;
+// see NOTICE.
+
 //! Port of upstream `harness2/core/report.py`: judged rows -> the figure each benchmark
 //! reports, pick provenance, and upstream's NOTE/WARNING lines.
 //!
