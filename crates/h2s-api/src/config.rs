@@ -136,8 +136,9 @@ pub struct ModelProfile {
     /// Price assumptions for cost estimates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prices: Option<Prices>,
-    /// Hosts the jobs must reach (added to the container egress allowlist). Derived from
-    /// the endpoints when empty.
+    /// Hosts the jobs must reach; derived from the endpoints when empty. Informational: the
+    /// server does not add them to any allowlist. An administrator adds them to
+    /// `[egress].allow` (the egress proxy's allowlist) in the configuration.
     #[serde(default)]
     pub egress_hosts: Vec<String>,
     /// Secrets this profile references and whether each is set (response only).
