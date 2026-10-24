@@ -49,6 +49,16 @@ The mock sends the exact CSP and security headers of §9, enforces the CSRF head
 - `{mode}` path segments use `parallel` / `sequential`; `/jobs?status=` takes one value.
 - Downloads (manifest, `.tar.gz` export, judged rows) are plain same-origin links with
   `download`; report text and export JSON are offered as Blob downloads.
+- Judge rows (addendum v1.2): the task page shows `n_passed / n_criteria` (in the judge's
+  unit) and, when the judge wrote fractional points (JobBench's weighted judging leaves
+  `n_passed` empty), `points_passed / points_max points`, e.g. `7.5 / 10 points (75.0%)`
+  (`report::judge_count`, `format::num`: at most two decimals, no trailing zeros). The mock's
+  first JobBench task (parallel mode) has such a row.
+- Profile check (addendum v1.2): `GET /profiles/{name}/check` runs after a profile is saved
+  (Settings → Model profiles) and whenever the run wizard's profile changes. Missing secrets
+  come first ("Jobs will be refused until these secrets are set"; the link to Settings →
+  Secrets only for admins), warnings follow in a calm callout. The mock answers like the
+  server: viewer role, 422 for a malformed name, 404 `no profile named <name>`.
 
 ## Sign-in return path (`?next=`)
 
@@ -72,7 +82,9 @@ tab; the check runs on the decoded value.
 `export-button`; `job-row[data-job-id]`, `job-status` (text is exactly the status string),
 `job-log`, `job-cancel`; `toast`. Extra ids used by the UI's own checks include
 `confirm-dialog`, `confirm-accept`, `command-palette`, `create-experiment-dialog`,
-`experiment-create-submit`, `token-created`, `run-start`.
+`experiment-create-submit`, `token-created`, `run-start`, `profile-check` (with
+`profile-check-missing` and `profile-check-warnings` inside), `profile-check-result` (the
+card shown after a profile is saved).
 
 The four row hooks (`experiment-row`, `sweep-row`, `task-row`, `job-row`) and their
 `data-*` attributes sit on each row's header cell (`<th scope="row">`), not on the `<tr>`.

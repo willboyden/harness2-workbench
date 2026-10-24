@@ -15,6 +15,7 @@ use crate::components::icons::{Icon, icon};
 use crate::components::ui::{
     Card, EmptyState, ErrorPanel, Notice, PageHeader, Skeleton, Stat, Term,
 };
+use crate::components::widgets::ProfileCheckFor;
 use crate::logic::format;
 use crate::logic::jobs::{Tone, cell_label, modes_label};
 use crate::logic::urls::{api as paths, route};
@@ -303,6 +304,7 @@ fn CellStep(wiz: Wiz) -> impl IntoView {
                     })
                 />
                 <a class="small" href="/settings/profiles">"Manage profiles"</a>
+                <ProfileCheckFor profile=wiz.profile />
             </div>
         </div>
         <RadioCards

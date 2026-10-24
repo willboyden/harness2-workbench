@@ -1,8 +1,8 @@
 //! Domain widgets shared by several pages.
 
 use h2s_api::{
-    CheckLevel, DoctorReport, ExperimentKind, InstallParams, Job, JobSpec, Mode, ModeScore, Role,
-    SystemInfo,
+    CheckLevel, DoctorReport, ExperimentKind, InstallParams, Job, JobSpec, Mode, ModeScore,
+    ProfileCheck, Role, SystemInfo,
 };
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
@@ -10,9 +10,10 @@ use leptos_router::hooks::use_navigate;
 use super::icons::{Icon, icon};
 use super::ui::{Ago, Badge, Notice, ProgressBar, StatusBadge, Term};
 use crate::actions;
+use crate::api;
 use crate::logic::format;
 use crate::logic::jobs::{self, Tone};
-use crate::logic::urls::route;
+use crate::logic::urls::{api as paths, route};
 use crate::state::{session, toasts};
 
 pub(crate) fn mode_label(m: Mode) -> &'static str {
@@ -293,5 +294,86 @@ pub(crate) fn RecursionExplainer() -> impl IntoView {
                 </p>
             </div>
         </div>
+    }
+}
+
+/// What jobs with a profile would lack (`GET /profiles/{name}/check`, addendum v1.2). Missing
+/// secrets block every job (the server refuses them with 422), so they come first and say so;
+/// warnings are things harness2 may refuse or skip later, shown calmly.
+#[component]
+pub(crate) fn ProfileCheckNotes(check: ProfileCheck) -> impl IntoView {
+    let s = session();
+    let ProfileCheck {
+        warnings,
+        missing_secrets,
+    } = check;
+    let clean = warnings.is_empty() && missing_secrets.is_empty();
+    view! {
+        <div class="stack profile-check" data-testid="profile-check">
+            {(!missing_secrets.is_empty())
+                .then(|| {
+                    view! {
+                        <div data-testid="profile-check-missing">
+                            <Notice tone=Tone::Warning title="Jobs will be refused until these secrets are set">
+                                <p class="pill-row">
+                                    {missing_secrets.iter().map(|n| view! { <code>{n.clone()}</code> }).collect_view()}
+                                </p>
+                                {move || {
+                                    if s.can(Role::Admin) {
+                                        view! { <p><a href="/settings/secrets">"Set them under Settings → Secrets"</a></p> }.into_any()
+                                    } else {
+                                        view! { <p class="small">"An administrator sets them under Settings → Secrets."</p> }.into_any()
+                                    }
+                                }}
+                            </Notice>
+                        </div>
+                    }
+                })}
+            {(!warnings.is_empty())
+                .then(|| {
+                    view! {
+                        <div data-testid="profile-check-warnings">
+                            <Notice tone=Tone::Info title="What this profile cannot do">
+                                <ul>{warnings.iter().map(|w| view! { <li>{w.clone()}</li> }).collect_view()}</ul>
+                                <p class="small muted">"Jobs still start; harness2 may refuse or skip the work these affect."</p>
+                            </Notice>
+                        </div>
+                    }
+                })}
+            {clean
+                .then(|| {
+                    view! {
+                        <p class="small check-ok">
+                            {icon(Icon::Check)}
+                            " Nothing missing: jobs with this profile can start."
+                        </p>
+                    }
+                })}
+        </div>
+    }
+}
+
+/// [`ProfileCheckNotes`] for the profile named by a signal; nothing while it is empty.
+#[component]
+pub(crate) fn ProfileCheckFor(#[prop(into)] profile: Signal<String>) -> impl IntoView {
+    let check = LocalResource::new(move || {
+        let name = profile.get();
+        async move {
+            if name.is_empty() {
+                None
+            } else {
+                Some(api::get::<ProfileCheck>(&paths::profile_check(&name)).await)
+            }
+        }
+    });
+    move || {
+        match check.get() {
+        Some(Some(Ok(c))) => view! { <ProfileCheckNotes check=c /> }.into_any(),
+        Some(Some(Err(e))) => view! {
+            <p class="small muted" role="status">{format!("Could not check this profile: {}", e.message)}</p>
+        }
+        .into_any(),
+        _ => ().into_any(),
+    }
     }
 }
