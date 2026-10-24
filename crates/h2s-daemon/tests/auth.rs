@@ -474,6 +474,72 @@ async fn proxy_mode_maps_groups_to_roles() {
     t.stop().await;
 }
 
+/// A client value the proxy failed to strip must not pick the identity or add a group.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repeated_proxy_identity_headers_are_refused() {
+    let t = TestServer::start_with(|s| proxy_setup(s, "127.0.0.1")).await;
+    let base = || {
+        t.client
+            .get(t.url("/api/v1/auth/me"))
+            .header("x-h2s-proxy-secret", PROXY_SECRET)
+    };
+    let cases = [
+        (
+            "groups",
+            base()
+                .header("x-forwarded-user", "alice")
+                .header("x-forwarded-groups", "staff")
+                .header("x-forwarded-groups", "admins"),
+        ),
+        (
+            "user",
+            base()
+                .header("x-forwarded-user", "mallory")
+                .header("x-forwarded-user", "alice")
+                .header("x-forwarded-groups", "staff"),
+        ),
+        (
+            "secret",
+            base()
+                .header("x-h2s-proxy-secret", "something-else-entirely")
+                .header("x-forwarded-user", "alice")
+                .header("x-forwarded-groups", "staff"),
+        ),
+    ];
+    for (what, req) in cases {
+        let r = req.send().await.unwrap();
+        assert_eq!(r.status(), 401, "repeated {what} header");
+        assert_eq!(
+            r.json::<ErrorBody>().await.unwrap().error.code,
+            ErrorCode::Unauthorized
+        );
+    }
+    // One of each still works, and the refusals were audited with their reason.
+    let r = proxied(&t, "alice", "staff, admins", PROXY_SECRET).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.json::<Principal>().await.unwrap().role, Role::Admin);
+    let audit: Page<AuditEvent> = t
+        .get("/api/v1/audit?limit=100", Some(&t.admin))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let dup = audit
+        .items
+        .iter()
+        .filter(|e| {
+            e.action == "auth.failed"
+                && e.detail
+                    .as_deref()
+                    .is_some_and(|d| d.starts_with("proxy_duplicate_header"))
+        })
+        .count();
+    assert_eq!(dup, 3, "{:#?}", audit.items);
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn proxy_headers_from_untrusted_peers_are_refused() {
     let t = TestServer::start_with(|s| proxy_setup(s, "10.9.8.7/32")).await;

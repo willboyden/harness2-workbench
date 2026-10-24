@@ -97,6 +97,8 @@ environment variable `auth.proxy.secret_env` when the server starts.
 - Proxy mode roles: any `admin_groups` member is admin, else any `operator_groups` member is
   operator, else viewer when `viewer_groups` is empty or matches, else 403. Requests carrying the
   user header from an address outside `trusted_proxies`, or with a wrong shared secret, are 401.
+  So is a request in which the user, groups or secret header appears more than once: the proxy
+  must remove whatever the client sent under those names and set each exactly once.
 - `POST /jobs` needs at least operator, then `JobSpec::required_role()`. **Cancelling** a job
   needs the role that could start it (operator for most kinds, admin for install, setup and the
   bridge).

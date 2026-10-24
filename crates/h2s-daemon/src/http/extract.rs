@@ -187,6 +187,8 @@ pub enum AuthFailure {
     ProxyUntrusted,
     ProxySecret,
     ProxyUser,
+    /// The user, groups or secret header appears more than once.
+    ProxyDuplicate,
     ProxyNoRole,
     Unavailable,
 }
@@ -205,6 +207,7 @@ impl AuthFailure {
             AuthFailure::ProxyUntrusted => "proxy_untrusted",
             AuthFailure::ProxySecret => "proxy_secret",
             AuthFailure::ProxyUser => "proxy_user",
+            AuthFailure::ProxyDuplicate => "proxy_duplicate_header",
             AuthFailure::ProxyNoRole => "proxy_no_role",
             AuthFailure::Unavailable => "unavailable",
         }
@@ -376,6 +379,15 @@ fn proxy_principal(
     let p = &state.cfg.file.auth.proxy;
     if !meta.peer_is_trusted_proxy {
         return Err(AuthFailure::ProxyUntrusted);
+    }
+    // The proxy sets each of these once and strips what the client sent. A repeated header
+    // means a client value got through: taking the first user or the union of the groups
+    // would let it choose its identity or add itself to an admin group.
+    let repeated = [&p.user_header, &p.groups_header, &p.secret_header]
+        .into_iter()
+        .any(|name| headers.get_all(name.as_str()).iter().nth(1).is_some());
+    if repeated {
+        return Err(AuthFailure::ProxyDuplicate);
     }
     let presented = headers
         .get(p.secret_header.as_str())
