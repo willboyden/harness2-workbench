@@ -219,8 +219,10 @@ Keys beyond §11 (all optional, defaults shown):
   64 KiB with ` … [line truncated]`, at most `jobs.max_log_bytes` per job (see the table above),
   every line through the job's redactor (built from all
   stored and environment secrets plus the job's own), then path-masked: `<job>`, `<experiment>`,
-  `<experiments>`, `<harness2>`, `<data>`, `~` replace the server's absolute paths (failure
-  reasons too). The bridge's `HARNESS2_CODEX_API_KEY=` line is always replaced by the server
+  `<experiments>`, `<harness2>`, `<data>`, `~` replace the server's absolute paths, also inside
+  `file://` URLs. Failure reasons and the text a result carries from the job's output (check
+  failures, setup plans and notes, the report text, the next command, the preview header) are
+  masked the same way. The bridge's `HARNESS2_CODEX_API_KEY=` line is always replaced by the server
   itself, independently of the parser. Logs of jobs older than `jobs.log_retention_days` are
   deleted (the job rows stay).
 - **Event streams** (contract addendum v1.1): unnamed frames, one `JobEvent` JSON per `data:`;

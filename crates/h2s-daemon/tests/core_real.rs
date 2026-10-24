@@ -113,6 +113,54 @@ async fn check_jobs_parse_harness2_check_output() {
     t.stop().await;
 }
 
+/// Results carry text from the job's output: host paths in it are masked for viewers as in
+/// the log, `file://` URLs included.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn check_failures_and_logs_do_not_show_host_paths() {
+    let t = core_server().await;
+    let job: Job = t
+        .create_job(
+            &t.operator,
+            json!({"kind": "check", "params": {"cell": {"bench": "jb"}}}),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 30).await;
+    assert_terminal(&done, JobStatus::Failed);
+    let data = t.root.path().join("data").display().to_string();
+    match &done.result {
+        Some(JobResult::Check(c)) => {
+            assert_eq!(
+                c.failures,
+                vec![
+                    "<job>/runs is not writable".to_owned(),
+                    "see file://<job>/runs/check.html".to_owned()
+                ]
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    let log = full_log(&t, &job.id).await;
+    let text: Vec<&str> = log.iter().map(|l| l.text.as_str()).collect();
+    assert!(
+        text.contains(&"FAIL: see file://<job>/runs/check.html"),
+        "{text:#?}"
+    );
+    assert!(!text.iter().any(|l| l.contains(&data)), "{text:#?}");
+    let api = t
+        .get(&format!("/api/v1/jobs/{}", job.id), Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!api.contains(&data), "{api}");
+    t.stop().await;
+}
+
 fn pipeline_spec(experiment: &str, judge_bases: bool) -> serde_json::Value {
     json!({"kind": "pipeline", "params": {
         "experiment": experiment,

@@ -238,7 +238,7 @@ async fn execute(mgr: &Arc<JobManager>, live: &Arc<LiveJob>, pump: &Pump) -> Fin
                 harness2_managed: mgr.settings().paths.harness2_managed,
             };
             match mgr.backend().parse_step(step, &out) {
-                Ok(r) => r,
+                Ok(r) => r.map(|r| mask_result(r, &ctx.masker)),
                 Err(e) => {
                     ctx.pump
                         .system(format!("could not read the result of {}: {e}", step.name))
@@ -350,6 +350,41 @@ async fn execute(mgr: &Arc<JobManager>, live: &Arc<LiveJob>, pump: &Pump) -> Fin
         finish = Finish::failed(format!("could not save the split: {e}"));
     }
     finish
+}
+
+/// Text a step's result carries from its output (check failures, setup plans and notes, a
+/// report, the next command, the preview header) is shown to every viewer: host paths in it
+/// are masked as in log lines (contract §9).
+fn mask_result(r: JobResult, m: &PathMasker) -> JobResult {
+    let one = |t: String| m.mask(&t).into_owned();
+    let all = |l: Vec<String>| -> Vec<String> {
+        l.into_iter().map(|t| m.mask(&t).into_owned()).collect()
+    };
+    match r {
+        JobResult::Check(mut c) => {
+            c.failures = all(c.failures);
+            JobResult::Check(c)
+        }
+        JobResult::Setup(mut c) => {
+            c.plan = all(c.plan);
+            c.notes = all(c.notes);
+            JobResult::Setup(c)
+        }
+        JobResult::Report(mut c) => {
+            c.text = one(c.text);
+            JobResult::Report(c)
+        }
+        JobResult::Run(mut c) => {
+            c.next = c.next.map(one);
+            c.record = c.record.map(one);
+            JobResult::Run(c)
+        }
+        JobResult::Preview(mut c) => {
+            c.header = one(c.header);
+            JobResult::Preview(c)
+        }
+        other => other,
+    }
 }
 
 fn set_step(live: &LiveJob, idx: usize, f: impl FnOnce(&mut JobStep)) {

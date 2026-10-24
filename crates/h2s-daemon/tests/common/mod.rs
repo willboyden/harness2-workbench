@@ -156,7 +156,16 @@ exec sleep 300
 "##;
 
 pub const CHECK_STUB: &str = r##"#!/bin/sh
-# Fake harness2-check (cli/check.py output); fails for experiments named *failcheck*.
+# Fake harness2-check (cli/check.py output); fails for experiments named *failcheck*, and
+# with host paths in its failures for the jb benchmark.
+for a in "$@"; do
+  if [ "$a" = jb ]; then
+    echo "FAIL: $HARNESS2_RUNS_DIR is not writable"
+    echo "FAIL: see file://$HARNESS2_RUNS_DIR/check.html"
+    echo "Setup incomplete: 2 issue(s). See docs/BENCHMARKS.md."
+    exit 1
+  fi
+done
 case "$HARNESS2_RUNS_DIR" in
   *failcheck*)
     echo "FAIL: dependencies/harvey-labs is missing; run harness2-setup lab"
