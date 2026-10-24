@@ -9,7 +9,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Clone)]
 pub struct ManifestInput {
     pub generated_at: String,
-    pub studio_version: String,
+    pub workbench_version: String,
     pub experiment: String,
     pub harness2_commit: Option<String>,
     pub dependency_pins: Vec<KeyValue>,
@@ -49,7 +49,7 @@ pub fn build(input: ManifestInput) -> Manifest {
     Manifest {
         schema_version: SCHEMA_VERSION,
         generated_at: input.generated_at,
-        studio_version: input.studio_version,
+        workbench_version: input.workbench_version,
         experiment: input.experiment,
         harness2_commit: input.harness2_commit,
         dependency_pins: sorted_pairs(input.dependency_pins),
@@ -91,7 +91,7 @@ mod tests {
     fn equal_inputs_give_equal_json() {
         let a = ManifestInput {
             generated_at: "2026-10-23T00:00:00Z".into(),
-            studio_version: "0.1.0".into(),
+            workbench_version: "0.1.0".into(),
             experiment: "e".into(),
             harness2_commit: Some(crate::TESTED_HARNESS2_COMMIT.into()),
             dependency_pins: vec![kv("opencode", "x"), kv("harvey-labs", "y")],

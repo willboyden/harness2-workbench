@@ -429,8 +429,8 @@ secret and never the key itself, judge and Codex endpoints, extra environment va
 literals or secret references, prices for the estimator, and egress hosts); **Delete** is refused
 while an experiment is pinned to the profile. What each field means, and what works with which
 benchmark and executor, is in [MODELS.md](MODELS.md). The *egress hosts* box is informational:
-the server does not add those hosts to the egress allowlist (the form's hint says it derives them;
-see the note in [section 14](#14-when-something-looks-wrong)).
+the server does not add those hosts to the egress allowlist (the form's hint says so too); an
+administrator adds them to `[egress] allow`.
 
 After you save, a card says what the profile still lacks (the **profile check**):
 

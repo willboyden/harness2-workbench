@@ -32,10 +32,10 @@ struct McpHttp {
 }
 
 impl McpHttp {
-    async fn start(studio_url: &str, options: HttpOptions) -> Self {
+    async fn start(workbench_url: &str, options: HttpOptions) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let api = ApiClient::new(studio_url, &ClientOptions::default()).unwrap();
+        let api = ApiClient::new(workbench_url, &ClientOptions::default()).unwrap();
         let shutdown = CancellationToken::new();
         let stop = shutdown.clone();
         tokio::spawn(async move { http::serve(listener, api, &options, stop).await });

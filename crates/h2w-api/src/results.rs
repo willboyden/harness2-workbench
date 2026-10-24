@@ -884,7 +884,7 @@ pub struct Manifest {
     pub schema_version: u32,
     /// When this was generated (RFC 3339, UTC).
     pub generated_at: String,
-    pub studio_version: String,
+    pub workbench_version: String,
     /// Experiment name (one HARNESS2_RUNS_DIR managed by the server).
     pub experiment: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
