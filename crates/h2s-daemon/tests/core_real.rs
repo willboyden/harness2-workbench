@@ -894,10 +894,29 @@ fn container_plans_use_fixed_hardening_and_numeric_users() {
             !argv.to_ascii_uppercase().contains("PROXY"),
             "no proxy configured: {argv}"
         );
-        // Values never reach argv: env vars travel by name.
-        for (k, v) in &step.env {
-            assert!(!argv.contains(&format!("{k}={v}")));
-        }
+        // The job's variables go through a private env file in the job directory: neither
+        // the runtime CLI's environment nor its argv hold them.
+        assert!(step.env.is_empty(), "{:?}", step.env);
+        assert!(
+            argv.contains(&format!(
+                "--env-file {}",
+                job_dir.join("container.env").display()
+            )),
+            "{argv}"
+        );
+        assert!(!argv.contains("HARNESS2_RUNS_DIR"), "{argv}");
+        let (_, env_file) = plan
+            .files
+            .iter()
+            .find(|(n, _)| n == "container.env")
+            .expect("the env file is planned");
+        assert!(
+            env_file
+                .lines()
+                .any(|l| l.starts_with("HARNESS2_RUNS_DIR=/h2s/")),
+            "{}",
+            env_file.as_str()
+        );
         if matches!(spec, h2s_api::JobSpec::Split(_)) {
             assert!(
                 argv.contains(&format!(
@@ -978,11 +997,15 @@ fn container_installs_plan_on_the_host_and_run_under_the_mount_point() {
         ] {
             assert!(argv.contains(must), "{must} missing in {argv}");
         }
-        // ... and the runtime CLI does not get it (it may talk to its daemon over TCP).
+        // ... and the runtime CLI does not get it (it may talk to its daemon over TCP), nor
+        // any other job variable: those are in the env file.
+        assert!(s.env.is_empty(), "{:?}", s.env);
         assert!(
-            s.env
-                .iter()
-                .all(|(n, _)| !n.to_ascii_uppercase().ends_with("_PROXY"))
+            argv.contains(&format!(
+                "--env-file {}",
+                job_dir.join("container.env").display()
+            )),
+            "{argv}"
         );
     }
     let init = plan.steps[0].args.join(" ");

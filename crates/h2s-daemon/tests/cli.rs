@@ -528,3 +528,169 @@ async fn jobs_cannot_read_the_server_environment() {
     assert!(!text.contains("environ: readable"), "{text}");
     assert!(!text.contains("canary: leaked"), "{text}");
 }
+
+/// Container jobs: the runtime CLI is started with the server's pass-through variables only.
+/// Profile variables and secret values reach the container through a 0600 `--env-file`,
+/// never the CLI's own environment (where `DOCKER_CONTEXT` and the like would steer it) or
+/// its command line. Measured with a fake `docker` on the server's PATH.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn container_jobs_get_their_environment_through_an_env_file() {
+    let e = env();
+    let out = e.root.join("fake-docker-out");
+    std::fs::create_dir_all(&out).unwrap();
+    let fakebin = e.root.join("fakebin");
+    std::fs::create_dir_all(&fakebin).unwrap();
+    let docker = format!(
+        "#!/bin/sh\n# test stub: a fake container runtime CLI that records what it was given\n\
+         OUT='{}'\n\
+         case \"$1\" in\n\
+           info) echo 'name=seccomp name=rootless'; exit 0 ;;\n\
+           run)\n\
+             env | sort > \"$OUT/cli-env.txt\"\n\
+             printf '%s\\n' \"$@\" > \"$OUT/argv.txt\"\n\
+             prev=''\n\
+             for a in \"$@\"; do\n\
+               if [ \"$prev\" = '--env-file' ]; then cp \"$a\" \"$OUT/env-file.txt\"; stat -c %a \"$a\" > \"$OUT/mode.txt\"; echo \"$a\" > \"$OUT/env-file-path.txt\"; fi\n\
+               prev=\"$a\"\n\
+             done\n\
+             echo 'Ready: lab/oc; 3 tasks.'\n\
+             exit 0 ;;\n\
+         esac\n\
+         exit 0\n",
+        out.display()
+    );
+    std::fs::write(fakebin.join("docker"), docker).unwrap();
+    std::fs::set_permissions(
+        fakebin.join("docker"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let h2 = e.root.join("harness2");
+    std::fs::create_dir_all(h2.join(".venv/bin")).unwrap();
+    std::fs::write(h2.join(".venv/bin/harness2"), "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::create_dir_all(e.config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &e.config,
+        format!(
+            "[paths]\ndata_dir = \"{}\"\nharness2_home = \"{}\"\nharness2_managed = false\n\
+             [isolation]\nmode = \"container\"\n[isolation.container]\nruntime = \"docker\"\n",
+            e.root.join("data").display(),
+            h2.display()
+        ),
+    )
+    .unwrap();
+    let token = e.init();
+    let path = format!("{}:/usr/bin:/bin", fakebin.display());
+    let mut c = cmd(&e.home);
+    c.args(["serve", "--config", e.config.to_str().unwrap()])
+        .env("H2S_LISTEN", "127.0.0.1:0")
+        .env("PATH", &path);
+    let (child, line) = spawn_until_line(c);
+    let url = line
+        .strip_prefix("h2studio listening on ")
+        .unwrap_or_else(|| panic!("unexpected first line {line:?}"))
+        .to_owned();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let secret = "secret-value-0123456789abcdef";
+    let put = |p: &str, body: serde_json::Value| {
+        client
+            .put(format!("{url}{p}"))
+            .bearer_auth(&token)
+            .header("x-h2s-request", "1")
+            .json(&body)
+            .send()
+    };
+    let r = put(
+        "/api/v1/secrets/DB_KEY",
+        serde_json::json!({"value": secret}),
+    )
+    .await
+    .unwrap();
+    assert!(r.status().is_success(), "{}", r.text().await.unwrap());
+    let r = put(
+        "/api/v1/profiles/cprof",
+        serde_json::json!({
+            "name": "cprof", "kind": "custom", "solver_model": "x/y",
+            "extra_env": [
+                {"name": "PROFILE_CANARY", "value": "profile-only-value"},
+                {"name": "X_TOKEN", "secret": "DB_KEY"}
+            ]
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(r.status().is_success(), "{}", r.text().await.unwrap());
+    let r = client
+        .post(format!("{url}/api/v1/jobs"))
+        .bearer_auth(&token)
+        .header("x-h2s-request", "1")
+        .json(&serde_json::json!({"kind": "check", "params": {"cell": {"bench": "lab"}, "profile": "cprof"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    let job: h2s_api::Job = r.json().await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let done = loop {
+        let j: h2s_api::Job = client
+            .get(format!("{url}/api/v1/jobs/{}", job.id))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if j.status.is_terminal() {
+            break j;
+        }
+        assert!(Instant::now() < deadline, "the job did not finish: {j:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    let status = tokio::task::spawn_blocking(move || stop(child))
+        .await
+        .unwrap();
+    assert!(status.success(), "{status:?}");
+    assert_eq!(done.status, h2s_api::JobStatus::Succeeded, "{done:?}");
+
+    let read = |n: &str| std::fs::read_to_string(out.join(n)).unwrap_or_default();
+    let cli_env = read("cli-env.txt");
+    assert!(!cli_env.is_empty(), "the fake runtime did not run");
+    for absent in [
+        "PROFILE_CANARY",
+        "profile-only-value",
+        "X_TOKEN",
+        secret,
+        "HARNESS2_RUNS_DIR",
+    ] {
+        assert!(
+            !cli_env.contains(absent),
+            "{absent} reached the runtime CLI's environment:\n{cli_env}"
+        );
+    }
+    assert!(
+        cli_env.contains(&format!("H2S_JOB_ID={}", job.id)),
+        "{cli_env}"
+    );
+    let argv = read("argv.txt");
+    assert!(argv.lines().any(|l| l == "--env-file"), "{argv}");
+    assert!(
+        !argv.contains(secret) && !argv.contains("profile-only-value"),
+        "{argv}"
+    );
+    let file = read("env-file.txt");
+    for present in [
+        "PROFILE_CANARY=profile-only-value".to_owned(),
+        format!("X_TOKEN={secret}"),
+        "HARNESS2_RUNS_DIR=/h2s/job/runs".to_owned(),
+    ] {
+        assert!(
+            file.lines().any(|l| l == present),
+            "{present} missing in:\n{file}"
+        );
+    }
+    assert_eq!(read("mode.txt").trim(), "600");
+    // The file lived in the job's private directory, which is gone with the job.
+    let used = read("env-file-path.txt");
+    assert!(!std::path::Path::new(used.trim()).exists(), "{used}");
+}

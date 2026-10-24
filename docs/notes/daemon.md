@@ -209,6 +209,15 @@ Keys beyond §11 (all optional, defaults shown):
   experiment at `/h2s/experiment`, the job files at `/h2s/job` (always read-only). Split jobs
   write their file into `<job dir>/out`, mounted at `/h2s/experiment` (they have no experiment),
   and the server moves it to `<data>/splits/<name>.json`.
+- **Environment**: every job variable (profile variables, secret values, `HARNESS2_RUNS_DIR`,
+  ...) is written as `NAME=VALUE` lines to `<job dir>/container.env` (0600, deleted with the job
+  directory) and passed with `--env-file`. The runtime CLI itself runs with the server's
+  pass-through variables, the runtime variables above and `H2S_JOB_ID` only: no profile
+  variable (which could steer it, e.g. `DOCKER_CONTEXT`) and no secret value reaches its
+  environment or command line. The file has one variable per line and no escapes, so a value
+  with a line break or NUL, or a variable longer than 64 KiB, fails the job with an error that
+  names the variable (never the value). The read-only job-files mount shows the file inside the
+  container, which receives the same variables anyway.
 - **Install inside the container**: with container isolation the install job runs in the runner
   image, so the venv points at the image's interpreter. `install::plan` inspects the checkout on
   the host; the server maps the host paths in its steps to `/h2s/harness2`.

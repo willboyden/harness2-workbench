@@ -51,6 +51,10 @@ pub struct ContainerSpec {
     pub mounts: Vec<Mount>,
     /// Variable NAMES passed through with `-e NAME` (values come from the runtime's env).
     pub env_names: Vec<String>,
+    /// Host path of a private (0600) file of `NAME=VALUE` lines passed with `--env-file`: the
+    /// job's environment, secret values included, which then never reach the runtime CLI's
+    /// own environment or command line. The server writes it into the job's directory.
+    pub env_file: Option<String>,
     /// Fixed settings passed as `-e NAME=VALUE` (the egress proxy URL). Never a secret: the
     /// value is on the runtime's command line, which local users can read.
     pub env_values: Vec<(String, String)>,
@@ -221,12 +225,14 @@ fn user_ok(u: &str) -> std::result::Result<(), &'static str> {
 
 /// `<runtime> run --rm --name h2s-job-<id> --label <JOB_LABEL>=<id> --cap-drop ALL
 /// --security-opt no-new-privileges --pids-limit N [--cpus] [--memory] --network NET
-/// [-v ...] [-e NAME ...] [-e NAME=VALUE ...] -w WORKDIR [--user U] <image> <program> <args...>`.
+/// [-v ...] [--env-file F] [-e NAME ...] [-e NAME=VALUE ...] -w WORKDIR [--user U] <image>
+/// <program> <args...>`.
 ///
 /// The returned argv starts with the runtime program. Refused: an unpinned or malformed
 /// image (including the `latest` tag), a job id outside `[A-Za-z0-9][A-Za-z0-9_.-]*`, a mount
 /// point other than the three fixed ones or used twice, a writable job-files mount, a host
-/// path that is not absolute or contains `:`, `,`, `..` or control characters, a fixed
+/// path (mount source or env file) that is not absolute or contains `:`, `,`, `..` or control
+/// characters, a fixed
 /// value with control characters (or one that repeats a passed-through name), the `host`
 /// network, a non-numeric user, non-positive limits, and NUL bytes anywhere. A numeric uid 0 is
 /// accepted for rootless runtimes (see [`ContainerSpec::user`]); `--cap-drop ALL` and
@@ -258,6 +264,12 @@ pub fn run_argv(spec: &ContainerSpec, program: &str, args: &[String]) -> Result<
         if point == JOBFILES_MOUNT && !m.read_only {
             err("mounts", "the job-files mount must be read-only");
         }
+    }
+    if spec.env_file.as_deref().is_some_and(|f| !host_path_ok(f)) {
+        err(
+            "env_file",
+            "must be an absolute host path without ':', ',', '..' or control characters",
+        );
     }
     if !spec.env_names.iter().all(|n| env_var_name_ok(n)) {
         err(
@@ -371,6 +383,10 @@ pub fn run_argv(spec: &ContainerSpec, program: &str, args: &[String]) -> Result<
             if m.read_only { ":ro" } else { "" }
         ));
     }
+    if let Some(f) = &spec.env_file {
+        argv.push("--env-file".into());
+        argv.push(f.clone());
+    }
     for n in &spec.env_names {
         argv.push("-e".into());
         argv.push(n.clone());
@@ -455,6 +471,7 @@ mod tests {
                 },
             ],
             env_names: vec!["HARNESS2_RUNS_DIR".into(), "OPENCODE_CONFIG".into()],
+            env_file: Some("/srv/h2s/jobs/j1/container.env".into()),
             env_values: vec![("HTTPS_PROXY".into(), "http://egress:3128".into())],
             network: "h2s-egress".into(),
             cpus: Some(4.0),
@@ -499,6 +516,8 @@ mod tests {
             "/srv/h2s/harness2:/h2s/harness2:ro",
             "-v",
             "/srv/h2s/jobs/j1:/h2s/job:ro",
+            "--env-file",
+            "/srv/h2s/jobs/j1/container.env",
             "-e",
             "HARNESS2_RUNS_DIR",
             "-e",
@@ -560,6 +579,18 @@ mod tests {
             (
                 "env_values",
                 Box::new(|s| s.env_values = vec![("OPENCODE_CONFIG".into(), "/x".into())]),
+            ),
+            (
+                "env_file",
+                Box::new(|s| s.env_file = Some("relative/container.env".into())),
+            ),
+            (
+                "env_file",
+                Box::new(|s| s.env_file = Some("/srv/../etc/passwd".into())),
+            ),
+            (
+                "env_file",
+                Box::new(|s| s.env_file = Some("/srv/a\nb".into())),
             ),
             ("mounts", Box::new(|s| s.mounts[0].host = "/a:/b".into())),
             ("mounts", Box::new(|s| s.mounts[0].host = "/a,b".into())),
