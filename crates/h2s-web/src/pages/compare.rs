@@ -28,8 +28,9 @@ pub(crate) fn Compare() -> impl IntoView {
     let a_q = query_param("a");
     let b_q = query_param("b");
     let set_query = query_setter();
-    let a = RwSignal::new(a_q.get_untracked());
-    let b = RwSignal::new(b_q.get_untracked());
+    // `agg`/`seq` links read the same as `parallel`/`sequential` (the pickers use the latter).
+    let a = RwSignal::new(SweepRef::normalize_param(&a_q.get_untracked()));
+    let b = RwSignal::new(SweepRef::normalize_param(&b_q.get_untracked()));
     let experiments = LocalResource::new(|| async {
         api::get::<Vec<Experiment>>(&paths::experiments(false)).await
     });

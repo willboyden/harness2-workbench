@@ -388,7 +388,7 @@ fn ProfileEditor(
                     rows=2
                     monospace=true
                     error=err("egress_hosts")
-                    help="Hosts container jobs may reach (one per line; *.example.com for subdomains). Empty = derived from the endpoints."
+                    help="For the administrator: the hosts this profile's jobs reach, one per line. Informational only: the server does not apply this list; an administrator adds each host to [egress] allow in the server configuration."
                 />
                 {move || server_error.get().map(|e| view! { <ErrorPanel error=e /> })}
                 {move || {

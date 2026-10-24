@@ -300,6 +300,21 @@ pub(crate) fn seconds_between(start: &str, end: &str) -> Option<f64> {
     (b >= a).then(|| (b - a) as f64)
 }
 
+/// A span measured on timestamps of one-second resolution (jobs and their steps): `< 1 s`
+/// when both ends fall in the same second, else as [`duration_secs`].
+pub(crate) fn span_secs(secs: f64) -> String {
+    if secs.is_finite() && (0.0..1.0).contains(&secs) {
+        "< 1 s".to_owned()
+    } else {
+        duration_secs(secs)
+    }
+}
+
+/// [`span_secs`] between two RFC 3339 timestamps.
+pub(crate) fn span_between(start: &str, end: &str) -> Option<String> {
+    seconds_between(start, end).map(span_secs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,6 +374,18 @@ mod tests {
         assert_eq!(duration_secs(119.6), "2m 00s");
         assert_eq!(duration_secs(3720.0), "1h 02m");
         assert_eq!(duration_secs(-1.0), DASH);
+        // Job and step timestamps have one-second resolution.
+        assert_eq!(span_secs(0.0), "< 1 s");
+        assert_eq!(span_secs(1.0), "1.0 s");
+        assert_eq!(span_secs(65.0), "1m 05s");
+        assert_eq!(span_secs(-1.0), DASH);
+        let t = "2026-10-24T02:42:20Z";
+        assert_eq!(span_between(t, t).as_deref(), Some("< 1 s"));
+        assert_eq!(
+            span_between(t, "2026-10-24T02:42:21Z").as_deref(),
+            Some("1.0 s")
+        );
+        assert_eq!(span_between("2026-10-24T02:42:21Z", t), None);
     }
 
     #[test]

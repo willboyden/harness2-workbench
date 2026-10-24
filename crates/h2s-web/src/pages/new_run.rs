@@ -756,7 +756,7 @@ fn ConfirmStep(wiz: Wiz) -> impl IntoView {
                 .then(|| {
                     view! {
                         <Notice tone=Tone::Warning title="Jobs run on the server host">
-                            <p>"Without container isolation the executor agent runs as the server's user, with that user's files and network access (upstream behaviour)."</p>
+                            <p>"Without container isolation the executor agent runs as the server's user, with that user's files and network access (upstream behaviour). That includes the Studio's own data: a malicious or prompt-injected executor can read and change its database (stored secrets, token hashes), so it is effectively a Studio administrator. Container isolation is the boundary."</p>
                             <Checkbox
                                 id="run-ack"
                                 label="I understand and want to run on the host"

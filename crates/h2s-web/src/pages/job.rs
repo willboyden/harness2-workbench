@@ -689,8 +689,8 @@ pub(crate) fn JobPage() -> impl IntoView {
                 let ptext = progress.as_ref().map(progress_text).unwrap_or_default();
                 let current = progress.as_ref().and_then(|p| p.current.clone());
                 let duration = match (&job.started_at, &job.finished_at) {
-                    (Some(a), Some(b)) => format::seconds_between(a, b).map(format::duration_secs),
-                    (Some(a), None) => format::parse_rfc3339(a).map(|t| format::duration_secs((u.now.get() - t).max(0) as f64)),
+                    (Some(a), Some(b)) => format::span_between(a, b),
+                    (Some(a), None) => format::parse_rfc3339(a).map(|t| format::span_secs((u.now.get() - t).max(0) as f64)),
                     _ => None,
                 };
                 let exp = job.spec.experiment().map(str::to_owned);
@@ -747,7 +747,7 @@ pub(crate) fn JobPage() -> impl IntoView {
                                     <ol class="steps">
                                         {job.steps.iter().map(|st| {
                                             let d = match (&st.started_at, &st.finished_at) {
-                                                (Some(a), Some(b)) => format::seconds_between(a, b).map(format::duration_secs),
+                                                (Some(a), Some(b)) => format::span_between(a, b),
                                                 _ => None,
                                             };
                                             view! {

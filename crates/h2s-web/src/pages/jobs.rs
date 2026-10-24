@@ -26,8 +26,7 @@ fn short_id(id: &str) -> String {
 
 fn duration(job: &Job) -> String {
     match (&job.started_at, &job.finished_at) {
-        (Some(s), Some(f)) => format::seconds_between(s, f)
-            .map_or_else(|| format::DASH.to_owned(), format::duration_secs),
+        (Some(s), Some(f)) => format::span_between(s, f).unwrap_or_else(|| format::DASH.to_owned()),
         (Some(_), None) => "running".to_owned(),
         _ => format::DASH.to_owned(),
     }
