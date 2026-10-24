@@ -235,6 +235,7 @@ impl From<h2w_core::CoreError> for ApiError {
                 ErrorCode::PayloadTooLarge,
                 format!("too large: {what}"),
             ),
+            C::Cancelled => ApiError::unavailable("the read was cancelled"),
             C::Unimplemented(what) => {
                 ApiError::unavailable(format!("not available in this build yet: {what}"))
             }
@@ -308,6 +309,11 @@ mod tests {
         assert_eq!(e.status, StatusCode::NOT_FOUND);
         let e: ApiError = h2w_core::CoreError::Unimplemented("x").into();
         assert_eq!(e.status, StatusCode::SERVICE_UNAVAILABLE);
+        let e: ApiError = h2w_core::CoreError::Cancelled.into();
+        assert_eq!(
+            (e.status, e.code),
+            (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable)
+        );
         let e: ApiError =
             h2w_core::CoreError::TooLarge("judged.json has more than 9 rows".into()).into();
         assert_eq!(
