@@ -263,7 +263,7 @@ async fn system_info(State(st): State<AppState>, headers: HeaderMap) -> R<Json<S
             home: admin.then(|| "/srv/harness2-studio/harness2".to_owned()),
         },
         isolation: g.isolation,
-        host_risks_preacknowledged: false,
+        host_risks_preacknowledged: g.host_risks_preacknowledged,
         container_runtime: (g.isolation == Isolation::Container).then(|| "podman".to_owned()),
         auth_mode: h2s_api::AuthMode::Token,
         server_time: rfc3339(now_secs()),
@@ -1552,7 +1552,8 @@ fn validate_spec(g: &Inner, spec: &JobSpec) -> R<()> {
             }
         }
     }
-    let host = g.isolation == Isolation::Host;
+    // Like the server: host isolation needs the acknowledgement unless pre-acknowledged.
+    let host = g.isolation == Isolation::Host && !g.host_risks_preacknowledged;
     let ack = match spec {
         JobSpec::Run(p) => Some(p.acknowledge_risks),
         JobSpec::Pipeline(p) => Some(p.acknowledge_risks),
@@ -2085,6 +2086,28 @@ mod tests {
             "{w:?}"
         );
         assert!(!PROFILE_NAME_RULE.is_empty() && !valid_slug("Bad Name"));
+    }
+
+    #[test]
+    fn host_acknowledgement_follows_preack() {
+        let unacknowledged = |spec: JobSpec| match spec {
+            JobSpec::Run(mut p) => {
+                p.acknowledge_risks = false;
+                JobSpec::Run(p)
+            }
+            other => other,
+        };
+        let spec = unacknowledged(state::live_run_spec());
+        let mut g = Inner::populated();
+        assert!(validate_spec(&g, &state::live_run_spec()).is_ok());
+        // Host isolation without the acknowledgement is refused...
+        assert!(validate_spec(&g, &spec).is_err());
+        // ...unless the server pre-acknowledges host risks.
+        g.host_risks_preacknowledged = true;
+        assert!(validate_spec(&g, &spec).is_ok());
+        g.host_risks_preacknowledged = false;
+        g.isolation = Isolation::Container;
+        assert!(validate_spec(&g, &spec).is_ok());
     }
 
     #[test]

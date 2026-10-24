@@ -19,7 +19,9 @@ use crate::components::widgets::ProfileCheckFor;
 use crate::logic::format;
 use crate::logic::jobs::{Tone, cell_label, modes_label};
 use crate::logic::urls::{api as paths, route};
-use crate::logic::wizard::{Preset, RunForm, Step, describe, expected_tasks, quick_counts};
+use crate::logic::wizard::{
+    HostRisk, Preset, RunForm, Step, describe, expected_tasks, quick_counts,
+};
 use crate::nav::query_param;
 use crate::pages::experiments::CreateExperiment;
 use crate::state::{Toasts, session, toasts};
@@ -695,10 +697,10 @@ fn ConfirmStep(wiz: Wiz) -> impl IntoView {
     let busy = RwSignal::new(false);
     let submit_error = RwSignal::new(None::<String>);
     let budget_error = Signal::derive(move || wiz.form.with(RunForm::budget_value).err());
-    let host = move || s.host_isolation();
+    let risk = move || s.host_risk();
     let start = move |_| {
         submit_error.set(None);
-        match wiz.form.get_untracked().submit_spec(s.host_isolation()) {
+        match wiz.form.get_untracked().submit_spec(s.host_risk()) {
             Ok(spec) => actions::start_job(spec, t, Some(busy), navigate.clone()),
             Err(p) => submit_error.set(Some(describe(&p).join(" "))),
         }
@@ -751,27 +753,35 @@ fn ConfirmStep(wiz: Wiz) -> impl IntoView {
             error=budget_error
             help="Checked as task summaries land; a task in flight finishes first. Executor spend is not recorded, so real cost is higher."
         />
-        {move || {
-            host()
-                .then(|| {
-                    view! {
-                        <Notice tone=Tone::Warning title="Jobs run on the server host">
-                            <p>"Without container isolation the executor agent runs as the server's user, with that user's files and network access (upstream behaviour). That includes the Studio's own data: a malicious or prompt-injected executor can read and change its database (stored secrets, token hashes), so it is effectively a Studio administrator. Container isolation is the boundary."</p>
-                            <Checkbox
-                                id="run-ack"
-                                label="I understand and want to run on the host"
-                                checked=wiz.acknowledge
-                            />
-                        </Notice>
-                    }
-                })
+        {move || match risk() {
+            HostRisk::AskUser => view! {
+                <Notice tone=Tone::Warning title="Jobs run on the server host">
+                    <p>"Without container isolation the executor agent runs as the server's user, with that user's files and network access (upstream behaviour). That includes the Studio's own data: a malicious or prompt-injected executor can read and change its database (stored secrets, token hashes), so it is effectively a Studio administrator. Container isolation is the boundary."</p>
+                    <Checkbox
+                        id="run-ack"
+                        label="I understand and want to run on the host"
+                        checked=wiz.acknowledge
+                    />
+                </Notice>
+            }
+            .into_any(),
+            // An administrator accepted the risks for everyone: no checkbox, nothing to send.
+            HostRisk::PreAcknowledged => view! {
+                <p class="small muted" data-testid="host-risk-preack">
+                    "The server pre-acknowledges host-isolation risks ("
+                    <code>"isolation.preacknowledge_host_risks"</code>
+                    ")."
+                </p>
+            }
+            .into_any(),
+            HostRisk::Contained => ().into_any(),
         }}
         {move || submit_error.get().map(|e| view! { <Notice tone=Tone::Danger><p>{e}</p></Notice> })}
         <button
             type="button"
             class="btn btn-primary"
             data-testid="run-start"
-            disabled=move || busy.get() || !s.can(Role::Operator) || (host() && !wiz.acknowledge.get())
+            disabled=move || busy.get() || !s.can(Role::Operator) || (risk() == HostRisk::AskUser && !wiz.acknowledge.get())
             on:click=start
         >
             {icon(Icon::Play)}

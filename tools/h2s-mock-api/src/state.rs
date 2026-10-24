@@ -48,6 +48,8 @@ pub(crate) struct JobData {
 pub(crate) struct Inner {
     pub(crate) installed: bool,
     pub(crate) isolation: Isolation,
+    /// `isolation.preacknowledge_host_risks`: runs on the host need no acknowledgement.
+    pub(crate) host_risks_preacknowledged: bool,
     pub(crate) experiments: BTreeMap<String, ExpData>,
     pub(crate) jobs: Vec<JobData>,
     pub(crate) profiles: BTreeMap<String, ModelProfile>,
@@ -1200,6 +1202,7 @@ impl Inner {
         let mut inner = Inner {
             installed: true,
             isolation: Isolation::Host,
+            host_risks_preacknowledged: false,
             experiments: experiments(),
             jobs: past_jobs(),
             profiles: profiles(),
@@ -1219,6 +1222,7 @@ impl Inner {
         let mut inner = Inner {
             installed: false,
             isolation: Isolation::Host,
+            host_risks_preacknowledged: false,
             experiments: BTreeMap::new(),
             jobs: Vec::new(),
             profiles: BTreeMap::new(),

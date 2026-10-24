@@ -85,6 +85,31 @@ impl Preset {
     }
 }
 
+/// What a run asks about host isolation before it starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HostRisk {
+    /// Container isolation: nothing to acknowledge.
+    Contained,
+    /// Host isolation: the user ticks the acknowledgement, sent as `acknowledge_risks: true`.
+    AskUser,
+    /// Host isolation that an administrator pre-acknowledged for everyone
+    /// (`isolation.preacknowledge_host_risks`): no checkbox, a one-line note, and
+    /// `acknowledge_risks: false` because the server does not require it.
+    PreAcknowledged,
+}
+
+impl HostRisk {
+    /// From the server's isolation and its `host_risks_preacknowledged` flag; unknown
+    /// isolation (system info not loaded) asks, which is the safe side.
+    pub(crate) fn from_system(host_isolation: bool, preacknowledged: bool) -> HostRisk {
+        match (host_isolation, preacknowledged) {
+            (false, _) => HostRisk::Contained,
+            (true, false) => HostRisk::AskUser,
+            (true, true) => HostRisk::PreAcknowledged,
+        }
+    }
+}
+
 /// Everything the wizard collects. Numeric fields stay text so a half-typed value is kept.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RunForm {
@@ -288,7 +313,7 @@ impl RunForm {
     }
 
     /// The job to start: a `pipeline` (check, run, judge, report) or a bare `run`.
-    pub(crate) fn submit_spec(&self, host_isolation: bool) -> Result<JobSpec, Problems> {
+    pub(crate) fn submit_spec(&self, risk: HostRisk) -> Result<JobSpec, Problems> {
         let mut problems = self.cell_problems();
         let options = match self.options() {
             Ok(o) => Some(o),
@@ -304,7 +329,7 @@ impl RunForm {
                 None
             }
         };
-        if host_isolation && !self.acknowledge_risks {
+        if risk == HostRisk::AskUser && !self.acknowledge_risks {
             problems.push((
                 "acknowledge_risks".into(),
                 "confirm that you understand the executor runs directly on the server".into(),
@@ -313,6 +338,8 @@ impl RunForm {
         let Some(options) = options.filter(|_| problems.is_empty()) else {
             return Err(problems);
         };
+        // Only an acknowledgement the user gave is sent; a pre-acknowledging server needs none.
+        let acknowledge_risks = risk == HostRisk::AskUser && self.acknowledge_risks;
         Ok(if self.pipeline {
             JobSpec::Pipeline(PipelineParams {
                 experiment: self.experiment.clone(),
@@ -321,7 +348,7 @@ impl RunForm {
                 profile: self.profile.clone(),
                 judge_bases: self.judge_bases,
                 budget_usd: budget,
-                acknowledge_risks: self.acknowledge_risks,
+                acknowledge_risks,
             })
         } else {
             JobSpec::Run(RunParams {
@@ -330,7 +357,7 @@ impl RunForm {
                 options,
                 profile: self.profile.clone(),
                 budget_usd: budget,
-                acknowledge_risks: self.acknowledge_risks,
+                acknowledge_risks,
             })
         })
     }
@@ -522,10 +549,10 @@ mod tests {
         );
         f.bench = Bench::Jb;
         assert_eq!(f.cell().subset, None);
-        assert!(f.submit_spec(true).is_err());
+        assert!(f.submit_spec(HostRisk::AskUser).is_err());
         f.acknowledge_risks = true;
         f.budget_usd = "$25".into();
-        match f.submit_spec(true).unwrap() {
+        match f.submit_spec(HostRisk::AskUser).unwrap() {
             JobSpec::Pipeline(p) => {
                 assert_eq!(p.budget_usd, Some(25.0));
                 assert!(p.acknowledge_risks);
@@ -533,19 +560,49 @@ mod tests {
             other => panic!("expected pipeline, got {other:?}"),
         }
         f.pipeline = false;
-        assert!(matches!(f.submit_spec(false).unwrap(), JobSpec::Run(_)));
+        assert!(matches!(
+            f.submit_spec(HostRisk::Contained).unwrap(),
+            JobSpec::Run(_)
+        ));
         f.budget_usd = "-3".into();
-        assert!(f.submit_spec(false).is_err());
+        assert!(f.submit_spec(HostRisk::Contained).is_err());
         let empty = RunForm {
             acknowledge_risks: true,
             ..RunForm::default()
         };
-        let problems = empty.submit_spec(false).unwrap_err();
+        let problems = empty.submit_spec(HostRisk::Contained).unwrap_err();
         assert!(
             describe(&problems)
                 .iter()
                 .any(|s| s.starts_with("Experiment:"))
         );
+    }
+
+    #[test]
+    fn host_risk_acknowledgement() {
+        assert_eq!(HostRisk::from_system(false, false), HostRisk::Contained);
+        assert_eq!(HostRisk::from_system(false, true), HostRisk::Contained);
+        assert_eq!(HostRisk::from_system(true, false), HostRisk::AskUser);
+        assert_eq!(HostRisk::from_system(true, true), HostRisk::PreAcknowledged);
+        let ack = |spec: JobSpec| match spec {
+            JobSpec::Pipeline(p) => p.acknowledge_risks,
+            JobSpec::Run(r) => r.acknowledge_risks,
+            other => panic!("unexpected {other:?}"),
+        };
+        let f = filled();
+        assert!(!f.acknowledge_risks);
+        // Asked: refused until ticked, then sent.
+        assert!(f.submit_spec(HostRisk::AskUser).is_err());
+        let ticked = RunForm {
+            acknowledge_risks: true,
+            ..f.clone()
+        };
+        assert!(ack(ticked.submit_spec(HostRisk::AskUser).unwrap()));
+        // Pre-acknowledged by the server: no tick needed and none sent, even if one lingers.
+        assert!(!ack(f.submit_spec(HostRisk::PreAcknowledged).unwrap()));
+        assert!(!ack(ticked.submit_spec(HostRisk::PreAcknowledged).unwrap()));
+        // Container isolation: nothing to acknowledge.
+        assert!(!ack(f.submit_spec(HostRisk::Contained).unwrap()));
     }
 
     #[test]

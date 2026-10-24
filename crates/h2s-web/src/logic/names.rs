@@ -3,8 +3,8 @@
 //!
 //! Each validator returns `Err` with a sentence the form shows next to the field.
 
-/// Environment variable names a profile's `extra_env` may never set (mirror of
-/// `h2s_core::env::RESERVED_ENV`).
+/// Environment variable names a profile's `extra_env` may never set: an exact mirror of
+/// `h2s_core::env::RESERVED_ENV` (a native test compares the two).
 pub(crate) const RESERVED_ENV: &[&str] = &[
     "PATH",
     "HOME",
@@ -12,7 +12,22 @@ pub(crate) const RESERVED_ENV: &[&str] = &[
     "IFS",
     "ENV",
     "BASH_ENV",
+    "SHELLOPTS",
+    "BASHOPTS",
+    "PS4",
+    "GCONV_PATH",
+    "GLIBC_TUNABLES",
     "NODE_OPTIONS",
+    "NODE_PATH",
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+    "JAVA_TOOL_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "_JAVA_OPTIONS",
+    "RUBYOPT",
+    "RUBYLIB",
+    "PERL5OPT",
+    "PERL5LIB",
+    "PERLLIB",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_CONTENT",
     "OPENCODE_PERMISSION",
@@ -20,9 +35,21 @@ pub(crate) const RESERVED_ENV: &[&str] = &[
     "GOOGLE_APPLICATION_CREDENTIALS",
     "DOCKER_HOST",
     "SSH_AUTH_SOCK",
+    "CONTAINER_HOST",
+    "REGISTRY_AUTH_FILE",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    "CURL_CA_BUNDLE",
 ];
 
-/// Prefixes a profile's `extra_env` may never use (mirror of `RESERVED_ENV_PREFIXES`).
+/// Prefixes a profile's `extra_env` may never use: an exact mirror of
+/// `h2s_core::env::RESERVED_ENV_PREFIXES`.
 pub(crate) const RESERVED_ENV_PREFIXES: &[&str] = &[
     "LD_",
     "DYLD_",
@@ -31,6 +58,11 @@ pub(crate) const RESERVED_ENV_PREFIXES: &[&str] = &[
     "UV_",
     "BUN_",
     "NPM_CONFIG_",
+    "DOCKER_",
+    "CONTAINERS_",
+    "XDG_",
+    "GIT_",
+    "OPENCODE_",
 ];
 
 type Check = Result<(), String>;
@@ -336,8 +368,58 @@ mod tests {
             "LD_PRELOAD",
             "PYTHONPATH",
             "H2S_X",
+            "GIT_SSH_COMMAND",
+            "XDG_RUNTIME_DIR",
+            "DOCKER_CONFIG",
+            "CONTAINERS_CONF",
+            "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX",
+            "CONTAINER_HOST",
+            "REGISTRY_AUTH_FILE",
+            "NODE_TLS_REJECT_UNAUTHORIZED",
+            "GLIBC_TUNABLES",
+            "PS4",
+            "CURL_CA_BUNDLE",
         ] {
             assert!(env_name(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// The mirrors must equal the server's lists exactly (native test; h2s-core is a
+    /// dev-dependency only, never part of the wasm build).
+    #[test]
+    fn reserved_env_matches_the_server() {
+        assert_eq!(RESERVED_ENV, h2s_core::env::RESERVED_ENV);
+        assert_eq!(RESERVED_ENV_PREFIXES, h2s_core::env::RESERVED_ENV_PREFIXES);
+        // And the client accepts exactly what the server accepts.
+        let mut names: Vec<String> = h2s_core::env::RESERVED_ENV
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        names.extend(
+            h2s_core::env::RESERVED_ENV_PREFIXES
+                .iter()
+                .map(|p| format!("{p}X")),
+        );
+        names.extend(
+            [
+                "HARNESS2_JUDGE_MODEL",
+                "_PRIVATE",
+                "OPENAI_API_KEY",
+                "GITHUB_TOKEN",
+                "XDG",
+                "lower",
+                "1X",
+                "",
+                "PATH2",
+            ]
+            .map(str::to_owned),
+        );
+        for n in &names {
+            assert_eq!(
+                env_name(n).is_ok(),
+                h2s_core::names::env_name(n).is_ok(),
+                "{n:?}"
+            );
         }
     }
 
