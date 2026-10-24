@@ -224,6 +224,66 @@ pub async fn network_check<R: CommandRunner>(
     })
 }
 
+/// The argv that prints the id of `image` when the runtime has it (exit 1 when it does
+/// not). `image` is validated by the configuration (`config::image_is_pinned`).
+#[must_use]
+pub fn image_inspect_argv(runtime: RuntimeKind, image: &str) -> Vec<String> {
+    vec![
+        runtime.as_str().to_owned(),
+        "image".to_owned(),
+        "inspect".to_owned(),
+        "--format".to_owned(),
+        "{{.Id}}".to_owned(),
+        image.to_owned(),
+    ]
+}
+
+/// The doctor check `runner_image` for container isolation: the configured image must be
+/// present, or every container job fails at start.
+pub async fn runner_image_check<R: CommandRunner>(
+    runner: &R,
+    c: &crate::config::ContainerSection,
+) -> h2s_api::DoctorCheck {
+    let runtime = c.runtime.as_str();
+    let build = format!(
+        "Build it from a checkout of Harness² Studio: `{runtime} build -f \
+         deploy/docker/runner.Dockerfile -t {} .` (or pull it from your registry).",
+        c.image
+    );
+    let (level, detail, remedy) = match runner.run(image_inspect_argv(c.runtime, &c.image)).await {
+        Ok((0, _)) => (
+            h2s_api::CheckLevel::Ok,
+            format!("runner image {} is present", c.image),
+            None,
+        ),
+        Ok((code, _)) => (
+            h2s_api::CheckLevel::Fail,
+            format!(
+                "runner image {} is not present for {runtime} (`image inspect` exit {code}); \
+                 container jobs cannot start",
+                c.image
+            ),
+            Some(build),
+        ),
+        Err(e) => (
+            h2s_api::CheckLevel::Warn,
+            format!(
+                "could not ask {runtime} about the runner image {}: {e}",
+                c.image
+            ),
+            Some(build),
+        ),
+    };
+    h2s_api::DoctorCheck {
+        id: "runner_image".to_owned(),
+        label: "Runner image".to_owned(),
+        level,
+        detail,
+        remedy,
+        needed_for: vec!["container".to_owned()],
+    }
+}
+
 /// Stop the container of `job_id` only if its job label matches. Returns `Ok(true)` when it
 /// was stopped, `Ok(false)` when no matching container exists.
 ///
@@ -382,6 +442,45 @@ mod tests {
         let f = Fake::new(vec![]);
         assert!(network_check(&f, &c).await.is_none());
         assert!(f.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_runner_image_must_be_present_in_container_mode() {
+        let c = crate::config::ContainerSection {
+            image: "harness2-studio-runner:0.1.0".into(),
+            ..crate::config::ContainerSection::default()
+        };
+        let f = Fake::new(vec![(0, "sha256:0123\n")]);
+        let check = runner_image_check(&f, &c).await;
+        assert_eq!(
+            (check.id.as_str(), check.level),
+            ("runner_image", h2s_api::CheckLevel::Ok)
+        );
+        assert_eq!(
+            f.calls.lock().unwrap()[0],
+            vec![
+                "docker",
+                "image",
+                "inspect",
+                "--format",
+                "{{.Id}}",
+                "harness2-studio-runner:0.1.0"
+            ]
+        );
+        let f = Fake::new(vec![(1, "")]);
+        let check = runner_image_check(&f, &c).await;
+        assert_eq!(check.level, h2s_api::CheckLevel::Fail);
+        assert!(
+            check
+                .remedy
+                .unwrap()
+                .contains("deploy/docker/runner.Dockerfile -t harness2-studio-runner:0.1.0")
+        );
+        let f = Fake::new(vec![]);
+        assert_eq!(
+            runner_image_check(&f, &c).await.level,
+            h2s_api::CheckLevel::Warn
+        );
     }
 
     #[tokio::test]

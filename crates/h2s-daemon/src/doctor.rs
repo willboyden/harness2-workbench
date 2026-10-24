@@ -117,12 +117,14 @@ pub async fn fresh_report(facts: ContextFacts) -> DoctorReport {
         generated_at: crate::util::now_rfc3339(),
     };
     let mut report = h2s_core::doctor::evaluate(&results, &ctx);
-    if let Some(c) = &facts.container
-        && let Some(check) =
-            crate::jobs::container::network_check(&crate::jobs::container::SystemRunner, c).await
-    {
-        report.ok = report.ok && check.level != h2s_api::CheckLevel::Fail;
-        report.checks.push(check);
+    if let Some(c) = &facts.container {
+        let runner = crate::jobs::container::SystemRunner;
+        let mut extra = vec![crate::jobs::container::runner_image_check(&runner, c).await];
+        extra.extend(crate::jobs::container::network_check(&runner, c).await);
+        for check in extra {
+            report.ok = report.ok && check.level != h2s_api::CheckLevel::Fail;
+            report.checks.push(check);
+        }
     }
     report
 }

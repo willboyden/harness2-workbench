@@ -282,6 +282,10 @@ Keys beyond §11 (all optional, defaults shown):
   when it equals the job id.
 - `SystemInfo.container_runtime` is set once the runtime answered (user detection or a passing
   doctor check).
+- **Doctor** (container isolation): check `runner_image` asks the runtime for the configured
+  image (`image inspect`): ok when present, `fail` with the build command for
+  `deploy/docker/runner.Dockerfile` when not, `warn` when the runtime cannot be asked; and
+  `container_network` as described under Network.
 
 ## Egress proxy
 
