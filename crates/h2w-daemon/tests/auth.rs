@@ -441,12 +441,21 @@ async fn audit_rows(t: &TestServer) -> u64 {
         .map_or(0, |(seq, _)| seq)
 }
 
+/// What a limiter of `per_minute` hands back over `elapsed`, rounded up: its buckets refill
+/// continuously, so a slow run (a busy CI runner) earns that many attempts beyond the quota.
+fn refilled(per_minute: u32, elapsed: std::time::Duration) -> u32 {
+    let ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
+    u32::try_from(u64::from(per_minute).saturating_mul(ms) / 60_000 + 1).unwrap_or(u32::MAX)
+}
+
 /// Junk credentials cannot flood the hash-chained audit log: per client, a few failures a
 /// minute are recorded, the rest only counted, and past a limit failures are 429.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failed_authentication_cannot_flood_the_audit_log() {
     let t = TestServer::start().await;
     let before = audit_rows(&t).await;
+    let audit_quota = h2w_daemon::http::extract::AUDITED_FAILURES_PER_MINUTE;
+    let started = std::time::Instant::now();
     let mut statuses = std::collections::BTreeMap::new();
     for i in 0..500 {
         // Malformed, unknown-id and wrong-secret tokens, in turn.
@@ -461,19 +470,25 @@ async fn failed_authentication_cannot_flood_the_audit_log() {
             assert!(r.headers().contains_key("retry-after"));
         }
     }
+    let elapsed = started.elapsed();
     let audited = audit_rows(&t).await - before;
     assert!(
-        (1..=u64::from(h2w_daemon::http::extract::AUDITED_FAILURES_PER_MINUTE)).contains(&audited),
-        "{audited} audit rows for 500 failures"
+        (1..=u64::from(audit_quota + refilled(audit_quota, elapsed))).contains(&audited),
+        "{audited} audit rows for 500 failures in {elapsed:?}"
     );
+    // The quota answered 401 (plus what refilled while the requests ran), the rest 429.
     let limit = h2w_daemon::http::extract::AUTH_FAILURES_PER_MINUTE;
-    assert_eq!(statuses.get(&401).copied(), Some(limit), "{statuses:?}");
+    let answered = statuses.get(&401).copied().unwrap_or(0);
+    assert!(
+        (limit..=limit + refilled(limit, elapsed)).contains(&answered),
+        "{statuses:?} in {elapsed:?}"
+    );
     assert_eq!(
         statuses.get(&429).copied(),
-        Some(500 - limit),
+        Some(500 - answered),
         "{statuses:?}"
     );
-    // Failed logins share the record budget: no new rows for this client.
+    // Failed logins share the record budget: at most what refilled meanwhile.
     for _ in 0..5 {
         let r = t
             .post("/api/v1/auth/login", None)
@@ -483,7 +498,12 @@ async fn failed_authentication_cannot_flood_the_audit_log() {
             .unwrap();
         assert_eq!(r.status(), 401);
     }
-    assert_eq!(audit_rows(&t).await - before, audited);
+    let elapsed = started.elapsed();
+    let audited = audit_rows(&t).await - before;
+    assert!(
+        audited <= u64::from(audit_quota + refilled(audit_quota, elapsed)),
+        "{audited} audit rows after the logins, in {elapsed:?}"
+    );
     // Valid credentials from the same client still work, and every failure was counted.
     assert_eq!(me(&t, &t.admin).await.status(), 200);
     let m = t
@@ -500,18 +520,18 @@ async fn failed_authentication_cannot_flood_the_audit_log() {
             .find_map(|l| l.strip_prefix(key.as_str()))
             .map_or(0, |v| v.trim().parse().unwrap())
     };
-    // One reason per refused request: the 60 answered 401 plus the 5 logins, then 429s.
+    // One reason per refused request: those answered 401 plus the 5 logins, then 429s.
     assert_eq!(
         count("malformed") + count("unknown_token") + count("bad_secret"),
-        u64::from(limit) + 5,
+        u64::from(answered) + 5,
         "{m}"
     );
-    assert_eq!(count("rate_limited"), u64::from(500 - limit), "{m}");
+    assert_eq!(count("rate_limited"), u64::from(500 - answered), "{m}");
     let suppressed = m
         .lines()
         .find_map(|l| l.strip_prefix("h2w_audit_suppressed_total "))
         .map_or(0, |v| v.trim().parse::<u64>().unwrap());
-    assert_eq!(suppressed, u64::from(limit) + 5 - audited, "{m}");
+    assert_eq!(suppressed, u64::from(answered) + 5 - audited, "{m}");
     t.stop().await;
 }
 
@@ -521,6 +541,7 @@ async fn failed_authentication_cannot_flood_the_audit_log() {
 async fn refused_requests_cannot_flood_the_audit_log() {
     let t = TestServer::start().await;
     let before = audit_rows(&t).await;
+    let started = std::time::Instant::now();
     for _ in 0..500 {
         let r = t
             .get("/api/v1/tokens", Some(&t.viewer))
@@ -529,10 +550,14 @@ async fn refused_requests_cannot_flood_the_audit_log() {
             .unwrap();
         assert_eq!(r.status(), 403);
     }
+    let (elapsed, quota) = (
+        started.elapsed(),
+        h2w_daemon::http::extract::AUDITED_FAILURES_PER_MINUTE,
+    );
     let audited = audit_rows(&t).await - before;
     assert!(
-        (1..=u64::from(h2w_daemon::http::extract::AUDITED_FAILURES_PER_MINUTE)).contains(&audited),
-        "{audited} audit rows for 500 refusals"
+        (1..=u64::from(quota + refilled(quota, elapsed))).contains(&audited),
+        "{audited} audit rows for 500 refusals in {elapsed:?}"
     );
     // Another principal's refusals are recorded on their own share.
     let r = t
@@ -558,6 +583,7 @@ async fn refused_requests_cannot_flood_the_audit_log() {
 async fn refused_job_requests_cannot_flood_the_audit_log() {
     let t = TestServer::start().await;
     let before = audit_rows(&t).await;
+    let started = std::time::Instant::now();
     for _ in 0..200 {
         let r = t
             .create_job(
@@ -567,10 +593,14 @@ async fn refused_job_requests_cannot_flood_the_audit_log() {
             .await;
         assert_eq!(r.status(), 403);
     }
+    let (elapsed, quota) = (
+        started.elapsed(),
+        h2w_daemon::http::extract::AUDITED_FAILURES_PER_MINUTE,
+    );
     let audited = audit_rows(&t).await - before;
     assert!(
-        (1..=u64::from(h2w_daemon::http::extract::AUDITED_FAILURES_PER_MINUTE)).contains(&audited),
-        "{audited} audit rows for 200 refused job requests"
+        (1..=u64::from(quota + refilled(quota, elapsed))).contains(&audited),
+        "{audited} audit rows for 200 refused job requests in {elapsed:?}"
     );
     t.stop().await;
 }
@@ -601,22 +631,25 @@ async fn a_peer_inventing_forwarded_clients_only_limits_itself() {
             .send()
     };
     let per_peer = u32::try_from(h2w_daemon::ratelimit::MAX_PER_PEER).unwrap();
+    let started = std::time::Instant::now();
     let mut statuses = std::collections::BTreeMap::new();
     for i in 0..(per_peer + 100) {
         let xff = format!("198.18.{}.{}", i / 250, i % 250 + 1);
         let r = login(&flooder, xff, "h2w_junk".into()).await.unwrap();
         *statuses.entry(r.status().as_u16()).or_insert(0_u32) += 1;
     }
-    // Every invented client up to the quota had a bucket; the rest shared one of this peer.
+    // Every invented client up to the quota had a bucket; the rest shared one of this peer
+    // (plus what it refilled while the requests ran).
+    let elapsed = started.elapsed();
     let limit = t.srv().state.cfg.file.server.login_attempts_per_minute;
-    assert_eq!(
-        statuses.get(&401).copied(),
-        Some(per_peer + limit),
-        "{statuses:?}"
+    let answered = statuses.get(&401).copied().unwrap_or(0);
+    assert!(
+        (per_peer + limit..=per_peer + limit + refilled(limit, elapsed)).contains(&answered),
+        "{statuses:?} in {elapsed:?}"
     );
     assert_eq!(
         statuses.get(&429).copied(),
-        Some(100 - limit),
+        Some(per_peer + 100 - answered),
         "{statuses:?}"
     );
     // The flooding peer limited itself, also for a valid token from a new address...
