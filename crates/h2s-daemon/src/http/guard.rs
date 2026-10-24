@@ -108,19 +108,29 @@ fn forwarded_client_from(values: &[&[u8]], is_trusted: impl Fn(IpAddr) -> bool) 
     last_trusted
 }
 
-pub(crate) fn host_allowed(state: &AppState, req: &Request) -> bool {
-    let raw = req
-        .headers()
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned)
-        .or_else(|| req.uri().authority().map(|a| a.as_str().to_owned()));
-    let Some(raw) = raw else { return false };
-    let Some((host, port)) = split_host_port(&raw) else {
+fn authority_allowed(state: &AppState, raw: &str) -> bool {
+    let Some((host, port)) = split_host_port(raw) else {
         return false;
     };
     let host = host.to_ascii_lowercase();
     state.hosts.iter().any(|e| e.matches(&host, port))
+}
+
+/// The `Host` header (or, without one, an absolute-form target's authority) is on the
+/// allowlist. When the target is absolute-form, its authority must be allowed too: RFC 9112
+/// lets a server route by it instead of `Host`.
+pub(crate) fn host_allowed(state: &AppState, req: &Request) -> bool {
+    let header = req.headers().get(header::HOST);
+    let target = req.uri().authority().map(http::uri::Authority::as_str);
+    if let Some(t) = target
+        && !authority_allowed(state, t)
+    {
+        return false;
+    }
+    match header {
+        Some(v) => v.to_str().is_ok_and(|h| authority_allowed(state, h)),
+        None => target.is_some(),
+    }
 }
 
 pub(crate) fn origin_allowed(state: &AppState, req: &Request, origin: &HeaderValue) -> bool {
@@ -149,6 +159,11 @@ fn content_length(req: &Request) -> Option<u64> {
 }
 
 async fn check_and_run(state: &AppState, req: Request, next: Next) -> Response {
+    // RFC 9112 §3.2: more than one Host field line is a 400.
+    if req.headers().get_all(header::HOST).iter().nth(1).is_some() {
+        state.metrics.auth_failure("host");
+        return ApiError::bad_request("the request has more than one Host header").into_response();
+    }
     if !host_allowed(state, &req) {
         state.metrics.auth_failure("host");
         return ApiError::misdirected().into_response();

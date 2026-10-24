@@ -83,6 +83,43 @@ async fn foreign_host_headers_are_misdirected() {
     // HTTP/1.0 without Host.
     let raw = raw_http(addr, b"GET /healthz HTTP/1.0\r\n\r\n").await;
     assert_eq!(status_of(&raw), 421, "{raw}");
+    // Two Host headers are a 400 whatever their values (RFC 9112 §3.2), first allowed or not.
+    for (first, second) in [
+        (format!("127.0.0.1:{port}"), "evil.example".to_owned()),
+        ("evil.example".to_owned(), format!("127.0.0.1:{port}")),
+        (format!("127.0.0.1:{port}"), format!("127.0.0.1:{port}")),
+    ] {
+        let raw = raw_http(
+            addr,
+            format!(
+                "GET /healthz HTTP/1.1\r\nHost: {first}\r\nHost: {second}\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await;
+        assert_eq!(status_of(&raw), 400, "{first} + {second}: {raw}");
+        assert_security_headers_raw(&raw);
+        assert!(raw.contains("\"bad_request\""), "{raw}");
+    }
+    // An absolute-form target is checked as well as the Host header.
+    let raw = raw_http(
+        addr,
+        format!(
+            "GET http://evil.example/healthz HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await;
+    assert_eq!(status_of(&raw), 421, "{raw}");
+    let raw = raw_http(
+        addr,
+        format!(
+            "GET http://127.0.0.1:{port}/healthz HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await;
+    assert_eq!(status_of(&raw), 200, "{raw}");
     for host in [
         format!("127.0.0.1:{port}"),
         format!("localhost:{port}"),

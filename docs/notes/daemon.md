@@ -64,7 +64,9 @@ environment variable `auth.proxy.secret_env` when the server starts.
 - **Host allowlist**: `public_url`'s host (with its port; without a port when it is the scheme's
   default), `server.allowed_hosts` (an entry without a port matches any port), and
   `127.0.0.1:P`, `localhost:P`, `[::1]:P` for the bound port P (plus the bound address when it
-  is a specific non-loopback IP). Anything else is 421, static files included.
+  is a specific non-loopback IP). Anything else is 421, static files included. A request with
+  more than one `Host` header is 400 (RFC 9112 §3.2); an absolute-form target
+  (`GET http://host/...`) must name an allowed host as well as its `Host` header.
 - **Unsafe methods** (everything but GET/HEAD/OPTIONS) need `x-h2s-request: 1`. An `Origin`, when
   sent, must be `public_url`'s origin or `http(s)://<the request's Host>` (so a UI opened at
   `http://localhost:P` works); `null` is refused. No CORS headers are ever sent.
