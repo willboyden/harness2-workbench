@@ -56,6 +56,7 @@ pub(crate) const RESERVED_ENV_PREFIXES: &[&str] = &[
     "PYTHON",
     "H2S_",
     "UV_",
+    "PIP_",
     "BUN_",
     "NPM_CONFIG_",
     "DOCKER_",

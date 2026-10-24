@@ -6,10 +6,12 @@
 //! kept serving the "UI not built" page until something else changed. Watching the directory
 //! fixes that (Cargo scans a watched directory recursively).
 //!
-//! With debug assertions rust-embed reads the files at run time, so nothing needs watching.
-//! Watching then would only cost rebuilds: a watched path that does not exist makes Cargo
-//! rerun this script, and rebuild the crate, on every build. Release builds pay that until
-//! the UI is built once (`cargo xtask dist` builds it first).
+//! With debug assertions rust-embed reads the files at run time, but only when `dist/web`
+//! existed as the crate was compiled; `cargo xtask web` therefore marks `http/static_ui.rs`
+//! changed, so the next build of either kind embeds the UI it just built. Watching the
+//! directory in debug builds would only cost rebuilds: a watched path that does not exist
+//! makes Cargo rerun this script, and rebuild the crate, on every build. Release builds pay
+//! that until the UI is built once (`cargo xtask dist` builds it first).
 
 // Build scripts talk to Cargo on stdout.
 #![allow(clippy::print_stdout)]

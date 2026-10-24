@@ -136,10 +136,11 @@ server still builds and runs**: the API works and `/` shows a page saying `UI no
   and served the UI (`/app.js` `200`, the 3.4 MB `.wasm` as `application/wasm`); the build after that
   was fresh.
 - **Debug builds read the files from disk at run time, but only if `dist/web/` existed when the
-  crate was compiled.** A debug server compiled without it keeps serving the placeholder after
-  `cargo xtask web` *and* after a plain `cargo build`, which does not rebuild it (verified); run
-  `touch crates/h2s-daemon/src/http/static_ui.rs` and build again. With the UI present at compile
-  time, an edit to `dist/web/styles.css` was served at once, without a rebuild (verified).
+  crate was compiled.** `cargo xtask web` therefore marks the embedding module changed, so the next
+  plain `cargo build` recompiles it. Verified on 2026-10-24 with a fresh target directory: a debug
+  server built without `dist/web` served the placeholder; after `cargo xtask web --dev` and a plain
+  `cargo build` it served the UI. With the UI present at compile time, an edit to
+  `dist/web/styles.css` was served at once, without a rebuild (verified).
 
 `cargo xtask web` builds a release-size UI (a 3.4 MB `.wasm` here); `cargo xtask web --dev` builds
 a faster debug one (about 150 MB).

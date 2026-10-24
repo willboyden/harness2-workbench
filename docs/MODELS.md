@@ -77,11 +77,11 @@ which certificates jobs trust, or credentials the server manages are **refused**
 `SSH_AUTH_SOCK`, `CONTAINER_HOST`, `REGISTRY_AUTH_FILE`, the proxy variables (`HTTPS_PROXY`,
 `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`) and the certificate variables (`SSL_CERT_FILE`,
 `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`). Prefixes: any name
-starting with `LD_`, `DYLD_`, `PYTHON`, `H2S_`, `UV_`, `BUN_`, `NPM_CONFIG_`, `DOCKER_`,
+starting with `LD_`, `DYLD_`, `PYTHON`, `H2S_`, `UV_`, `PIP_`, `BUN_`, `NPM_CONFIG_`, `DOCKER_`,
 `CONTAINERS_`, `XDG_`, `GIT_` or `OPENCODE_`. The source is `crates/h2s-core/src/env.rs`.
 
 The list is a safety net for mistakes, not a security boundary: other variables that change what a
-program does are accepted (`PIP_*`, for example, is not on it), and only an admin can write a
+program does are accepted (`CC`, `MAKEFLAGS` or `CARGO_HOME`, for example), and only an admin can write a
 profile, so treat the admin role accordingly. A profile that was stored before a name was reserved
 is not rewritten: its jobs are still accepted, then fail at start with `could not prepare the job:
 invalid input: extra_env.<NAME>: ...`; save the profile again without that variable.
