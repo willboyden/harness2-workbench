@@ -246,7 +246,7 @@ async fn system_info(State(st): State<AppState>, headers: HeaderMap) -> R<Json<S
         .filter(|j| j.job.status == JobStatus::Running)
         .count();
     Ok(Json(SystemInfo {
-        studio_version: "0.1.0".to_owned(),
+        workbench_version: "0.1.0".to_owned(),
         build_commit: Some("0f3c9a1".to_owned()),
         harness2: h2w_api::Harness2Status {
             installed: g.installed,
@@ -878,7 +878,7 @@ async fn manifest(
     Ok(Json(Manifest {
         schema_version: 1,
         generated_at: rfc3339(now_secs()),
-        studio_version: "0.1.0".into(),
+        workbench_version: "0.1.0".into(),
         experiment: exp.clone(),
         harness2_commit: Some(TESTED_COMMIT.into()),
         dependency_pins: vec![

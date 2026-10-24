@@ -441,7 +441,7 @@ pub async fn manifest(
     .await?;
     let input = h2w_core::manifest::ManifestInput {
         generated_at: crate::util::now_rfc3339(),
-        studio_version: env!("CARGO_PKG_VERSION").to_owned(),
+        workbench_version: env!("CARGO_PKG_VERSION").to_owned(),
         experiment: exp,
         harness2_commit: status.commit,
         dependency_pins: h2w_core::bench::DEPENDENCY_PINS
