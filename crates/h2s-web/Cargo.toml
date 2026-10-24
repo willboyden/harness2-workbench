@@ -46,6 +46,8 @@ web-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+# Native tests only: compares the client-side mirrors with the server's rules.
+h2s-core.workspace = true
 wasm-bindgen-test.workspace = true
 
 [lints]
