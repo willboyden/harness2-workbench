@@ -36,8 +36,10 @@ End-to-end tests need a harness2 checkout with its virtualenv, Firefox and gecko
 
 ## Git workflow
 
-- `main` is always releasable and protected: changes arrive through pull requests with green CI
-  and at least one maintainer review.
+- `main` is always releasable and protected: a pull request merges only when CI is green and a
+  code owner ([`.github/CODEOWNERS`](.github/CODEOWNERS)) has approved it; new commits dismiss
+  earlier approvals, and force-pushes and deletion are blocked. Repository admins can bypass these
+  rules (GitHub does not let anyone approve their own pull request).
 - Branch names: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `chore/<topic>`, `security/<topic>`.
 - Commits follow [Conventional Commits](https://www.conventionalcommits.org/):
   `<type>(<scope>): <description>`, with types `build chore ci docs feat fix perf refactor
