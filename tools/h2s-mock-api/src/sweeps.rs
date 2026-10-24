@@ -624,6 +624,8 @@ fn row_for(spec: &SweepSpec, task: &TaskSpec, mode: Mode) -> JudgedRow {
             "judge returned no verdict (timeout)".to_owned()
         },
         metric: judged.map(|_| "criteria".to_owned()),
+        points_passed: judged.map(|j| f64::from(j.0)),
+        points_max: judged.map(|j| f64::from(j.1)),
     }
 }
 
@@ -832,6 +834,8 @@ pub(crate) fn scores(spec: &SweepSpec) -> Scores {
                         n_passed: Some(passed),
                         n_criteria: Some(n),
                         all_pass: Some(passed == n),
+                        points_passed: Some(f64::from(passed)),
+                        points_max: Some(f64::from(n)),
                     }
                 })
             })
