@@ -9,15 +9,20 @@ use http::{HeaderMap, HeaderValue, StatusCode, header};
 
 use crate::error::ApiError;
 use crate::http::AppState;
-use crate::http::extract::{AnyRole, ApiJson, Auth, RequestMeta, session_cookie, verify_token};
+use crate::http::extract::{
+    AnyRole, ApiJson, Auth, RequestMeta, session_cookie, session_cookie_name, verify_token,
+};
 use crate::util::now_unix;
 
+/// `Set-Cookie` for the session: HttpOnly, SameSite=Strict, Path=/, never a Domain; over
+/// HTTPS `Secure` and named `__Host-h2s_session`.
 fn session_cookie_header(state: &AppState, value: &str, max_age: i64) -> Option<HeaderValue> {
-    let c = Cookie::build((h2s_api::SESSION_COOKIE, value.to_owned()))
+    let https = state.cfg.public_https;
+    let c = Cookie::build((session_cookie_name(https), value.to_owned()))
         .http_only(true)
         .same_site(SameSite::Strict)
         .path("/")
-        .secure(state.cfg.public_https)
+        .secure(https)
         .max_age(time::Duration::seconds(max_age))
         .build();
     HeaderValue::from_str(&c.to_string()).ok()
@@ -26,7 +31,7 @@ fn session_cookie_header(state: &AppState, value: &str, max_age: i64) -> Option<
 /// Exchange a token for a session cookie (rate-limited per client address).
 #[utoipa::path(post, path = "/api/v1/auth/login", tag = "auth", security(()),
     request_body = LoginRequest,
-    responses((status = 200, body = Principal, description = "Signed in; sets the h2s_session cookie"),
+    responses((status = 200, body = Principal, description = "Signed in; sets the session cookie (h2s_session, or __Host-h2s_session when the server's public URL is https)"),
         (status = "default", description = "Error", body = ErrorBody)))]
 pub async fn login(
     State(state): State<AppState>,
@@ -41,7 +46,7 @@ pub async fn login(
         let entry = meta
             .audit("anonymous", "auth.login", "-", AuditOutcome::Denied)
             .detail("rate limited");
-        state.audit(entry).await;
+        state.audit_failure(meta.client_ip, entry).await;
         return Err(ApiError::rate_limited(secs));
     }
     let ApiJson(req) = body?;
@@ -53,7 +58,7 @@ pub async fn login(
             let entry = meta
                 .audit("anonymous", "auth.login", target, AuditOutcome::Denied)
                 .detail(why.reason());
-            state.audit(entry).await;
+            state.audit_failure(meta.client_ip, entry).await;
             return Err(ApiError::unauthorized("invalid token"));
         }
     };
@@ -99,7 +104,7 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     if auth.principal.kind == PrincipalKind::Session
-        && let Some(v) = session_cookie(&headers)
+        && let Some(v) = session_cookie(&headers, session_cookie_name(state.cfg.public_https))
         && let Some(hash) = crate::auth::session_hash(&v)
     {
         let entry = auth.audit("auth.logout", &auth.principal.id, AuditOutcome::Success);

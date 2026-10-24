@@ -8,7 +8,7 @@ mod common;
 use std::time::Duration;
 
 use common::*;
-use h2s_api::{ErrorBody, Job, JobResult, JobStatus, LogChunk, LogStream, Page, Role};
+use h2s_api::{ErrorBody, ErrorCode, Job, JobResult, JobStatus, LogChunk, LogStream, Page, Role};
 use serde_json::json;
 
 fn mt() -> tokio::runtime::Runtime {
@@ -564,6 +564,10 @@ async fn creation_is_validated_before_anything_runs() {
         )
         .await;
     assert_eq!(r.status(), 403);
+    assert_eq!(
+        r.json::<ErrorBody>().await.unwrap().error.message,
+        "starting a job of kind install_harness2 requires the admin role"
+    );
     let r = t.create_job(&t.viewer, demo_spec("ok-v2")).await;
     assert_eq!(r.status(), 403);
     // A demo on a standard experiment is a conflict.
@@ -580,6 +584,106 @@ async fn creation_is_validated_before_anything_runs() {
         .await
         .unwrap();
     assert!(page.items.is_empty(), "{:?}", page.items);
+    t.stop().await;
+}
+
+/// A job printing far more than `jobs.max_log_bytes` keeps running to the end (its output
+/// is still read and parsed, so it never blocks on a full pipe) while the stored log stops at
+/// the limit with one marker line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn output_beyond_the_log_limit_is_read_but_not_stored() {
+    let cap: u64 = 1024 * 1024;
+    let t = TestServer::start_with(|s| s.file.jobs.max_log_bytes = cap).await;
+    let job: Job = t
+        .create_job(&t.operator, demo_spec("flood-x"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 60).await;
+    assert_terminal(&done, JobStatus::Succeeded);
+    // The demo's progress lines came after the flood: parsed although not stored.
+    assert_eq!(done.progress.as_ref().map(|p| p.done), Some(2), "{done:?}");
+    let file = t.root.path().join(format!("data/logs/jobs/{}.log", job.id));
+    let size = std::fs::metadata(&file).unwrap().len();
+    assert!(size <= cap + 64 * 1024, "the log is {size} bytes");
+    assert!(size > cap / 2, "the log is {size} bytes");
+    let log = full_log(&t, &job.id).await;
+    let markers = log
+        .iter()
+        .filter(|l| l.text.contains("log limit of 1 MiB reached"))
+        .count();
+    assert_eq!(markers, 1);
+    assert!(
+        log.iter()
+            .any(|l| l.stream == LogStream::System && l.text.contains("of output were not stored")),
+        "{:?}",
+        log.iter().rev().take(5).collect::<Vec<_>>()
+    );
+    assert!(log.last().unwrap().text.contains("job succeeded"));
+    assert_eq!(done.log_lines, u64::try_from(log.len()).unwrap());
+    t.stop().await;
+}
+
+/// The data directory's filesystem running out of space stops jobs instead of filling it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn jobs_stop_when_the_data_directory_is_almost_full() {
+    // A floor above any real disk's free space.
+    let t = TestServer::start_with(|s| s.file.jobs.min_free_disk_mb = 1 << 40).await;
+    let job: Job = t
+        .create_job(&t.operator, demo_spec("chatty-disk"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 60).await;
+    assert_terminal(&done, JobStatus::Failed);
+    let error = done.error.unwrap_or_default();
+    assert!(error.contains("MiB free on the data directory"), "{error}");
+    t.stop().await;
+}
+
+/// `install_harness2` checks out only the tested commit unless the configuration allows
+/// others (a fork can make any commit fetchable from the upstream repository).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn installing_an_untested_harness2_commit_needs_the_config_switch() {
+    let other = "0123456789abcdef0123456789abcdef01234567";
+    let tested = h2s_core::TESTED_HARNESS2_COMMIT;
+    let install = |rev: Option<&str>| match rev {
+        Some(r) => json!({"kind": "install_harness2", "params": {"rev": r}}),
+        None => json!({"kind": "install_harness2", "params": {}}),
+    };
+
+    let t = TestServer::start_with(|s| s.file.paths.harness2_managed = true).await;
+    let r = t.create_job(&t.admin, install(Some(other))).await;
+    assert_eq!(r.status(), 422);
+    let e: ErrorBody = r.json().await.unwrap();
+    assert_eq!(e.error.code, ErrorCode::Validation);
+    assert!(
+        e.error.details.iter().any(|d| d.field == "params.rev"),
+        "{e:?}"
+    );
+    assert!(
+        e.error.message.contains("allow_untested_harness2_rev"),
+        "{e:?}"
+    );
+    for rev in [Some(tested), None] {
+        let r = t.create_job(&t.admin, install(rev)).await;
+        assert_eq!(r.status(), 201, "{rev:?}: {}", r.text().await.unwrap());
+        let j: Job = r.json().await.unwrap();
+        t.wait_terminal(&j.id, 30).await;
+    }
+    t.stop().await;
+
+    let t = TestServer::start_with(|s| {
+        s.file.paths.harness2_managed = true;
+        s.file.paths.allow_untested_harness2_rev = true;
+    })
+    .await;
+    let r = t.create_job(&t.admin, install(Some(other))).await;
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    let j: Job = r.json().await.unwrap();
+    t.wait_terminal(&j.id, 30).await;
     t.stop().await;
 }
 
@@ -810,13 +914,13 @@ async fn secrets_printed_by_a_job_are_redacted_everywhere() {
     t.stop().await;
 }
 
-/// A crash (no graceful shutdown) leaves a job `running` and its processes alive; the
-/// next server start marks it failed and terminates its process group.
-#[test]
-fn restart_recovers_running_jobs_and_kills_their_processes() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().to_path_buf();
-    let (job_id, child, leader) = std::thread::spawn(move || {
+/// Run a server in its own runtime, start a `sleep-*` demo job on `experiment`, then crash
+/// the server (no graceful shutdown): the job stays `running` in the database and its
+/// processes keep running. Returns the job id, the stub's background child and the leader.
+fn crash_with_a_running_job(path: &std::path::Path, experiment: &str) -> (String, i32, i32) {
+    let path = path.to_path_buf();
+    let experiment = experiment.to_owned();
+    std::thread::spawn(move || {
         mt().block_on(async move {
             fake_harness2_home(&path.join("harness2"));
             let setup = Setup::new(&path);
@@ -844,18 +948,21 @@ fn restart_recovers_running_jobs_and_kills_their_processes() {
                 .post(format!("{}/api/v1/jobs", srv.base_url()))
                 .bearer_auth(minted.token.as_str())
                 .header("x-h2s-request", "1")
-                .json(&demo_spec("sleep-crash"))
+                .json(&demo_spec(&experiment))
                 .send()
                 .await
                 .unwrap()
                 .json()
                 .await
                 .unwrap();
-            let child: i32 = wait_file(&path.join("data/experiments/sleep-crash/child.pid"), 30)
-                .await
-                .trim()
-                .parse()
-                .unwrap();
+            let child: i32 = wait_file(
+                &path.join(format!("data/experiments/{experiment}/child.pid")),
+                30,
+            )
+            .await
+            .trim()
+            .parse()
+            .unwrap();
             let jid = job.id.clone();
             let leader = loop {
                 let j = jid.clone();
@@ -867,6 +974,7 @@ fn restart_recovers_running_jobs_and_kills_their_processes() {
                     .unwrap()
                     .unwrap();
                 if let Some(p) = row.pid {
+                    assert!(row.pid_start.is_some() && row.pid_boot.is_some(), "{row:?}");
                     break i32::try_from(p).unwrap();
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -879,11 +987,21 @@ fn restart_recovers_running_jobs_and_kills_their_processes() {
         })
     })
     .join()
-    .unwrap();
+    .unwrap()
+}
+
+/// A crash (no graceful shutdown) leaves a job `running` and its processes alive; the
+/// next server start marks it failed and terminates its process group, identified by the
+/// job marker in the leader's environment.
+#[test]
+fn restart_recovers_running_jobs_and_kills_their_processes() {
+    let root = tempfile::tempdir().unwrap();
+    let (job_id, child, leader) = crash_with_a_running_job(root.path(), "sleep-crash");
     assert!(
         !process_gone(child),
         "the job's processes should survive the crash"
     );
+    assert!(h2s_daemon::jobs::procfs::carries_marker(leader, &job_id));
 
     mt().block_on(async move {
         let setup = Setup::new(root.path());
@@ -900,7 +1018,45 @@ fn restart_recovers_running_jobs_and_kills_their_processes() {
             "the leader survived the restart"
         );
         let log = full_log(&t, &job_id).await;
-        assert!(log.last().unwrap().text.contains("server restarted"));
+        let last = &log.last().unwrap().text;
+        assert!(last.contains("server restarted"), "{last}");
+        assert!(last.contains("terminated its process group"), "{last}");
+        t.stop().await;
+    });
+}
+
+/// Start times are clock ticks since boot: a record from another boot identifies nothing,
+/// so recovery signals nothing. (The processes here are alive and carry the marker, so it
+/// is the boot check that holds.)
+#[test]
+fn restart_recovery_signals_nothing_recorded_on_another_boot() {
+    let root = tempfile::tempdir().unwrap();
+    let (job_id, child, leader) = crash_with_a_running_job(root.path(), "sleep-boot");
+    let db = h2s_daemon::db::open_connection(&root.path().join("data/studio.db")).unwrap();
+    let n = db
+        .execute(
+            "UPDATE jobs SET pid_boot = '00000000-0000-0000-0000-000000000000' WHERE id = ?1",
+            [&job_id],
+        )
+        .unwrap();
+    assert_eq!(n, 1);
+    drop(db);
+
+    mt().block_on(async move {
+        let setup = Setup::new(root.path());
+        let t = TestServer::start_in(root, setup).await;
+        let j = t.job(&job_id).await;
+        assert_terminal(&j, JobStatus::Failed);
+        assert_eq!(j.error.as_deref(), Some("server restarted"));
+        let log = full_log(&t, &job_id).await;
+        let last = &log.last().unwrap().text;
+        assert!(last.contains("before a reboot"), "{last}");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let alive = !process_gone(child) && !process_gone(leader);
+        // Clean up whatever happens below.
+        let _ = h2s_daemon::jobs::procfs::signal_group(leader, nix::sys::signal::Signal::SIGKILL);
+        assert!(alive, "a process recorded on another boot was signalled");
+        assert!(wait_gone(child, 15).await && wait_gone(leader, 15).await);
         t.stop().await;
     });
 }
@@ -1078,6 +1234,27 @@ async fn preacknowledged_host_risks_need_no_flag() {
     assert_eq!(r.status(), 201);
     let j: Job = r.json().await.unwrap();
     t.wait_terminal(&j.id, 30).await;
+    // Every role can see it (the UI then skips asking for the acknowledgement).
+    let info: h2s_api::SystemInfo = t
+        .get("/api/v1/system/info", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(info.host_risks_preacknowledged);
+    t.stop().await;
+    let t = TestServer::start().await;
+    let info: h2s_api::SystemInfo = t
+        .get("/api/v1/system/info", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!info.host_risks_preacknowledged);
     t.stop().await;
 }
 

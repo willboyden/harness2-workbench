@@ -174,6 +174,13 @@ mod serde_urlencoded_lite {
 // Authentication
 // ---------------------------------------------------------------------------------------
 
+/// Failed authentications with credentials (malformed, unknown or wrong tokens, bad proxy
+/// headers) per client address and minute; further failures are answered 429.
+pub const AUTH_FAILURES_PER_MINUTE: u32 = 60;
+/// Audit records of failed authentication (`auth.failed`, denied `auth.login`) per client
+/// address and minute; further failures are only counted in `h2s_auth_failures_total`.
+pub const AUDITED_FAILURES_PER_MINUTE: u32 = 10;
+
 /// Why a request was not authenticated (also the metric label).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthFailure {
@@ -187,6 +194,8 @@ pub enum AuthFailure {
     ProxyUntrusted,
     ProxySecret,
     ProxyUser,
+    /// The user, groups or secret header appears more than once.
+    ProxyDuplicate,
     ProxyNoRole,
     Unavailable,
 }
@@ -205,6 +214,7 @@ impl AuthFailure {
             AuthFailure::ProxyUntrusted => "proxy_untrusted",
             AuthFailure::ProxySecret => "proxy_secret",
             AuthFailure::ProxyUser => "proxy_user",
+            AuthFailure::ProxyDuplicate => "proxy_duplicate_header",
             AuthFailure::ProxyNoRole => "proxy_no_role",
             AuthFailure::Unavailable => "unavailable",
         }
@@ -233,6 +243,42 @@ impl AuthFailure {
             }
             _ => ApiError::unauthorized("invalid credentials"),
         }
+    }
+}
+
+/// What authenticated a request, kept so long-lived responses (event streams) can check
+/// that it is still valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Credential {
+    /// An API token (by id).
+    Token(String),
+    /// A browser session (by the hash of its id).
+    Session([u8; 32]),
+    /// Reverse-proxy headers: nothing the server can revoke.
+    Proxy,
+}
+
+/// Whether `credential` still authenticates: the token is neither revoked nor expired, the
+/// session still exists (logout, revocation and expiry end it). Database errors count as
+/// invalid (the client reconnects and authenticates again).
+pub(crate) async fn credential_valid(state: &AppState, credential: &Credential) -> bool {
+    let now = now_unix();
+    match credential.clone() {
+        Credential::Proxy => true,
+        Credential::Token(id) => state
+            .db
+            .call(move |c| crate::db::tokens::get(c, &id))
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|r| r.is_active(now)),
+        Credential::Session(hash) => state
+            .db
+            .call(move |c| crate::db::sessions::lookup(c, &hash, now))
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|r| r.is_active(now)),
     }
 }
 
@@ -280,12 +326,30 @@ fn token_principal(rec: &TokenRecord, kind: PrincipalKind) -> Principal {
     }
 }
 
-/// The value of the session cookie, when present.
-pub(crate) fn session_cookie(headers: &http::HeaderMap) -> Option<String> {
+/// Name of the session cookie over HTTPS. The `__Host-` prefix makes browsers refuse it
+/// unless it is `Secure`, has `Path=/` and no `Domain`, so a sibling subdomain cannot plant
+/// ("toss") a session cookie for this host.
+pub const SECURE_SESSION_COOKIE: &str = "__Host-h2s_session";
+
+/// The session cookie's name: [`SECURE_SESSION_COOKIE`] when `public_url` is `https`, else
+/// `h2s_session` (`__Host-` cookies need `Secure`, which browsers drop over plain HTTP).
+#[must_use]
+pub fn session_cookie_name(public_https: bool) -> &'static str {
+    if public_https {
+        SECURE_SESSION_COOKIE
+    } else {
+        h2s_api::SESSION_COOKIE
+    }
+}
+
+/// The value of the session cookie named `name`, when present (a cookie under any other
+/// name, the plain `h2s_session` included when the server uses the `__Host-` name, is
+/// ignored).
+pub(crate) fn session_cookie(headers: &http::HeaderMap, name: &str) -> Option<String> {
     for v in headers.get_all(http::header::COOKIE) {
         let Ok(s) = v.to_str() else { continue };
         for c in cookie::Cookie::split_parse(s).flatten() {
-            if c.name() == h2s_api::SESSION_COOKIE {
+            if c.name() == name {
                 return Some(c.value().to_owned());
             }
         }
@@ -324,18 +388,21 @@ async fn resolve(
     state: &AppState,
     headers: &http::HeaderMap,
     meta: &RequestMeta,
-) -> Result<Principal, Failed> {
+) -> Result<(Principal, Credential), Failed> {
     if let Some(b) = bearer(headers) {
         let token = b?;
         return match verify_token(state, &token).await {
-            Ok(rec) => Ok(token_principal(&rec, PrincipalKind::Token)),
+            Ok(rec) => Ok((
+                token_principal(&rec, PrincipalKind::Token),
+                Credential::Token(rec.id),
+            )),
             Err(why) => Err(Failed {
                 why,
                 target: crate::auth::token_id_hint(&token).map(str::to_owned),
             }),
         };
     }
-    if let Some(value) = session_cookie(headers) {
+    if let Some(value) = session_cookie(headers, session_cookie_name(state.cfg.public_https)) {
         let hash = crate::auth::session_hash(&value).ok_or(AuthFailure::SessionInvalid)?;
         let now = now_unix();
         let rec = state
@@ -350,18 +417,23 @@ async fn resolve(
                 target: Some(rec.id),
             });
         }
-        return Ok(token_principal(&rec, PrincipalKind::Session));
+        return Ok((
+            token_principal(&rec, PrincipalKind::Session),
+            Credential::Session(hash),
+        ));
     }
     if state.cfg.file.auth.mode == h2s_api::AuthMode::Proxy {
         let p = &state.cfg.file.auth.proxy;
         if let Some(user) = headers.get(p.user_header.as_str()) {
-            return proxy_principal(state, headers, meta, user).map_err(|why| Failed {
-                why,
-                target: user
-                    .to_str()
-                    .ok()
-                    .map(|u| crate::util::truncate_chars(u, 100)),
-            });
+            return proxy_principal(state, headers, meta, user)
+                .map(|principal| (principal, Credential::Proxy))
+                .map_err(|why| Failed {
+                    why,
+                    target: user
+                        .to_str()
+                        .ok()
+                        .map(|u| crate::util::truncate_chars(u, 100)),
+                });
         }
     }
     Err(AuthFailure::Missing.into())
@@ -376,6 +448,15 @@ fn proxy_principal(
     let p = &state.cfg.file.auth.proxy;
     if !meta.peer_is_trusted_proxy {
         return Err(AuthFailure::ProxyUntrusted);
+    }
+    // The proxy sets each of these once and strips what the client sent. A repeated header
+    // means a client value got through: taking the first user or the union of the groups
+    // would let it choose its identity or add itself to an admin group.
+    let repeated = [&p.user_header, &p.groups_header, &p.secret_header]
+        .into_iter()
+        .any(|name| headers.get_all(name.as_str()).iter().nth(1).is_some());
+    if repeated {
+        return Err(AuthFailure::ProxyDuplicate);
     }
     let presented = headers
         .get(p.secret_header.as_str())
@@ -419,31 +500,42 @@ fn proxy_principal(
 /// Authenticate the request (cached per request).
 ///
 /// # Errors
-/// 401 (or 403 for a proxy user without a role); every failure is counted, and audited
-/// when credentials were presented.
+/// 401 (or 403 for a proxy user without a role); every failure is counted. Failures with
+/// credentials are audited up to [`AUDITED_FAILURES_PER_MINUTE`] per client, and past
+/// [`AUTH_FAILURES_PER_MINUTE`] per client they are answered 429.
 pub async fn authenticate(parts: &mut Parts, state: &AppState) -> Result<Principal, ApiError> {
     if let Some(p) = parts.extensions.get::<Principal>() {
         return Ok(p.clone());
     }
     let meta = RequestMeta::from_request_parts(parts, state).await?;
     match resolve(state, &parts.headers, &meta).await {
-        Ok(p) => {
+        Ok((p, credential)) => {
             parts.extensions.insert(p.clone());
+            parts.extensions.insert(credential);
             Ok(p)
         }
         Err(Failed { why, target }) => {
-            state.metrics.auth_failure(why.reason());
-            if why.presented() {
-                let entry = meta
-                    .audit(
-                        "anonymous",
-                        "auth.failed",
-                        target.as_deref().unwrap_or("-"),
-                        AuditOutcome::Denied,
-                    )
-                    .detail(format!("{} on {}", why.reason(), parts.uri.path()));
-                state.audit(entry).await;
+            if !why.presented() {
+                state.metrics.auth_failure(why.reason());
+                return Err(why.into_error());
             }
+            let key = meta
+                .client_ip
+                .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+            if let Err(wait) = state.auth_failures.check(key) {
+                state.metrics.auth_failure("rate_limited");
+                return Err(ApiError::rate_limited(wait.as_secs().max(1)));
+            }
+            state.metrics.auth_failure(why.reason());
+            let entry = meta
+                .audit(
+                    "anonymous",
+                    "auth.failed",
+                    target.as_deref().unwrap_or("-"),
+                    AuditOutcome::Denied,
+                )
+                .detail(format!("{} on {}", why.reason(), parts.uri.path()));
+            state.audit_failure(meta.client_ip, entry).await;
             Err(why.into_error())
         }
     }
@@ -485,6 +577,8 @@ impl Need for AdminRole {
 #[derive(Debug, Clone)]
 pub struct Auth<R: Need> {
     pub principal: Principal,
+    /// What authenticated the request (re-checked by event streams).
+    pub credential: Credential,
     pub meta: RequestMeta,
     _need: PhantomData<fn() -> R>,
 }
@@ -554,8 +648,14 @@ impl<R: Need> FromRequestParts<AppState> for Auth<R> {
             let route = format!("{} {}", parts.method, parts.uri.path());
             return Err(deny(state, &principal, &meta, &route, role).await);
         }
+        let credential = parts
+            .extensions
+            .get::<Credential>()
+            .cloned()
+            .ok_or_else(|| ApiError::internal("the request lost its credential"))?;
         Ok(Auth {
             principal,
+            credential,
             meta,
             _need: PhantomData,
         })
@@ -590,11 +690,23 @@ mod tests {
             http::header::COOKIE,
             "a=1; h2s_session=abc; b=2".parse().unwrap(),
         );
-        assert_eq!(session_cookie(&h).as_deref(), Some("abc"));
+        assert_eq!(session_cookie(&h, "h2s_session").as_deref(), Some("abc"));
         let mut h = http::HeaderMap::new();
         h.append(http::header::COOKIE, "a=1".parse().unwrap());
         h.append(http::header::COOKIE, "h2s_session=zz".parse().unwrap());
-        assert_eq!(session_cookie(&h).as_deref(), Some("zz"));
+        assert_eq!(session_cookie(&h, "h2s_session").as_deref(), Some("zz"));
+        // Over HTTPS only the __Host- name counts.
+        assert_eq!(session_cookie(&h, SECURE_SESSION_COOKIE), None);
+        h.append(
+            http::header::COOKIE,
+            "__Host-h2s_session=hh".parse().unwrap(),
+        );
+        assert_eq!(
+            session_cookie(&h, SECURE_SESSION_COOKIE).as_deref(),
+            Some("hh")
+        );
+        assert_eq!(session_cookie_name(true), "__Host-h2s_session");
+        assert_eq!(session_cookie_name(false), "h2s_session");
     }
 
     #[tokio::test]

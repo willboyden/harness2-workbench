@@ -21,8 +21,15 @@ pub enum DirError {
     NotADirectory(String),
     #[error("the experiment directory {0} does not exist")]
     Missing(String),
+    // The message includes the cause; it is not also a `source()` (see `db::DbError`).
     #[error("experiment directory I/O: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
+}
+
+impl From<std::io::Error> for DirError {
+    fn from(e: std::io::Error) -> Self {
+        DirError::Io(e)
+    }
 }
 
 fn root(experiments_dir: &Path) -> Result<Dir, DirError> {

@@ -70,6 +70,10 @@ pub struct Metrics {
     pub job_duration: HistogramFamily<KindLabels>,
     pub spend_usd: Family<ExperimentLabels, Counter<f64, AtomicU64>>,
     pub auth_failures: Family<ReasonLabels, Counter>,
+    /// Records of failed authentication not written (a client's per-minute share is used).
+    pub audit_suppressed: Counter,
+    /// Connections closed at accept: `total` (the server's cap) or `per_client`.
+    pub connections_refused: Family<ReasonLabels, Counter>,
     pub sse_connections: Gauge,
     experiments: Mutex<HashSet<String>>,
 }
@@ -114,6 +118,8 @@ impl Metrics {
             Family::new_with_constructor(job_histogram as fn() -> Histogram);
         let spend_usd = Family::<ExperimentLabels, Counter<f64, AtomicU64>>::default();
         let auth_failures = Family::<ReasonLabels, Counter>::default();
+        let audit_suppressed = Counter::default();
+        let connections_refused = Family::<ReasonLabels, Counter>::default();
         let sse_connections = Gauge::default();
         // Counters are registered without `_total`; the encoder appends it.
         registry.register(
@@ -148,6 +154,16 @@ impl Metrics {
             auth_failures.clone(),
         );
         registry.register(
+            "h2s_audit_suppressed",
+            "Audit records of failed authentication not written (per-client limit)",
+            audit_suppressed.clone(),
+        );
+        registry.register(
+            "h2s_connections_refused",
+            "Connections closed at accept, by reason (total or per_client cap)",
+            connections_refused.clone(),
+        );
+        registry.register(
             "h2s_sse_connections",
             "Open job event streams",
             sse_connections.clone(),
@@ -161,6 +177,8 @@ impl Metrics {
             job_duration,
             spend_usd,
             auth_failures,
+            audit_suppressed,
+            connections_refused,
             sse_connections,
             experiments: Mutex::new(HashSet::new()),
         }
@@ -252,6 +270,12 @@ mod tests {
         m.jobs_running.set(1);
         m.add_spend("e1", 0.25);
         m.auth_failure("missing");
+        m.audit_suppressed.inc();
+        m.connections_refused
+            .get_or_create(&ReasonLabels {
+                reason: "per_client",
+            })
+            .inc();
         m.sse_connections.inc();
         let text = m.encode();
         for name in [
@@ -262,6 +286,8 @@ mod tests {
             "h2s_job_duration_seconds_count{kind=\"demo\"} 1",
             "h2s_spend_usd_total{experiment=\"e1\"} 0.25",
             "h2s_auth_failures_total{reason=\"missing\"} 1",
+            "h2s_audit_suppressed_total 1",
+            "h2s_connections_refused_total{reason=\"per_client\"} 1",
             "h2s_sse_connections 1",
             "method=\"OTHER\"",
         ] {

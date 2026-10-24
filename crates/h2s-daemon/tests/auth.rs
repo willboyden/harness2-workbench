@@ -374,6 +374,186 @@ async fn login_attempts_are_rate_limited_per_client() {
     t.stop().await;
 }
 
+/// Behind HTTPS the session cookie carries the `__Host-` prefix (Secure, Path=/, no Domain:
+/// a sibling subdomain cannot plant one), and a plain `h2s_session` cookie is ignored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn https_deployments_use_a_host_prefixed_session_cookie() {
+    let t = TestServer::start_with(|s| {
+        s.file.server.public_url = "https://studio.example.com".into();
+    })
+    .await;
+    let r = t
+        .post("/api/v1/auth/login", None)
+        .json(&json!({ "token": t.viewer }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let set = r.headers()["set-cookie"].to_str().unwrap().to_owned();
+    assert!(set.starts_with("__Host-h2s_session="), "{set}");
+    for attr in ["HttpOnly", "SameSite=Strict", "Secure", "Path=/"] {
+        assert!(set.contains(attr), "{attr} missing: {set}");
+    }
+    assert!(!set.to_ascii_lowercase().contains("domain="), "{set}");
+    let pair = set.split(';').next().unwrap().to_owned();
+    let value = pair.split_once('=').unwrap().1.to_owned();
+    let with_cookie = |cookie: String| {
+        t.client
+            .get(t.url("/api/v1/auth/me"))
+            .header("cookie", cookie)
+            .send()
+    };
+    assert_eq!(with_cookie(pair.clone()).await.unwrap().status(), 200);
+    // The same session under the plain name is not accepted over HTTPS.
+    assert_eq!(
+        with_cookie(format!("h2s_session={value}"))
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    // Logout clears the prefixed cookie.
+    let r = t
+        .client
+        .post(t.url("/api/v1/auth/logout"))
+        .header("cookie", &pair)
+        .header("x-h2s-request", "1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let cleared = r.headers()["set-cookie"].to_str().unwrap();
+    assert!(
+        cleared.starts_with("__Host-h2s_session=;") && cleared.contains("Max-Age=0"),
+        "{cleared}"
+    );
+    assert_eq!(with_cookie(pair).await.unwrap().status(), 401);
+    t.stop().await;
+}
+
+async fn audit_rows(t: &TestServer) -> u64 {
+    t.srv()
+        .state
+        .db
+        .call(|c| h2s_daemon::db::audit::head(c))
+        .await
+        .unwrap()
+        .map_or(0, |(seq, _)| seq)
+}
+
+/// Junk credentials cannot flood the hash-chained audit log: per client, a few failures a
+/// minute are recorded, the rest only counted, and past a limit failures are 429.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_authentication_cannot_flood_the_audit_log() {
+    let t = TestServer::start().await;
+    let before = audit_rows(&t).await;
+    let mut statuses = std::collections::BTreeMap::new();
+    for i in 0..500 {
+        // Malformed, unknown-id and wrong-secret tokens, in turn.
+        let junk = match i % 3 {
+            0 => format!("junk-{i}"),
+            1 => format!("h2s_{:08}_{}", i, "A".repeat(43)),
+            _ => format!("{}{}", &t.viewer[..13], "B".repeat(43)),
+        };
+        let r = me(&t, &junk).await;
+        *statuses.entry(r.status().as_u16()).or_insert(0) += 1;
+        if r.status() == 429 {
+            assert!(r.headers().contains_key("retry-after"));
+        }
+    }
+    let audited = audit_rows(&t).await - before;
+    assert!(
+        (1..=u64::from(h2s_daemon::http::extract::AUDITED_FAILURES_PER_MINUTE)).contains(&audited),
+        "{audited} audit rows for 500 failures"
+    );
+    let limit = h2s_daemon::http::extract::AUTH_FAILURES_PER_MINUTE;
+    assert_eq!(statuses.get(&401).copied(), Some(limit), "{statuses:?}");
+    assert_eq!(
+        statuses.get(&429).copied(),
+        Some(500 - limit),
+        "{statuses:?}"
+    );
+    // Failed logins share the record budget: no new rows for this client.
+    for _ in 0..5 {
+        let r = t
+            .post("/api/v1/auth/login", None)
+            .json(&json!({"token": "h2s_junk"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401);
+    }
+    assert_eq!(audit_rows(&t).await - before, audited);
+    // Valid credentials from the same client still work, and every failure was counted.
+    assert_eq!(me(&t, &t.admin).await.status(), 200);
+    let m = t
+        .get("/metrics", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let count = |reason: &str| -> u64 {
+        let key = format!("h2s_auth_failures_total{{reason=\"{reason}\"}} ");
+        m.lines()
+            .find_map(|l| l.strip_prefix(key.as_str()))
+            .map_or(0, |v| v.trim().parse().unwrap())
+    };
+    // One reason per refused request: the 60 answered 401 plus the 5 logins, then 429s.
+    assert_eq!(
+        count("malformed") + count("unknown_token") + count("bad_secret"),
+        u64::from(limit) + 5,
+        "{m}"
+    );
+    assert_eq!(count("rate_limited"), u64::from(500 - limit), "{m}");
+    let suppressed = m
+        .lines()
+        .find_map(|l| l.strip_prefix("h2s_audit_suppressed_total "))
+        .map_or(0, |v| v.trim().parse::<u64>().unwrap());
+    assert_eq!(suppressed, u64::from(limit) + 5 - audited, "{m}");
+    t.stop().await;
+}
+
+/// A token-length string whose multi-byte character straddles the id/secret split once
+/// panicked the login handler (the connection was dropped instead of answered).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn non_ascii_tokens_are_refused_with_401() {
+    let t = TestServer::start().await;
+    let tokens = [
+        format!("h2s_abcdefgé{}", "A".repeat(43)),
+        format!("h2s_{}", "é".repeat(26)),
+        format!("h2s_abcdefg😀{}", "B".repeat(41)),
+    ];
+    for token in &tokens {
+        let r = t
+            .post("/api/v1/auth/login", None)
+            .json(&json!({ "token": token }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401, "{token}");
+        assert_eq!(
+            r.json::<ErrorBody>().await.unwrap().error.code,
+            ErrorCode::Unauthorized
+        );
+        // The same bytes as a bearer token (obs-text in the header) are refused too.
+        let header =
+            reqwest::header::HeaderValue::from_bytes(format!("Bearer {token}").as_bytes()).unwrap();
+        let r = t
+            .client
+            .get(t.url("/api/v1/auth/me"))
+            .header("authorization", header)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401, "{token}");
+    }
+    // The server is still serving.
+    assert_eq!(me(&t, &t.admin).await.status(), 200);
+    t.stop().await;
+}
+
 const PROXY_SECRET: &str = "proxy-shared-secret-0123456789";
 
 fn proxy_setup(s: &mut Setup, trusted: &str) {
@@ -432,6 +612,72 @@ async fn proxy_mode_maps_groups_to_roles() {
             .iter()
             .any(|e| e.action == "auth.failed" && e.target == "mallory")
     );
+    t.stop().await;
+}
+
+/// A client value the proxy failed to strip must not pick the identity or add a group.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repeated_proxy_identity_headers_are_refused() {
+    let t = TestServer::start_with(|s| proxy_setup(s, "127.0.0.1")).await;
+    let base = || {
+        t.client
+            .get(t.url("/api/v1/auth/me"))
+            .header("x-h2s-proxy-secret", PROXY_SECRET)
+    };
+    let cases = [
+        (
+            "groups",
+            base()
+                .header("x-forwarded-user", "alice")
+                .header("x-forwarded-groups", "staff")
+                .header("x-forwarded-groups", "admins"),
+        ),
+        (
+            "user",
+            base()
+                .header("x-forwarded-user", "mallory")
+                .header("x-forwarded-user", "alice")
+                .header("x-forwarded-groups", "staff"),
+        ),
+        (
+            "secret",
+            base()
+                .header("x-h2s-proxy-secret", "something-else-entirely")
+                .header("x-forwarded-user", "alice")
+                .header("x-forwarded-groups", "staff"),
+        ),
+    ];
+    for (what, req) in cases {
+        let r = req.send().await.unwrap();
+        assert_eq!(r.status(), 401, "repeated {what} header");
+        assert_eq!(
+            r.json::<ErrorBody>().await.unwrap().error.code,
+            ErrorCode::Unauthorized
+        );
+    }
+    // One of each still works, and the refusals were audited with their reason.
+    let r = proxied(&t, "alice", "staff, admins", PROXY_SECRET).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.json::<Principal>().await.unwrap().role, Role::Admin);
+    let audit: Page<AuditEvent> = t
+        .get("/api/v1/audit?limit=100", Some(&t.admin))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let dup = audit
+        .items
+        .iter()
+        .filter(|e| {
+            e.action == "auth.failed"
+                && e.detail
+                    .as_deref()
+                    .is_some_and(|d| d.starts_with("proxy_duplicate_header"))
+        })
+        .count();
+    assert_eq!(dup, 3, "{:#?}", audit.items);
     t.stop().await;
 }
 

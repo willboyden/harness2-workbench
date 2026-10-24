@@ -5,6 +5,8 @@
 
 mod common;
 
+use std::time::Duration;
+
 use common::*;
 use h2s_api::ErrorBody;
 use h2s_daemon::http::guard::SECURITY_HEADERS;
@@ -83,6 +85,43 @@ async fn foreign_host_headers_are_misdirected() {
     // HTTP/1.0 without Host.
     let raw = raw_http(addr, b"GET /healthz HTTP/1.0\r\n\r\n").await;
     assert_eq!(status_of(&raw), 421, "{raw}");
+    // Two Host headers are a 400 whatever their values (RFC 9112 §3.2), first allowed or not.
+    for (first, second) in [
+        (format!("127.0.0.1:{port}"), "evil.example".to_owned()),
+        ("evil.example".to_owned(), format!("127.0.0.1:{port}")),
+        (format!("127.0.0.1:{port}"), format!("127.0.0.1:{port}")),
+    ] {
+        let raw = raw_http(
+            addr,
+            format!(
+                "GET /healthz HTTP/1.1\r\nHost: {first}\r\nHost: {second}\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await;
+        assert_eq!(status_of(&raw), 400, "{first} + {second}: {raw}");
+        assert_security_headers_raw(&raw);
+        assert!(raw.contains("\"bad_request\""), "{raw}");
+    }
+    // An absolute-form target is checked as well as the Host header.
+    let raw = raw_http(
+        addr,
+        format!(
+            "GET http://evil.example/healthz HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await;
+    assert_eq!(status_of(&raw), 421, "{raw}");
+    let raw = raw_http(
+        addr,
+        format!(
+            "GET http://127.0.0.1:{port}/healthz HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await;
+    assert_eq!(status_of(&raw), 200, "{raw}");
     for host in [
         format!("127.0.0.1:{port}"),
         format!("localhost:{port}"),
@@ -451,5 +490,72 @@ async fn stalled_requests_time_out_with_503() {
     assert!(head.starts_with("HTTP/1.1 503"), "{head}");
     assert!(head.contains("\"unavailable\""), "{head}");
     assert!(started.elapsed() >= std::time::Duration::from_millis(900));
+    t.stop().await;
+}
+
+/// One client address cannot hold every connection slot: past
+/// `server.max_connections_per_ip` its new connections are closed at once, while another
+/// address is still served, and a closed connection gives its slot back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn connections_are_capped_per_client_address() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let t = TestServer::start_with(|s| s.file.server.max_connections_per_ip = 4).await;
+    let addr = t.srv().addr;
+    let port = addr.port();
+    let connect_from = |source: &'static str| async move {
+        let sock = tokio::net::TcpSocket::new_v4().unwrap();
+        sock.bind(format!("{source}:0").parse().unwrap()).unwrap();
+        sock.connect(addr).await.unwrap()
+    };
+    let healthz = |mut s: tokio::net::TcpStream| async move {
+        let req =
+            format!("GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+        let _ = s.write_all(req.as_bytes()).await;
+        let mut buf = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut buf)).await;
+        String::from_utf8_lossy(&buf).into_owned()
+    };
+    // Four idle connections (no request yet) from 127.0.0.1 use its slots.
+    let mut idle = Vec::new();
+    for _ in 0..4 {
+        idle.push(connect_from("127.0.0.1").await);
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    // The fifth is closed without an answer.
+    loop {
+        let raw = healthz(connect_from("127.0.0.1").await).await;
+        if raw.is_empty() {
+            break;
+        }
+        // The server may not have counted every idle connection yet.
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "never refused: {raw}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // Another address is served.
+    let raw = healthz(connect_from("127.0.0.2").await).await;
+    assert!(raw.starts_with("HTTP/1.1 200"), "{raw}");
+    // Closing one idle connection frees a slot for 127.0.0.1.
+    drop(idle.pop());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let raw = healthz(connect_from("127.0.0.1").await).await;
+        if raw.starts_with("HTTP/1.1 200") {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the slot was never released"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let m = t.srv().state.metrics.encode();
+    assert!(
+        m.contains("h2s_connections_refused_total{reason=\"per_client\"}"),
+        "{m}"
+    );
+    drop(idle);
     t.stop().await;
 }

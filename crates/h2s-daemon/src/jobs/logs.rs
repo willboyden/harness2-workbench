@@ -114,14 +114,28 @@ impl LogFile {
         ))
     }
 
+    /// The file's size on disk (flushed bytes).
+    ///
+    /// # Errors
+    /// I/O errors.
+    pub async fn size(&self) -> std::io::Result<u64> {
+        Ok(self.file.get_ref().metadata().await?.len())
+    }
+
     /// Append one line (buffered; call [`LogFile::flush`] to make it visible to readers).
     ///
     /// # Errors
     /// I/O or serialization errors.
     pub async fn append(&mut self, line: &LogLine) -> std::io::Result<()> {
-        let mut json = serde_json::to_vec(line).map_err(std::io::Error::other)?;
-        json.push(b'\n');
-        self.file.write_all(&json).await
+        self.append_encoded(&encode(line)?).await
+    }
+
+    /// Append a line already encoded with [`encode`].
+    ///
+    /// # Errors
+    /// I/O errors.
+    pub async fn append_encoded(&mut self, json: &[u8]) -> std::io::Result<()> {
+        self.file.write_all(json).await
     }
 
     /// Flush buffered lines to the file.
@@ -131,6 +145,16 @@ impl LogFile {
     pub async fn flush(&mut self) -> std::io::Result<()> {
         self.file.flush().await
     }
+}
+
+/// A log line as stored: its JSON and a newline.
+///
+/// # Errors
+/// Serialization errors (not expected).
+pub fn encode(line: &LogLine) -> std::io::Result<Vec<u8>> {
+    let mut json = serde_json::to_vec(line).map_err(std::io::Error::other)?;
+    json.push(b'\n');
+    Ok(json)
 }
 
 fn count_lines(path: &Path) -> std::io::Result<u64> {
@@ -190,6 +214,13 @@ pub fn read_page(path: &Path, from: u64, limit: u64) -> std::io::Result<(Vec<Log
     Ok((out, next))
 }
 
+/// `true` when `s` ends with `file://` (any case).
+fn ends_with_file_scheme(s: &str) -> bool {
+    s.len() >= 7
+        && s.is_char_boundary(s.len() - 7)
+        && s[s.len() - 7..].eq_ignore_ascii_case("file://")
+}
+
 /// Replaces known absolute host paths in log text with short placeholders, so job logs
 /// shown to viewers do not reveal the server's directory layout or user name.
 #[derive(Debug, Clone, Default)]
@@ -227,9 +258,10 @@ impl PathMasker {
                         .chars()
                         .next()
                         .is_none_or(|c| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.')));
+                    // A path starts the text, follows a separator, or is a `file://` URL.
                     let before_ok = out.chars().last().is_none_or(|c| {
                         !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
-                    });
+                    }) || ends_with_file_scheme(&out);
                     if boundary && before_ok {
                         out.push_str(placeholder);
                         rest = after;
@@ -348,6 +380,15 @@ mod tests {
         assert_eq!(m.mask("x/srv/h2s/y"), "x/srv/h2s/y");
         assert_eq!(m.mask("cd /var/lib/alice"), "cd ~");
         assert!(matches!(m.mask("nothing here"), Cow::Borrowed(_)));
+        // file:// URLs (any case), as harness2 and browsers print them.
+        assert_eq!(
+            m.mask("open file:///srv/h2s/experiments/demo/report.html"),
+            "open file://<experiment>/report.html"
+        );
+        assert_eq!(m.mask("FILE:///srv/h2s/x"), "FILE://<data>/x");
+        // Other schemes and relative URLs stay as they are.
+        assert_eq!(m.mask("http://h/srv/h2s/x"), "http://h/srv/h2s/x");
+        assert_eq!(m.mask("ab://srv/h2s/x"), "ab://srv/h2s/x");
     }
 
     proptest! {

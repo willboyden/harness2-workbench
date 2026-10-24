@@ -67,6 +67,27 @@ async fn demo_runs_through_the_core_backend() {
     t.stop().await;
 }
 
+/// The result files a job leaves are read without following a symlink and without blocking
+/// on a FIFO: a demo that plants either fails with a clear message instead of hanging the
+/// runner or reading another file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn planted_result_files_fail_the_job_instead_of_hanging_it() {
+    let t = core_server().await;
+    for (exp, why) in [
+        ("fifo-x", "demo.json is not a regular file"),
+        ("symlink-x", "demo.json is a symbolic link"),
+    ] {
+        let r = t.create_job(&t.operator, demo_spec(exp)).await;
+        assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+        let j: Job = r.json().await.unwrap();
+        let done = t.wait_terminal(&j.id, 30).await;
+        assert_terminal(&done, JobStatus::Failed);
+        let error = done.error.unwrap_or_default();
+        assert!(error.contains(why), "{exp}: {error}");
+    }
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn check_jobs_parse_harness2_check_output() {
     let t = core_server().await;
@@ -89,6 +110,54 @@ async fn check_jobs_parse_harness2_check_output() {
         }
         other => panic!("{other:?}"),
     }
+    t.stop().await;
+}
+
+/// Results carry text from the job's output: host paths in it are masked for viewers as in
+/// the log, `file://` URLs included.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn check_failures_and_logs_do_not_show_host_paths() {
+    let t = core_server().await;
+    let job: Job = t
+        .create_job(
+            &t.operator,
+            json!({"kind": "check", "params": {"cell": {"bench": "jb"}}}),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let done = t.wait_terminal(&job.id, 30).await;
+    assert_terminal(&done, JobStatus::Failed);
+    let data = t.root.path().join("data").display().to_string();
+    match &done.result {
+        Some(JobResult::Check(c)) => {
+            assert_eq!(
+                c.failures,
+                vec![
+                    "<job>/runs is not writable".to_owned(),
+                    "see file://<job>/runs/check.html".to_owned()
+                ]
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    let log = full_log(&t, &job.id).await;
+    let text: Vec<&str> = log.iter().map(|l| l.text.as_str()).collect();
+    assert!(
+        text.contains(&"FAIL: see file://<job>/runs/check.html"),
+        "{text:#?}"
+    );
+    assert!(!text.iter().any(|l| l.contains(&data)), "{text:#?}");
+    let api = t
+        .get(&format!("/api/v1/jobs/{}", job.id), Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!api.contains(&data), "{api}");
     t.stop().await;
 }
 
@@ -601,6 +670,44 @@ async fn adopt(t: &TestServer, fixture: &str, name: &str, kind: &str) -> Experim
     r.json().await.unwrap()
 }
 
+/// Tasks whose `summary.json` cannot be used are listed as `too-large` (over 4 MiB, never
+/// read) or `unreadable`, and the status filter accepts both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tasks_filter_by_the_unreadable_summary_statuses() {
+    let t = core_server().await;
+    copy_fixture("demo-k2", &t.experiment_dir("demo-st"));
+    let sweep = t.experiment_dir("demo-st").join("runs/demo-oc-agg2");
+    std::fs::write(sweep.join("ledger-1/summary.json"), "not json").unwrap();
+    let big = format!("{{\"pad\": \"{}\"}}", "x".repeat(5 * 1024 * 1024));
+    std::fs::write(sweep.join("ledger-2/summary.json"), big).unwrap();
+    let r = t
+        .post("/api/v1/experiments", Some(&t.operator))
+        .json(&json!({"name": "demo-st", "kind": "demo"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    let base = "/api/v1/experiments/demo-st/sweeps/demo-oc-agg2";
+    let all: Page<TaskRow> = get_json(&t, &format!("{base}/tasks")).await;
+    let mut statuses: Vec<&str> = all.items.iter().map(|r| r.status.as_str()).collect();
+    statuses.sort_unstable();
+    assert_eq!(statuses, vec!["too-large", "unreadable"]);
+    for (status, task) in [("too-large", "ledger-2"), ("unreadable", "ledger-1")] {
+        let rows: Page<TaskRow> = get_json(&t, &format!("{base}/tasks?status={status}")).await;
+        let ids: Vec<&str> = rows.items.iter().map(|r| r.task_id.as_str()).collect();
+        assert_eq!(ids, vec![task], "{status}");
+    }
+    let r = t
+        .get(&format!("{base}/tasks?status=weird"), Some(&t.viewer))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 422);
+    let e: h2s_api::ErrorBody = r.json().await.unwrap();
+    assert!(e.error.message.contains("too-large or unreadable"), "{e:?}");
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn results_endpoints_on_real_demo_output() {
     let t = core_server().await;
@@ -776,6 +883,84 @@ async fn results_endpoints_on_real_demo_output() {
     t.stop().await;
 }
 
+/// One sweep that cannot be read (here a judged.json over the reader's row cap) is left out
+/// of the experiment's sweep list, and the others are still listed; its own views say why
+/// (413).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_sweep_that_cannot_be_read_does_not_hide_the_others() {
+    let t = core_server().await;
+    copy_fixture("std", &t.experiment_dir("std-bad"));
+    let row = json!({"task_id": "x", "mode": "agg", "k": 2});
+    let rows: Vec<&serde_json::Value> = std::iter::repeat_n(&row, 100_001).collect();
+    std::fs::write(
+        t.experiment_dir("std-bad")
+            .join("lab/adapt/lab-oc-agg2/judged.json"),
+        serde_json::to_vec(&rows).unwrap(),
+    )
+    .unwrap();
+    let ids = |e: &Experiment| -> Vec<String> { e.sweeps.iter().map(|s| s.id.clone()).collect() };
+    let created = adopt(&t, "std", "std-ok", "standard").await;
+    assert!(
+        ids(&created).contains(&"lab-oc-agg2".to_owned()),
+        "{:?}",
+        ids(&created)
+    );
+    let r = t
+        .post("/api/v1/experiments", Some(&t.operator))
+        .json(&json!({"name": "std-bad", "kind": "standard"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    let bad: Experiment = r.json().await.unwrap();
+    let mut expected = ids(&created);
+    expected.retain(|id| id != "lab-oc-agg2");
+    assert_eq!(ids(&bad), expected);
+    assert!(expected.contains(&"lab-oc-agg1".to_owned()));
+    let one: Experiment = get_json(&t, "/api/v1/experiments/std-bad").await;
+    assert_eq!(ids(&one), expected);
+    let all: Vec<Experiment> = get_json(&t, "/api/v1/experiments").await;
+    let listed = all.iter().find(|e| e.name == "std-bad").unwrap();
+    assert_eq!(ids(listed), expected);
+    let r = t
+        .get(
+            "/api/v1/experiments/std-bad/sweeps/lab-oc-agg2/scores",
+            Some(&t.viewer),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 413);
+    let e: h2s_api::ErrorBody = r.json().await.unwrap();
+    assert_eq!(e.error.code, h2s_api::ErrorCode::PayloadTooLarge);
+    assert!(e.error.message.contains("100000 rows"), "{e:?}");
+    t.stop().await;
+}
+
+/// Results reads take one of the server's `RESULTS_READS` permits: with all of them held,
+/// a read waits; once they are free it is answered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn results_reads_wait_for_a_permit() {
+    let t = core_server().await;
+    adopt(&t, "std", "std-sem", "standard").await;
+    let path = "/api/v1/experiments/std-sem/sweeps/lab-oc-agg1/scores";
+    let n = u32::try_from(h2s_daemon::http::routes::RESULTS_READS).unwrap();
+    let permits = std::sync::Arc::clone(&t.srv().state.results_reads)
+        .acquire_many_owned(n)
+        .await
+        .unwrap();
+    let err = t
+        .get(path, Some(&t.viewer))
+        .timeout(std::time::Duration::from_millis(700))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(err.is_timeout(), "{err}");
+    drop(permits);
+    assert_eq!(status_of(&t, path).await, 200);
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn results_endpoints_on_a_standard_experiment() {
     let t = core_server().await;
@@ -894,10 +1079,29 @@ fn container_plans_use_fixed_hardening_and_numeric_users() {
             !argv.to_ascii_uppercase().contains("PROXY"),
             "no proxy configured: {argv}"
         );
-        // Values never reach argv: env vars travel by name.
-        for (k, v) in &step.env {
-            assert!(!argv.contains(&format!("{k}={v}")));
-        }
+        // The job's variables go through a private env file in the job directory: neither
+        // the runtime CLI's environment nor its argv hold them.
+        assert!(step.env.is_empty(), "{:?}", step.env);
+        assert!(
+            argv.contains(&format!(
+                "--env-file {}",
+                job_dir.join("container.env").display()
+            )),
+            "{argv}"
+        );
+        assert!(!argv.contains("HARNESS2_RUNS_DIR"), "{argv}");
+        let (_, env_file) = plan
+            .files
+            .iter()
+            .find(|(n, _)| n == "container.env")
+            .expect("the env file is planned");
+        assert!(
+            env_file
+                .lines()
+                .any(|l| l.starts_with("HARNESS2_RUNS_DIR=/h2s/")),
+            "{}",
+            env_file.as_str()
+        );
         if matches!(spec, h2s_api::JobSpec::Split(_)) {
             assert!(
                 argv.contains(&format!(
@@ -978,11 +1182,15 @@ fn container_installs_plan_on_the_host_and_run_under_the_mount_point() {
         ] {
             assert!(argv.contains(must), "{must} missing in {argv}");
         }
-        // ... and the runtime CLI does not get it (it may talk to its daemon over TCP).
+        // ... and the runtime CLI does not get it (it may talk to its daemon over TCP), nor
+        // any other job variable: those are in the env file.
+        assert!(s.env.is_empty(), "{:?}", s.env);
         assert!(
-            s.env
-                .iter()
-                .all(|(n, _)| !n.to_ascii_uppercase().ends_with("_PROXY"))
+            argv.contains(&format!(
+                "--env-file {}",
+                job_dir.join("container.env").display()
+            )),
+            "{argv}"
         );
     }
     let init = plan.steps[0].args.join(" ");

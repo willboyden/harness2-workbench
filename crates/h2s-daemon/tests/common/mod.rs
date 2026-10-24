@@ -4,7 +4,7 @@
 //!
 //! Scenarios are selected by the experiment name's first `-` segment
 //! (`ok-x`, `slow-x`, `partial-x`, `fail-x`, `sleep-x`, `stubborn-x`, `chatty-x`,
-//! `secret-x`, `budget-x`, `longline-x`).
+//! `flood-x`, `secret-x`, `budget-x`, `longline-x`).
 
 #![allow(
     dead_code,
@@ -44,7 +44,21 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
+# The production backend sets no FAKE_SCENARIO: these come from the experiment's name.
+if [ -z "$FAKE_SCENARIO" ]; then
+  case "$out" in
+    */fifo-*) FAKE_SCENARIO=fifo ;;
+    */symlink-*) FAKE_SCENARIO=symlink ;;
+  esac
+fi
 case "$FAKE_SCENARIO" in
+  fifo)
+    mkfifo "$out/demo.json"
+    exit 0 ;;
+  symlink)
+    printf '{"domain":"accounting","n_tasks":2,"seed":null,"done":2,"failed":0,"tasks":[],"execution_count":28,"editor_calls":32}\n' > "$out/real.json"
+    ln -s "$out/real.json" "$out/demo.json"
+    exit 0 ;;
   fail)
     echo "starting"
     echo "error: the deterministic editor crashed" >&2
@@ -69,6 +83,9 @@ case "$FAKE_SCENARIO" in
   chatty)
     i=0
     while [ $i -lt "${FAKE_LINES:-1500}" ]; do echo "line $i"; i=$((i+1)); done ;;
+  flood)
+    # About 5 MB of output: 5000 lines of 1000 characters.
+    yes "$(printf '%01000d' 0)" | head -n 5000 ;;
   secret)
     echo "the key is $FAKE_SECRET_VALUE" ;;
   slow)
@@ -139,7 +156,16 @@ exec sleep 300
 "##;
 
 pub const CHECK_STUB: &str = r##"#!/bin/sh
-# Fake harness2-check (cli/check.py output); fails for experiments named *failcheck*.
+# Fake harness2-check (cli/check.py output); fails for experiments named *failcheck*, and
+# with host paths in its failures for the jb benchmark.
+for a in "$@"; do
+  if [ "$a" = jb ]; then
+    echo "FAIL: $HARNESS2_RUNS_DIR is not writable"
+    echo "FAIL: see file://$HARNESS2_RUNS_DIR/check.html"
+    echo "Setup incomplete: 2 issue(s). See docs/BENCHMARKS.md."
+    exit 1
+  fi
+done
 case "$HARNESS2_RUNS_DIR" in
   *failcheck*)
     echo "FAIL: dependencies/harvey-labs is missing; run harness2-setup lab"
@@ -499,6 +525,8 @@ pub struct Setup {
     pub sleep_secs: f64,
     /// Plan jobs with the production backend (`h2s-core`) instead of [`FakeBackend`].
     pub core_backend: bool,
+    /// Event-stream heartbeat (the server's default when `None`).
+    pub sse_heartbeat: Option<Duration>,
 }
 
 impl Setup {
@@ -511,6 +539,7 @@ impl Setup {
             install_harness2: true,
             sleep_secs: 1.0,
             core_backend: false,
+            sse_heartbeat: None,
         }
     }
 }
@@ -737,6 +766,7 @@ pub async fn start_server(
     };
     let mut opts = ServerOptions::new(backend);
     opts.kill_grace = Some(setup.kill_grace);
+    opts.sse_heartbeat = setup.sse_heartbeat;
     opts.proxy_secret.clone_from(&setup.proxy_secret);
     let vars = setup.secret_env.clone();
     let names: Vec<String> = vars

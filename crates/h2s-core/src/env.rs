@@ -71,8 +71,9 @@ pub const CONTAINER_PROXY_VARS: &[&str] =
 /// `NO_PROXY`/`no_proxy` inside a container job that uses a proxy.
 pub const CONTAINER_NO_PROXY: &str = "localhost,127.0.0.1,::1";
 
-/// Names a profile's `extra_env` may never set (they control the loader, the interpreter,
-/// the server or credentials the server manages itself).
+/// Names a profile's `extra_env` may never set: they control the loader, an interpreter or
+/// the shell, the server, the container runtime CLI, credentials the server manages itself,
+/// or which TLS certificates jobs trust.
 pub const RESERVED_ENV: &[&str] = &[
     "PATH",
     "HOME",
@@ -80,7 +81,22 @@ pub const RESERVED_ENV: &[&str] = &[
     "IFS",
     "ENV",
     "BASH_ENV",
+    "SHELLOPTS",
+    "BASHOPTS",
+    "PS4",
+    "GCONV_PATH",
+    "GLIBC_TUNABLES",
     "NODE_OPTIONS",
+    "NODE_PATH",
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+    "JAVA_TOOL_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "_JAVA_OPTIONS",
+    "RUBYOPT",
+    "RUBYLIB",
+    "PERL5OPT",
+    "PERL5LIB",
+    "PERLLIB",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_CONTENT",
     "OPENCODE_PERMISSION",
@@ -88,15 +104,31 @@ pub const RESERVED_ENV: &[&str] = &[
     "GOOGLE_APPLICATION_CREDENTIALS",
     "DOCKER_HOST",
     "SSH_AUTH_SOCK",
+    // The container runtime CLI's own settings (with the DOCKER_ and CONTAINERS_ prefixes):
+    // which daemon it talks to and with which credentials.
+    "CONTAINER_HOST",
+    "REGISTRY_AUTH_FILE",
     // The forward proxy is the server's (or the container configuration's), so a profile
     // cannot route jobs around it.
     "HTTPS_PROXY",
     "HTTP_PROXY",
     "ALL_PROXY",
     "NO_PROXY",
+    // Trusted certificates come from the server (a TLS-inspecting proxy's CA), never from a
+    // profile: one could make jobs trust an interception certificate.
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    "CURL_CA_BUNDLE",
 ];
 
-/// Prefixes a profile's `extra_env` may never set.
+/// Prefixes a profile's `extra_env` may never set. `OPENCODE_` is reserved whole: the server
+/// sets `OPENCODE_CONFIG` and harness2 sets the others it needs (`OPENCODE_PERMISSION`,
+/// `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`) itself; `GIT_` covers `GIT_SSH_COMMAND`,
+/// `GIT_ASKPASS` and `GIT_CONFIG_*`, which run commands or rewrite git's configuration;
+/// `XDG_` moves configuration, data and runtime directories (`XDG_RUNTIME_DIR` selects a
+/// rootless runtime's socket).
 pub const RESERVED_ENV_PREFIXES: &[&str] = &[
     "LD_",
     "DYLD_",
@@ -105,6 +137,11 @@ pub const RESERVED_ENV_PREFIXES: &[&str] = &[
     "UV_",
     "BUN_",
     "NPM_CONFIG_",
+    "DOCKER_",
+    "CONTAINERS_",
+    "XDG_",
+    "GIT_",
+    "OPENCODE_",
 ];
 
 /// OpenCode provider id the server registers for `openai_compatible` profiles; model ids
@@ -807,6 +844,54 @@ mod tests {
             runs_dir: "/data/experiments/e1".into(),
             opencode_config_path: "/data/jobs/j1/opencode.json".into(),
             gcp_credentials_path: "/data/jobs/j1/gcp.json".into(),
+        }
+    }
+
+    /// Names from audit F8 that profiles could set although they reach the runtime CLI, run
+    /// commands, load code or change which certificates are trusted.
+    #[test]
+    fn dangerous_names_are_reserved() {
+        for name in [
+            "DOCKER_CONTEXT",
+            "DOCKER_CONFIG",
+            "DOCKER_CERT_PATH",
+            "DOCKER_HOST",
+            "CONTAINER_HOST",
+            "CONTAINERS_CONF",
+            "REGISTRY_AUTH_FILE",
+            "XDG_RUNTIME_DIR",
+            "XDG_CONFIG_HOME",
+            "GIT_SSH_COMMAND",
+            "GIT_ASKPASS",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "NODE_PATH",
+            "NODE_TLS_REJECT_UNAUTHORIZED",
+            "JAVA_TOOL_OPTIONS",
+            "RUBYOPT",
+            "RUBYLIB",
+            "PERL5OPT",
+            "PERL5LIB",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_DIR",
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
+            "REQUESTS_CA_BUNDLE",
+            "NODE_EXTRA_CA_CERTS",
+            "CURL_CA_BUNDLE",
+            "GCONV_PATH",
+            "SHELLOPTS",
+        ] {
+            assert!(names::env_name(name).is_err(), "{name} is not reserved");
+        }
+        for name in [
+            "MY_TOKEN",
+            "HARNESS2_EXTRA",
+            "OPENAI_ORG",
+            "GITHUB_TOKEN",
+            "NODE_ENV",
+        ] {
+            assert!(names::env_name(name).is_ok(), "{name} should be allowed");
         }
     }
 

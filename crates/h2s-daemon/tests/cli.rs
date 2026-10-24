@@ -321,6 +321,8 @@ async fn egress_proxy_runs_as_a_subcommand() {
     let mut c = cmd(&e.home);
     c.args(["egress-proxy", "--config", e.config.to_str().unwrap()]);
     let (child, line) = spawn_until_line(c);
+    // Non-dumpable: other processes of this user cannot read its environment.
+    assert!(std::fs::read(format!("/proc/{}/environ", child.id())).is_err());
     let addr: std::net::SocketAddr = line
         .strip_prefix("h2studio egress proxy listening on ")
         .unwrap_or_else(|| panic!("unexpected first line {line:?}"))
@@ -431,4 +433,350 @@ async fn jobs_inherit_only_the_allowed_server_variables() {
         !text.contains("server-only"),
         "a server-only variable leaked:\n{text}"
     );
+}
+
+/// A host-mode job runs as the server's user, but must not read the server's environment
+/// (`H2S_SECRET_*`, the proxy secret): `serve` makes itself non-dumpable, which closes
+/// `/proc/<pid>/environ` (and ptrace) to every other process of the same user.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jobs_cannot_read_the_server_environment() {
+    let e = env();
+    let h2 = e.root.join("harness2");
+    let bin = h2.join(".venv/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    // The stub's parent is the server: it tries to read the server's environment.
+    let stub = "#!/bin/sh\n# test stub: try to read the server's environment\n\
+                if cat /proc/$PPID/environ >/dev/null 2>&1; then echo 'environ: readable'; \
+                else echo 'environ: denied'; fi\n\
+                if tr '\\0' '\\n' </proc/$PPID/environ 2>/dev/null | grep -q '^H2S_SECRET_CANARY='; \
+                then echo 'canary: leaked'; fi\n\
+                echo \"parent: $PPID\"\nexit 0\n";
+    for name in ["harness2", "harness2-demo"] {
+        std::fs::write(bin.join(name), stub).unwrap();
+        std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::fs::create_dir_all(e.config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &e.config,
+        format!(
+            "[paths]\ndata_dir = \"{}\"\nharness2_home = \"{}\"\nharness2_managed = false\n",
+            e.root.join("data").display(),
+            h2.display()
+        ),
+    )
+    .unwrap();
+    let token = e.init();
+    let mut c = cmd(&e.home);
+    c.args(["serve", "--config", e.config.to_str().unwrap()])
+        .env("H2S_LISTEN", "127.0.0.1:0")
+        .env("H2S_SECRET_CANARY", "canary-value-0123456789");
+    let (child, line) = spawn_until_line(c);
+    let server_pid = child.id();
+    let url = line
+        .strip_prefix("h2studio listening on ")
+        .unwrap_or_else(|| panic!("unexpected first line {line:?}"))
+        .to_owned();
+    // The test runs as the same user (and is the server's parent): denied as well.
+    let own = std::fs::read(format!("/proc/{server_pid}/environ"));
+    assert!(
+        own.is_err(),
+        "the test process read the server's environment"
+    );
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let job: h2s_api::Job = client
+        .post(format!("{url}/api/v1/jobs"))
+        .bearer_auth(&token)
+        .header("x-h2s-request", "1")
+        .json(&serde_json::json!({"kind": "demo", "params": {"experiment": "peek", "k": 1}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let text = loop {
+        let log: h2s_api::LogChunk = client
+            .get(format!("{url}/api/v1/jobs/{}/log?limit=500", job.id))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if log.complete {
+            break log
+                .lines
+                .iter()
+                .map(|l| l.text.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        assert!(Instant::now() < deadline, "the job did not finish");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    let status = tokio::task::spawn_blocking(move || stop(child))
+        .await
+        .unwrap();
+    assert!(status.success(), "{status:?}");
+    assert!(
+        text.contains(&format!("parent: {server_pid}")),
+        "the stub's parent is not the server:\n{text}"
+    );
+    assert!(text.contains("environ: denied"), "{text}");
+    assert!(!text.contains("environ: readable"), "{text}");
+    assert!(!text.contains("canary: leaked"), "{text}");
+}
+
+/// Container jobs: the runtime CLI is started with the server's pass-through variables only.
+/// Profile variables and secret values reach the container through a 0600 `--env-file`,
+/// never the CLI's own environment (where `DOCKER_CONTEXT` and the like would steer it) or
+/// its command line. Measured with a fake `docker` on the server's PATH.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn container_jobs_get_their_environment_through_an_env_file() {
+    let e = env();
+    let out = e.root.join("fake-docker-out");
+    std::fs::create_dir_all(&out).unwrap();
+    let fakebin = e.root.join("fakebin");
+    std::fs::create_dir_all(&fakebin).unwrap();
+    let docker = format!(
+        "#!/bin/sh\n# test stub: a fake container runtime CLI that records what it was given\n\
+         OUT='{}'\n\
+         case \"$1\" in\n\
+           info) echo 'name=seccomp name=rootless'; exit 0 ;;\n\
+           run)\n\
+             env | sort > \"$OUT/cli-env.txt\"\n\
+             printf '%s\\n' \"$@\" > \"$OUT/argv.txt\"\n\
+             prev=''\n\
+             for a in \"$@\"; do\n\
+               if [ \"$prev\" = '--env-file' ]; then cp \"$a\" \"$OUT/env-file.txt\"; stat -c %a \"$a\" > \"$OUT/mode.txt\"; echo \"$a\" > \"$OUT/env-file-path.txt\"; fi\n\
+               prev=\"$a\"\n\
+             done\n\
+             echo 'Ready: lab/oc; 3 tasks.'\n\
+             exit 0 ;;\n\
+         esac\n\
+         exit 0\n",
+        out.display()
+    );
+    std::fs::write(fakebin.join("docker"), docker).unwrap();
+    std::fs::set_permissions(
+        fakebin.join("docker"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let h2 = e.root.join("harness2");
+    std::fs::create_dir_all(h2.join(".venv/bin")).unwrap();
+    std::fs::write(h2.join(".venv/bin/harness2"), "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::create_dir_all(e.config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &e.config,
+        format!(
+            "[paths]\ndata_dir = \"{}\"\nharness2_home = \"{}\"\nharness2_managed = false\n\
+             [isolation]\nmode = \"container\"\n[isolation.container]\nruntime = \"docker\"\n",
+            e.root.join("data").display(),
+            h2.display()
+        ),
+    )
+    .unwrap();
+    let token = e.init();
+    let path = format!("{}:/usr/bin:/bin", fakebin.display());
+    let mut c = cmd(&e.home);
+    c.args(["serve", "--config", e.config.to_str().unwrap()])
+        .env("H2S_LISTEN", "127.0.0.1:0")
+        .env("PATH", &path);
+    let (child, line) = spawn_until_line(c);
+    let url = line
+        .strip_prefix("h2studio listening on ")
+        .unwrap_or_else(|| panic!("unexpected first line {line:?}"))
+        .to_owned();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let secret = "secret-value-0123456789abcdef";
+    let put = |p: &str, body: serde_json::Value| {
+        client
+            .put(format!("{url}{p}"))
+            .bearer_auth(&token)
+            .header("x-h2s-request", "1")
+            .json(&body)
+            .send()
+    };
+    let r = put(
+        "/api/v1/secrets/DB_KEY",
+        serde_json::json!({"value": secret}),
+    )
+    .await
+    .unwrap();
+    assert!(r.status().is_success(), "{}", r.text().await.unwrap());
+    let r = put(
+        "/api/v1/profiles/cprof",
+        serde_json::json!({
+            "name": "cprof", "kind": "custom", "solver_model": "x/y",
+            "extra_env": [
+                {"name": "PROFILE_CANARY", "value": "profile-only-value"},
+                {"name": "X_TOKEN", "secret": "DB_KEY"}
+            ]
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(r.status().is_success(), "{}", r.text().await.unwrap());
+    let r = client
+        .post(format!("{url}/api/v1/jobs"))
+        .bearer_auth(&token)
+        .header("x-h2s-request", "1")
+        .json(&serde_json::json!({"kind": "check", "params": {"cell": {"bench": "lab"}, "profile": "cprof"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201, "{}", r.text().await.unwrap());
+    let job: h2s_api::Job = r.json().await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let done = loop {
+        let j: h2s_api::Job = client
+            .get(format!("{url}/api/v1/jobs/{}", job.id))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if j.status.is_terminal() {
+            break j;
+        }
+        assert!(Instant::now() < deadline, "the job did not finish: {j:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    let status = tokio::task::spawn_blocking(move || stop(child))
+        .await
+        .unwrap();
+    assert!(status.success(), "{status:?}");
+    assert_eq!(done.status, h2s_api::JobStatus::Succeeded, "{done:?}");
+
+    let read = |n: &str| std::fs::read_to_string(out.join(n)).unwrap_or_default();
+    let cli_env = read("cli-env.txt");
+    assert!(!cli_env.is_empty(), "the fake runtime did not run");
+    for absent in [
+        "PROFILE_CANARY",
+        "profile-only-value",
+        "X_TOKEN",
+        secret,
+        "HARNESS2_RUNS_DIR",
+    ] {
+        assert!(
+            !cli_env.contains(absent),
+            "{absent} reached the runtime CLI's environment:\n{cli_env}"
+        );
+    }
+    assert!(
+        cli_env.contains(&format!("H2S_JOB_ID={}", job.id)),
+        "{cli_env}"
+    );
+    let argv = read("argv.txt");
+    assert!(argv.lines().any(|l| l == "--env-file"), "{argv}");
+    assert!(
+        !argv.contains(secret) && !argv.contains("profile-only-value"),
+        "{argv}"
+    );
+    let file = read("env-file.txt");
+    for present in [
+        "PROFILE_CANARY=profile-only-value".to_owned(),
+        format!("X_TOKEN={secret}"),
+        "HARNESS2_RUNS_DIR=/h2s/job/runs".to_owned(),
+    ] {
+        assert!(
+            file.lines().any(|l| l == present),
+            "{present} missing in:\n{file}"
+        );
+    }
+    assert_eq!(read("mode.txt").trim(), "600");
+    // The file lived in the job's private directory, which is gone with the job.
+    let used = read("env-file-path.txt");
+    assert!(!std::path::Path::new(used.trim()).exists(), "{used}");
+}
+
+/// Errors print each cause once ("Address already in use (os error 98)" used to appear
+/// twice: in the message and again as its source).
+#[test]
+fn errors_name_each_cause_once() {
+    let e = env();
+    std::fs::create_dir_all(e.config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &e.config,
+        format!(
+            "[paths]\ndata_dir = \"{}\"\n",
+            e.root.join("data").display()
+        ),
+    )
+    .unwrap();
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = taken.local_addr().unwrap().to_string();
+    let o = cmd(&e.home)
+        .args(["serve", "--config", e.config.to_str().unwrap()])
+        .env("H2S_LISTEN", &addr)
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    let err = stderr(&o);
+    let line = err
+        .lines()
+        .find(|l| l.starts_with("h2studio:"))
+        .unwrap_or_else(|| panic!("{err}"));
+    assert!(line.contains(&format!("cannot listen on {addr}")), "{line}");
+    assert_eq!(line.matches("Address already in use").count(), 1, "{line}");
+    drop(taken);
+
+    // A configuration that cannot be read (a directory).
+    let o = run(
+        &e.home,
+        &["config", "check", "--config", e.root.to_str().unwrap()],
+    );
+    assert_eq!(o.status.code(), Some(1));
+    let err = stderr(&o);
+    assert!(err.contains("cannot read"), "{err}");
+    assert_eq!(err.matches("os error").count(), 1, "{err}");
+}
+
+/// The egress proxy logs each allowlist entry with its ports at startup.
+#[test]
+fn egress_startup_log_names_each_entry_with_its_ports() {
+    let e = env();
+    std::fs::create_dir_all(e.config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &e.config,
+        format!(
+            "[paths]\ndata_dir = \"{}\"\n[egress]\nlisten = \"127.0.0.1:0\"\n\
+             allow = [\"api.example.com\", {{host = \"litellm\", allow_private = true, ports = [4000, 4001]}}]\n",
+            e.root.join("data").display()
+        ),
+    )
+    .unwrap();
+    let log = e.root.join("egress.log");
+    let mut c = cmd(&e.home);
+    c.args(["egress-proxy", "--config", e.config.to_str().unwrap()])
+        .env("H2S_LOG_FORMAT", "json")
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&log).unwrap());
+    let mut child = c.spawn().unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    assert!(
+        line.starts_with("h2studio egress proxy listening on"),
+        "{line}"
+    );
+    let status = stop(child);
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(status.success(), "{status:?}\n{text}");
+    let entries: Vec<serde_json::Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["fields"]["message"] == "egress allowlist entry")
+        .collect();
+    assert_eq!(entries.len(), 2, "{text}");
+    assert_eq!(entries[0]["fields"]["host"], "api.example.com");
+    assert_eq!(entries[0]["fields"]["ports"], "443,80");
+    assert_eq!(entries[1]["fields"]["host"], "litellm");
+    assert_eq!(entries[1]["fields"]["ports"], "4000,4001");
 }

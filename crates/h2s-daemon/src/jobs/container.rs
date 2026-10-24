@@ -124,6 +124,166 @@ pub async fn resolve_user<R: CommandRunner>(
     }
 }
 
+/// The argv that prints whether a network is internal (`true` or `false`); the same Go
+/// template works for Docker and Podman. `network` is validated by the configuration
+/// (`config::network_ok`: it cannot start with `-`).
+#[must_use]
+pub fn network_internal_argv(runtime: RuntimeKind, network: &str) -> Vec<String> {
+    vec![
+        runtime.as_str().to_owned(),
+        "network".to_owned(),
+        "inspect".to_owned(),
+        "--format".to_owned(),
+        "{{.Internal}}".to_owned(),
+        network.to_owned(),
+    ]
+}
+
+/// Whether `network` is internal: without a route out, so container jobs reach the
+/// internet only through the egress proxy.
+///
+/// # Errors
+/// When the runtime cannot be asked or does not know the network.
+pub async fn network_is_internal<R: CommandRunner>(
+    runner: &R,
+    runtime: RuntimeKind,
+    network: &str,
+) -> Result<bool, String> {
+    let (code, out) = runner.run(network_internal_argv(runtime, network)).await?;
+    if code != 0 {
+        return Err(format!(
+            "`{} network inspect {network}` failed (exit {code}); does the network exist?",
+            runtime.as_str()
+        ));
+    }
+    match out.trim() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => Err(format!(
+            "`{} network inspect {network}` answered {:?}",
+            runtime.as_str(),
+            crate::util::truncate_chars(other, 80)
+        )),
+    }
+}
+
+/// The doctor check for `[isolation.container] proxy`: the jobs network must be internal,
+/// or jobs can reach the internet around the proxy. `None` when no proxy is configured
+/// (or isolation is not `container`).
+pub async fn network_check<R: CommandRunner>(
+    runner: &R,
+    c: &crate::config::ContainerSection,
+) -> Option<h2s_api::DoctorCheck> {
+    if c.proxy.is_empty() || c.network == "none" {
+        return None;
+    }
+    let (level, detail, remedy) = match network_is_internal(runner, c.runtime, &c.network).await {
+        Ok(true) => (
+            h2s_api::CheckLevel::Ok,
+            format!(
+                "network {} is internal: container jobs reach the internet only through the \
+                 egress proxy {}",
+                c.network, c.proxy
+            ),
+            None,
+        ),
+        Ok(false) => (
+            h2s_api::CheckLevel::Warn,
+            format!(
+                "network {} is NOT internal: container jobs can reach the internet directly, \
+                 around the egress proxy {}",
+                c.network, c.proxy
+            ),
+            Some(format!(
+                "Recreate it with `{} network create --internal {}` and attach the egress \
+                 proxy to it and to a network with internet access.",
+                c.runtime.as_str(),
+                c.network
+            )),
+        ),
+        Err(e) => (
+            h2s_api::CheckLevel::Warn,
+            format!(
+                "could not tell whether network {} is internal: {e}",
+                c.network
+            ),
+            Some(format!(
+                "Create it with `{} network create --internal {}`.",
+                c.runtime.as_str(),
+                c.network
+            )),
+        ),
+    };
+    Some(h2s_api::DoctorCheck {
+        id: "container_network".to_owned(),
+        label: "Jobs network".to_owned(),
+        level,
+        detail,
+        remedy,
+        needed_for: vec!["container".to_owned()],
+    })
+}
+
+/// The argv that prints the id of `image` when the runtime has it (exit 1 when it does
+/// not). `image` is validated by the configuration (`config::image_is_pinned`).
+#[must_use]
+pub fn image_inspect_argv(runtime: RuntimeKind, image: &str) -> Vec<String> {
+    vec![
+        runtime.as_str().to_owned(),
+        "image".to_owned(),
+        "inspect".to_owned(),
+        "--format".to_owned(),
+        "{{.Id}}".to_owned(),
+        image.to_owned(),
+    ]
+}
+
+/// The doctor check `runner_image` for container isolation: the configured image must be
+/// present, or every container job fails at start.
+pub async fn runner_image_check<R: CommandRunner>(
+    runner: &R,
+    c: &crate::config::ContainerSection,
+) -> h2s_api::DoctorCheck {
+    let runtime = c.runtime.as_str();
+    let build = format!(
+        "Build it from a checkout of Harness² Studio: `{runtime} build -f \
+         deploy/docker/runner.Dockerfile -t {} .` (or pull it from your registry).",
+        c.image
+    );
+    let (level, detail, remedy) = match runner.run(image_inspect_argv(c.runtime, &c.image)).await {
+        Ok((0, _)) => (
+            h2s_api::CheckLevel::Ok,
+            format!("runner image {} is present", c.image),
+            None,
+        ),
+        Ok((code, _)) => (
+            h2s_api::CheckLevel::Fail,
+            format!(
+                "runner image {} is not present for {runtime} (`image inspect` exit {code}); \
+                 container jobs cannot start",
+                c.image
+            ),
+            Some(build),
+        ),
+        Err(e) => (
+            h2s_api::CheckLevel::Warn,
+            format!(
+                "could not ask {runtime} about the runner image {}: {e}",
+                c.image
+            ),
+            Some(build),
+        ),
+    };
+    h2s_api::DoctorCheck {
+        id: "runner_image".to_owned(),
+        label: "Runner image".to_owned(),
+        level,
+        detail,
+        remedy,
+        needed_for: vec!["container".to_owned()],
+    }
+}
+
 /// Stop the container of `job_id` only if its job label matches. Returns `Ok(true)` when it
 /// was stopped, `Ok(false)` when no matching container exists.
 ///
@@ -238,6 +398,89 @@ mod tests {
 
         let f = Fake::new(vec![(1, "")]);
         assert!(resolve_user(&f, RuntimeKind::Podman, "").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn the_jobs_network_must_be_internal_when_a_proxy_is_set() {
+        let mut c = crate::config::ContainerSection {
+            network: "h2s-egress".into(),
+            proxy: "http://egress:3128".into(),
+            ..crate::config::ContainerSection::default()
+        };
+        let level = |check: Option<h2s_api::DoctorCheck>| check.map(|c| c.level);
+        let f = Fake::new(vec![(0, "true\n")]);
+        assert_eq!(
+            level(network_check(&f, &c).await),
+            Some(h2s_api::CheckLevel::Ok)
+        );
+        assert_eq!(
+            f.calls.lock().unwrap()[0],
+            vec![
+                "docker",
+                "network",
+                "inspect",
+                "--format",
+                "{{.Internal}}",
+                "h2s-egress"
+            ]
+        );
+        let f = Fake::new(vec![(0, "false\n")]);
+        let check = network_check(&f, &c).await.unwrap();
+        assert_eq!(check.level, h2s_api::CheckLevel::Warn);
+        assert!(check.detail.contains("NOT internal"), "{}", check.detail);
+        assert!(check.remedy.unwrap().contains("--internal h2s-egress"));
+        let f = Fake::new(vec![(1, "")]);
+        let check = network_check(&f, &c).await.unwrap();
+        assert_eq!(check.level, h2s_api::CheckLevel::Warn);
+        assert!(
+            check.detail.contains("does the network exist"),
+            "{}",
+            check.detail
+        );
+        // No proxy: nothing to check, nothing run.
+        c.proxy.clear();
+        let f = Fake::new(vec![]);
+        assert!(network_check(&f, &c).await.is_none());
+        assert!(f.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_runner_image_must_be_present_in_container_mode() {
+        let c = crate::config::ContainerSection {
+            image: "harness2-studio-runner:0.1.0".into(),
+            ..crate::config::ContainerSection::default()
+        };
+        let f = Fake::new(vec![(0, "sha256:0123\n")]);
+        let check = runner_image_check(&f, &c).await;
+        assert_eq!(
+            (check.id.as_str(), check.level),
+            ("runner_image", h2s_api::CheckLevel::Ok)
+        );
+        assert_eq!(
+            f.calls.lock().unwrap()[0],
+            vec![
+                "docker",
+                "image",
+                "inspect",
+                "--format",
+                "{{.Id}}",
+                "harness2-studio-runner:0.1.0"
+            ]
+        );
+        let f = Fake::new(vec![(1, "")]);
+        let check = runner_image_check(&f, &c).await;
+        assert_eq!(check.level, h2s_api::CheckLevel::Fail);
+        assert!(
+            check
+                .remedy
+                .unwrap()
+                .contains("deploy/docker/runner.Dockerfile -t harness2-studio-runner:0.1.0")
+        );
+        let f = Fake::new(vec![]);
+        assert_eq!(
+            runner_image_check(&f, &c).await.level,
+            h2s_api::CheckLevel::Warn
+        );
     }
 
     #[tokio::test]

@@ -30,6 +30,11 @@ const STDERR_TAIL: usize = 20;
 const BRIDGE_KEY_PREFIX: &str = "HARNESS2_CODEX_API_KEY=";
 /// Secret the bridge key is stored as.
 const BRIDGE_SECRET: &str = "HARNESS2_CODEX_API_KEY";
+/// Room kept past `jobs.max_log_bytes` for the server's own lines (the marker, step ends,
+/// the final status), so the end of a capped log still says how the job ended.
+const SYSTEM_RESERVE: u64 = 64 * 1024;
+/// How often a running job checks the free space on the data directory.
+const SPACE_POLL: Duration = Duration::from_secs(15);
 
 struct Finish {
     status: JobStatus,
@@ -61,14 +66,20 @@ pub(super) async fn run(mgr: Arc<JobManager>, live: Arc<LiveJob>) {
         })
     };
 
+    let space_guard = tokio::spawn(space_guard(Arc::clone(&mgr), Arc::clone(&live)));
+
     let log_path = super::logs::log_path(&mgr.settings().paths.job_logs_dir, &live.id);
     let pump = match LogFile::open(&log_path).await {
-        Ok((file, existing)) => Some(Pump::start(
-            Arc::clone(&mgr),
-            Arc::clone(&live),
-            file,
-            existing,
-        )),
+        Ok((file, existing)) => {
+            let size = file.size().await.unwrap_or(0);
+            Some(Pump::start(
+                Arc::clone(&mgr),
+                Arc::clone(&live),
+                file,
+                existing,
+                size,
+            ))
+        }
         Err(e) => {
             tracing::error!(job = %live.id, error = %e, "cannot open the job log");
             None
@@ -79,7 +90,31 @@ pub(super) async fn run(mgr: Arc<JobManager>, live: Arc<LiveJob>) {
         None => Finish::failed("could not open the job log"),
     };
     watchdog.abort();
+    space_guard.abort();
     finalize(&mgr, &live, finish, started, pump).await;
+}
+
+/// Stop the job when the free space on the data directory's filesystem falls below
+/// `jobs.min_free_disk_mb` (checked at once, then every [`SPACE_POLL`]): logs, the
+/// database and usually the experiments share it.
+async fn space_guard(mgr: Arc<JobManager>, live: Arc<LiveJob>) {
+    let floor = mgr.settings().min_free_disk;
+    if floor == 0 {
+        return;
+    }
+    let dir = mgr.settings().paths.data_dir.clone();
+    loop {
+        let d = dir.clone();
+        let free = tokio::task::spawn_blocking(move || crate::doctor::free_disk_bytes(&d))
+            .await
+            .ok()
+            .flatten();
+        if free.is_some_and(|f| f < floor) {
+            live.request_cancel(CancelReason::DiskSpace(floor / (1024 * 1024)));
+            return;
+        }
+        tokio::time::sleep(SPACE_POLL).await;
+    }
 }
 
 struct Ctx<'a> {
@@ -203,7 +238,7 @@ async fn execute(mgr: &Arc<JobManager>, live: &Arc<LiveJob>, pump: &Pump) -> Fin
                 harness2_managed: mgr.settings().paths.harness2_managed,
             };
             match mgr.backend().parse_step(step, &out) {
-                Ok(r) => r,
+                Ok(r) => r.map(|r| mask_result(r, &ctx.masker)),
                 Err(e) => {
                     ctx.pump
                         .system(format!("could not read the result of {}: {e}", step.name))
@@ -317,6 +352,41 @@ async fn execute(mgr: &Arc<JobManager>, live: &Arc<LiveJob>, pump: &Pump) -> Fin
     finish
 }
 
+/// Text a step's result carries from its output (check failures, setup plans and notes, a
+/// report, the next command, the preview header) is shown to every viewer: host paths in it
+/// are masked as in log lines (contract §9).
+fn mask_result(r: JobResult, m: &PathMasker) -> JobResult {
+    let one = |t: String| m.mask(&t).into_owned();
+    let all = |l: Vec<String>| -> Vec<String> {
+        l.into_iter().map(|t| m.mask(&t).into_owned()).collect()
+    };
+    match r {
+        JobResult::Check(mut c) => {
+            c.failures = all(c.failures);
+            JobResult::Check(c)
+        }
+        JobResult::Setup(mut c) => {
+            c.plan = all(c.plan);
+            c.notes = all(c.notes);
+            JobResult::Setup(c)
+        }
+        JobResult::Report(mut c) => {
+            c.text = one(c.text);
+            JobResult::Report(c)
+        }
+        JobResult::Run(mut c) => {
+            c.next = c.next.map(one);
+            c.record = c.record.map(one);
+            JobResult::Run(c)
+        }
+        JobResult::Preview(mut c) => {
+            c.header = one(c.header);
+            JobResult::Preview(c)
+        }
+        other => other,
+    }
+}
+
 fn set_step(live: &LiveJob, idx: usize, f: impl FnOnce(&mut JobStep)) {
     live.mutate(|job| match job.steps.get_mut(idx) {
         Some(s) => {
@@ -408,9 +478,12 @@ async fn prepare<'a>(
             }
             let src = settings.paths.splits_dir.join(format!("{name}.json"));
             let dst = job_dir.join("split.json");
-            let bytes = tokio::fs::read(&src)
-                .await
-                .map_err(|e| format!("split {name}: {e}"))?;
+            let bytes = tokio::task::spawn_blocking(move || {
+                crate::util::read_job_file(&src, crate::util::MAX_RESULT_FILE)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| crate::util::job_file_error(&format!("split {name}"), &e))?;
             crate::util::write_private_new(&dst, &bytes).map_err(|e| format!("split copy: {e}"))?;
             Some(dst)
         }
@@ -526,7 +599,13 @@ async fn register_split(
         .paths
         .splits_dir
         .join(format!("{}.json", p.name));
-    let bytes = tokio::fs::read(&src).await.map_err(|e| e.to_string())?;
+    // The job wrote this file: no symlinks, FIFOs or devices, bounded size.
+    let bytes = tokio::task::spawn_blocking(move || {
+        crate::util::read_job_file(&src, crate::util::MAX_RESULT_FILE)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| crate::util::job_file_error("the split file", &e))?;
     crate::util::write_private_new(&dst, &bytes).map_err(|e| e.to_string())?;
     let info = SplitInfo {
         name: p.name.clone(),
@@ -617,6 +696,8 @@ async fn run_step(ctx: &Ctx<'_>, step: &StepPlan, summary_ns: Option<&str>) -> S
     for (k, v) in &step.env {
         cmd.env(k, v);
     }
+    // Restart recovery identifies the job's processes by this (see `procfs`).
+    cmd.env(procfs::JOB_MARKER_ENV, &ctx.live.id);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -629,15 +710,17 @@ async fn run_step(ctx: &Ctx<'_>, step: &StepPlan, summary_ns: Option<&str>) -> S
     };
     let pid = child.id().and_then(|p| i32::try_from(p).ok());
     if let Some(pid) = pid {
-        let start = procfs::start_time(pid).and_then(|s| i64::try_from(s).ok());
+        let process = crate::db::jobs::ProcessRecord {
+            pid: i64::from(pid),
+            start: procfs::start_time(pid).and_then(|s| i64::try_from(s).ok()),
+            boot_id: procfs::boot_id(),
+            in_container: step.container.is_some(),
+        };
         let id = ctx.live.id.clone();
-        let in_container = step.container.is_some();
         let _ = ctx
             .mgr
             .db()
-            .call(move |c| {
-                crate::db::jobs::set_process(c, &id, Some(i64::from(pid)), start, in_container)
-            })
+            .call(move |c| crate::db::jobs::set_process(c, &id, Some(&process)))
             .await;
     }
 
@@ -734,7 +817,7 @@ async fn run_step(ctx: &Ctx<'_>, step: &StepPlan, summary_ns: Option<&str>) -> S
         let _ = ctx
             .mgr
             .db()
-            .call(move |c| crate::db::jobs::set_process(c, &id, None, None, false))
+            .call(move |c| crate::db::jobs::set_process(c, &id, None))
             .await;
     }
 
@@ -869,6 +952,13 @@ struct PumpState {
     live: Arc<LiveJob>,
     file: LogFile,
     next_n: u64,
+    /// Bytes in the log file (`jobs.max_log_bytes` limits them).
+    bytes: u64,
+    /// The limit was reached: output is read and parsed but no longer stored.
+    capped: bool,
+    /// Lines (and their bytes) not stored, and how many of them were reported.
+    dropped: (u64, u64),
+    reported: u64,
     redactor: Redactor,
     masker: PathMasker,
     progress: bool,
@@ -880,13 +970,23 @@ struct PumpState {
 }
 
 impl Pump {
-    fn start(mgr: Arc<JobManager>, live: Arc<LiveJob>, file: LogFile, existing: u64) -> Pump {
+    fn start(
+        mgr: Arc<JobManager>,
+        live: Arc<LiveJob>,
+        file: LogFile,
+        existing: u64,
+        size: u64,
+    ) -> Pump {
         let (tx, rx) = mpsc::channel(4096);
         let state = PumpState {
             mgr,
             live,
             file,
             next_n: existing,
+            bytes: size,
+            capped: false,
+            dropped: (0, 0),
+            reported: 0,
             redactor: Redactor::default(),
             masker: PathMasker::default(),
             progress: false,
@@ -958,6 +1058,7 @@ impl PumpState {
                     self.write(LogStream::System, text).await;
                 }
                 PumpMsg::End(reply) => {
+                    self.report_dropped().await;
                     self.flush().await;
                     let _ = reply.send(std::mem::take(&mut self.capture));
                 }
@@ -1035,7 +1136,45 @@ impl PumpState {
             LogStream::System => {}
         }
         let shown = self.masker.mask(&redacted).into_owned();
-        self.write(stream, shown).await;
+        self.write_output(stream, shown).await;
+    }
+
+    /// Store a line of the job's output unless the log reached `jobs.max_log_bytes`; the
+    /// first line over the limit is replaced by one marker line, later ones are counted.
+    async fn write_output(&mut self, stream: LogStream, text: String) {
+        let len = u64::try_from(text.len()).unwrap_or(u64::MAX);
+        if self.capped {
+            self.dropped.0 += 1;
+            self.dropped.1 = self.dropped.1.saturating_add(len);
+            return;
+        }
+        let limit = self.mgr.settings().max_log_bytes;
+        if !self.write_within(stream, text, limit).await {
+            self.capped = true;
+            self.dropped = (1, len);
+            let marker = format!(
+                "log limit of {} reached (jobs.max_log_bytes): further output of this job is not \
+                 stored; the job keeps running",
+                human_bytes(limit)
+            );
+            self.write(LogStream::System, marker).await;
+        }
+    }
+
+    /// One system line saying how much output was not stored since the last report.
+    async fn report_dropped(&mut self) {
+        if self.dropped.0 > self.reported {
+            let (n, bytes) = self.dropped;
+            self.reported = n;
+            self.write(
+                LogStream::System,
+                format!(
+                    "{n} lines ({}) of output were not stored (log limit)",
+                    human_bytes(bytes)
+                ),
+            )
+            .await;
+        }
     }
 
     async fn bridge_capture(&mut self, raw: &str) {
@@ -1094,17 +1233,42 @@ impl PumpState {
         }
     }
 
+    /// Store one of the server's own lines (within the reserve past the output limit).
     async fn write(&mut self, stream: LogStream, text: String) {
+        let limit = self
+            .mgr
+            .settings()
+            .max_log_bytes
+            .saturating_add(SYSTEM_RESERVE);
+        if !self.write_within(stream, text, limit).await {
+            self.dropped.0 += 1;
+        }
+    }
+
+    /// Append a line if the file stays within `limit` bytes; `false` when it would not.
+    async fn write_within(&mut self, stream: LogStream, text: String, limit: u64) -> bool {
         let line = LogLine {
             n: self.next_n,
             ts: now_rfc3339_millis(),
             stream,
             text,
         };
-        if let Err(e) = self.file.append(&line).await {
-            tracing::error!(job = %self.live.id, error = %e, "cannot write the job log");
-            return;
+        let json = match super::logs::encode(&line) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::error!(job = %self.live.id, error = %e, "cannot encode a log line");
+                return true;
+            }
+        };
+        let size = u64::try_from(json.len()).unwrap_or(u64::MAX);
+        if self.bytes.saturating_add(size) > limit {
+            return false;
         }
+        if let Err(e) = self.file.append_encoded(&json).await {
+            tracing::error!(job = %self.live.id, error = %e, "cannot write the job log");
+            return true;
+        }
+        self.bytes = self.bytes.saturating_add(size);
         self.next_n += 1;
         self.live.push_log(line);
         if self.last_persist.elapsed() > Duration::from_secs(2) {
@@ -1112,12 +1276,31 @@ impl PumpState {
             self.flush().await;
             self.mgr.persist_job(self.live.snapshot()).await;
         }
+        true
     }
 
     async fn flush(&mut self) {
         if let Err(e) = self.file.flush().await {
             tracing::error!(job = %self.live.id, error = %e, "cannot flush the job log");
         }
+    }
+}
+
+/// `256 MiB`, `1.5 KiB`, `12 B`.
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut unit = 0;
+    let mut whole = n;
+    while whole >= 1024 && unit < UNITS.len() - 1 {
+        whole /= 1024;
+        unit += 1;
+    }
+    let scale = 1024_u64.pow(u32::try_from(unit).unwrap_or(0));
+    let tenths = (n % scale) * 10 / scale;
+    if unit == 0 || tenths == 0 {
+        format!("{whole} {}", UNITS[unit])
+    } else {
+        format!("{whole}.{tenths} {}", UNITS[unit])
     }
 }
 
@@ -1204,4 +1387,19 @@ async fn finalize(
     );
     tracing::info!(job = %job.id, kind = job.kind.as_str(), status = status.as_str(), "job finished");
     mgr.job_done(&live.id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byte_counts_read_well() {
+        assert_eq!(human_bytes(12), "12 B");
+        assert_eq!(human_bytes(1536), "1.5 KiB");
+        assert_eq!(human_bytes(1024 * 1024), "1 MiB");
+        assert_eq!(human_bytes(256 * 1024 * 1024), "256 MiB");
+        assert_eq!(human_bytes(5 * 1024 * 1024 * 1024 + 1), "5 GiB");
+        assert_eq!(human_bytes(u64::MAX), "16777215.9 TiB");
+    }
 }

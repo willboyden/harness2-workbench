@@ -10,7 +10,33 @@ pub mod root;
 pub mod system;
 pub mod tools;
 
+use std::sync::Arc;
+
 use crate::error::ApiError;
+use crate::http::AppState;
+
+/// Blocking reads of experiment results that run at once; more wait for a permit (each
+/// read is bounded by h2s-core's caps, so this bounds the memory they take together).
+pub const RESULTS_READS: usize = 4;
+
+/// Run a blocking read of experiment results under one of the server's
+/// [`RESULTS_READS`] permits. The permit moves into the blocking task, so a request that
+/// times out still holds it until its read has finished.
+pub(crate) async fn results_read<T, F>(state: &AppState, f: F) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, ApiError> + Send + 'static,
+{
+    let permit = Arc::clone(&state.results_reads)
+        .acquire_owned()
+        .await
+        .map_err(|_| ApiError::unavailable("the server is shutting down"))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        f()
+    })
+    .await?
+}
 
 /// Run a blocking closure (filesystem, results parsing) off the async runtime.
 pub(crate) async fn blocking<T, F>(f: F) -> Result<T, ApiError>

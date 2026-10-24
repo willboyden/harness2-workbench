@@ -68,7 +68,10 @@ pub async fn estimate(
         Some(name) => {
             let (rec, path) = super::experiments::locate(&state, name).await?;
             let kind = rec.kind;
-            blocking(move || Ok(crate::jobs::core_backend::history(&path, kind))).await?
+            super::results_read(&state, move || {
+                Ok(crate::jobs::core_backend::history(&path, kind))
+            })
+            .await?
         }
         None => None,
     };

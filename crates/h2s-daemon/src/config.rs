@@ -63,7 +63,12 @@ pub struct ServerSection {
     pub max_body_bytes: u64,
     pub request_timeout_secs: u64,
     pub sse_max_connections: u32,
+    /// Event streams one principal (a token and its sessions, or a proxy user) may hold.
+    pub sse_max_per_principal: u32,
     pub login_attempts_per_minute: u32,
+    /// Open connections one client address (IPv6: one /64) may hold; trusted proxies are
+    /// exempt (a reverse proxy limits its own clients).
+    pub max_connections_per_ip: u32,
 }
 
 impl Default for ServerSection {
@@ -76,7 +81,9 @@ impl Default for ServerSection {
             max_body_bytes: 1_048_576,
             request_timeout_secs: 60,
             sse_max_connections: 64,
+            sse_max_per_principal: 8,
             login_attempts_per_minute: 10,
+            max_connections_per_ip: 256,
         }
     }
 }
@@ -137,6 +144,10 @@ pub struct PathsSection {
     pub harness2_home: String,
     /// `false` = point at an existing checkout, which is never modified.
     pub harness2_managed: bool,
+    /// Let `install_harness2` check out a `rev` other than the tested commit. A fork can
+    /// make any commit fetchable from the upstream repository, and installing runs its
+    /// build code, so this stays off unless an administrator chooses otherwise.
+    pub allow_untested_harness2_rev: bool,
 }
 
 impl Default for PathsSection {
@@ -146,6 +157,7 @@ impl Default for PathsSection {
             experiments_dir: String::new(),
             harness2_home: String::new(),
             harness2_managed: true,
+            allow_untested_harness2_rev: false,
         }
     }
 }
@@ -159,6 +171,12 @@ pub struct JobsSection {
     pub timeout_hours: f64,
     pub budget_poll_secs: u64,
     pub log_retention_days: u32,
+    /// Largest log stored per job; later output is read (the job never blocks) but not
+    /// stored, after one marker line.
+    pub max_log_bytes: u64,
+    /// A running job is stopped when the free space on the data directory's filesystem
+    /// falls below this many MiB; 0 = never.
+    pub min_free_disk_mb: u64,
 }
 
 impl Default for JobsSection {
@@ -169,6 +187,8 @@ impl Default for JobsSection {
             timeout_hours: 48.0,
             budget_poll_secs: 30,
             log_retention_days: 90,
+            max_log_bytes: 256 * 1024 * 1024,
+            min_free_disk_mb: 256,
         }
     }
 }
@@ -307,7 +327,9 @@ pub struct EgressSection {
 impl Default for EgressSection {
     fn default() -> Self {
         EgressSection {
-            listen: "0.0.0.0:3128".to_owned(),
+            // Loopback by default: the proxy has no client ACL, so listening on every
+            // interface must be an explicit choice (a deployment's jobs network).
+            listen: "127.0.0.1:3128".to_owned(),
             allow: Vec::new(),
         }
     }
@@ -445,18 +467,24 @@ impl Paths {
         }
     }
 
-    /// Create every directory the server writes (0700).
+    /// Create every directory the server writes, and set each to 0700 (also when it already
+    /// existed, e.g. a volume mounted at `/data`).
     ///
     /// # Errors
     /// I/O errors, with the failing path in the message.
     pub fn ensure(&self) -> std::io::Result<()> {
+        let logs_parent = self.job_logs_dir.parent().map(Path::to_path_buf);
         for dir in [
-            &self.data_dir,
-            &self.experiments_dir,
-            &self.job_logs_dir,
-            &self.job_files_dir,
-            &self.splits_dir,
-        ] {
+            Some(&self.data_dir),
+            Some(&self.experiments_dir),
+            logs_parent.as_ref(),
+            Some(&self.job_logs_dir),
+            Some(&self.job_files_dir),
+            Some(&self.splits_dir),
+        ]
+        .into_iter()
+        .flatten()
+        {
             crate::util::ensure_private_dir(dir)
                 .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", dir.display())))?;
         }
@@ -508,10 +536,11 @@ pub struct Config {
 /// Why a configuration could not be used.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("cannot read {path}: {source}")]
+    // The message includes the cause; it is not also a `source()` (it would print twice).
+    #[error("cannot read {path}: {error}")]
     Read {
         path: PathBuf,
-        source: std::io::Error,
+        error: std::io::Error,
     },
     #[error("{path}: {message}")]
     Parse { path: String, message: String },
@@ -630,7 +659,7 @@ impl Config {
             Err(e) => {
                 return Err(ConfigError::Read {
                     path: loc.path,
-                    source: e,
+                    error: e,
                 });
             }
         };
@@ -693,6 +722,22 @@ impl Config {
     pub fn is_trusted_proxy(&self, ip: IpAddr) -> bool {
         let ip = canonical_ip(ip);
         self.trusted_proxies.iter().any(|n| n.contains(&ip))
+    }
+
+    /// Valid but risky settings, for the startup log and `config check`.
+    #[must_use]
+    pub fn warnings(&self) -> Vec<String> {
+        let mut w = Vec::new();
+        if self.public_https && self.trusted_proxies.is_empty() {
+            w.push(
+                "server.public_url is https but server.trusted_proxies is empty: when a reverse \
+                 proxy terminates TLS in front of this server, every client has the proxy's \
+                 address (one login rate limit and one connection limit for all, the proxy's \
+                 address in the audit log); list the proxy's address in server.trusted_proxies"
+                    .to_owned(),
+            );
+        }
+        w
     }
 
     /// Lines describing the resolved locations, for the startup log and `config check`.
@@ -1023,10 +1068,24 @@ fn validate(
     );
     range_check(
         problems,
+        "server.sse_max_per_principal",
+        s.sse_max_per_principal,
+        1,
+        10_000,
+    );
+    range_check(
+        problems,
         "server.login_attempts_per_minute",
         s.login_attempts_per_minute,
         1,
         10_000,
+    );
+    range_check(
+        problems,
+        "server.max_connections_per_ip",
+        s.max_connections_per_ip,
+        1,
+        1024,
     );
 
     let a = &file.auth;
@@ -1109,6 +1168,20 @@ fn validate(
         j.log_retention_days,
         1,
         36_500,
+    );
+    range_check(
+        problems,
+        "jobs.max_log_bytes",
+        j.max_log_bytes,
+        64 * 1024,
+        1 << 40,
+    );
+    range_check(
+        problems,
+        "jobs.min_free_disk_mb",
+        j.min_free_disk_mb,
+        0,
+        1 << 40,
     );
 
     let c = &file.isolation.container;
@@ -1606,10 +1679,62 @@ mode = "proxy"
     }
 
     #[test]
+    fn data_directories_end_up_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let data = d.path().join("data");
+        // As a container volume or an earlier umask may leave them.
+        std::fs::create_dir_all(data.join("logs/jobs")).unwrap();
+        for p in [data.clone(), data.join("logs"), data.join("logs/jobs")] {
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let paths = Config::defaults_in(&data).unwrap().paths;
+        paths.ensure().unwrap();
+        for p in [
+            data.clone(),
+            data.join("logs"),
+            paths.job_logs_dir.clone(),
+            paths.job_files_dir.clone(),
+            paths.splits_dir.clone(),
+            paths.experiments_dir,
+        ] {
+            let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "{}", p.display());
+        }
+    }
+
+    #[test]
+    fn https_without_trusted_proxies_is_a_warning() {
+        let plain = cfg_from("").unwrap();
+        assert!(plain.warnings().is_empty());
+        let https = cfg_from("[server]\npublic_url = \"https://studio.example.com\"\n").unwrap();
+        let w = https.warnings();
+        assert_eq!(w.len(), 1);
+        assert!(w[0].contains("server.trusted_proxies"), "{w:?}");
+        let proxied = cfg_from(
+            "[server]\npublic_url = \"https://studio.example.com\"\ntrusted_proxies = [\"10.0.0.2\"]\n",
+        )
+        .unwrap();
+        assert!(proxied.warnings().is_empty());
+    }
+
+    #[test]
     fn initial_config_round_trips() {
         let text = render_initial(Path::new("/srv/h2s")).unwrap();
         let c = cfg_from(&text).unwrap();
         assert_eq!(c.paths.data_dir, PathBuf::from("/srv/h2s"));
+        assert_eq!(c.egress_listen.to_string(), "127.0.0.1:3128");
+    }
+
+    #[test]
+    fn the_egress_proxy_listens_on_loopback_by_default() {
+        assert_eq!(FileConfig::default().egress.listen, "127.0.0.1:3128");
+        let c = cfg_from("").unwrap();
+        assert!(c.egress_listen.ip().is_loopback());
+        let text = render_initial(Path::new("/srv/h2s")).unwrap();
+        let egress = text.split("[egress]").nth(1).unwrap();
+        assert!(egress.contains("listen = \"127.0.0.1:3128\""), "{text}");
+        assert!(!text.contains("0.0.0.0"), "{text}");
     }
 
     proptest! {

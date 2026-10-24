@@ -3,7 +3,9 @@
 //! Host jobs run `<harness2_home>/.venv/bin/<program>`; container jobs run the same path
 //! inside the runner image (`/h2s/harness2/...`) through `h2s_core::isolation::run_argv`,
 //! with the experiment, the harness2 checkout and the job's files bind-mounted at fixed
-//! points. Secret values travel only in the child environment (`-e NAME` for containers).
+//! points. Secret values travel only in the child environment; for containers, in a 0600
+//! `--env-file` in the job's directory, so the runtime CLI's own environment and command
+//! line never hold profile variables or secret values.
 
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -26,6 +28,11 @@ use super::backend::{
 /// The backend the server uses.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CoreBackend;
+
+/// The `--env-file` of container jobs (inside the job dir, 0600).
+pub const CONTAINER_ENV_FILE: &str = "container.env";
+/// Longest `NAME=VALUE` line of the env file (Docker reads it line by line, 64 KiB at most).
+const ENV_FILE_LINE_MAX: usize = 64 * 1024 - 1;
 
 /// Directory (inside the job dir) a split job writes its file to.
 pub const SPLIT_OUT_DIR: &str = "out";
@@ -70,6 +77,14 @@ pub fn history(dir: &Path, kind: ExperimentKind) -> Option<h2s_core::estimate::H
     })
 }
 
+/// A UTF-8 result file the job wrote (`util::read_job_file`: no symlinks, FIFOs or
+/// devices, at most `MAX_RESULT_FILE`).
+fn read_text(path: &Path) -> std::io::Result<String> {
+    let bytes = crate::util::read_job_file(path, crate::util::MAX_RESULT_FILE)?;
+    String::from_utf8(bytes)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "is not valid UTF-8"))
+}
+
 /// A path as text for argv/env; refuses non-UTF-8 paths.
 fn text(p: &Path) -> Result<String, String> {
     p.to_str()
@@ -93,6 +108,36 @@ fn mount_source(p: &Path) -> Result<String, String> {
         return Err(format!("{s} must be a directory, not a symlink or file"));
     }
     Ok(s)
+}
+
+/// A container job's environment as `--env-file` lines. The format has no quoting or
+/// escapes (one `NAME=VALUE` per line, the value verbatim to the end of the line), so values
+/// with line breaks or NUL cannot be passed; the error names the variable, never the value.
+///
+/// # Errors
+/// A value that cannot be written as one line.
+pub fn container_env_file(env: &[(String, String)]) -> Result<Zeroizing<String>, String> {
+    let mut out = Zeroizing::new(String::new());
+    for (name, value) in env {
+        if value.contains(['\n', '\r', '\0']) {
+            return Err(format!(
+                "the value of {name} contains a line break or NUL, which a container job \
+                 cannot receive (its variables go through an env file, one per line); change \
+                 the value or use host isolation"
+            ));
+        }
+        if name.len() + 1 + value.len() > ENV_FILE_LINE_MAX {
+            return Err(format!(
+                "the value of {name} is too long for a container job (at most 64 KiB per \
+                 variable)"
+            ));
+        }
+        out.push_str(name);
+        out.push('=');
+        out.push_str(value);
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 /// Where things are as the job's process sees them.
@@ -205,12 +250,16 @@ impl Planner<'_> {
                 env_values.push((n.to_owned(), h2s_core::env::CONTAINER_NO_PROXY.to_owned()));
             }
         }
+        // Every job variable goes in through the env file (written by the runner from
+        // `JobPlan::files`); the runtime CLI is started without them.
+        let env_file = text(&input.job_dir.join(CONTAINER_ENV_FILE))?;
         let spec = ContainerSpec {
             runtime: c.runtime.core(),
             image: c.image.clone(),
             job_id: input.job_id.to_owned(),
             mounts,
-            env_names: self.env.iter().map(|(n, _)| n.clone()).collect(),
+            env_names: Vec::new(),
+            env_file: Some(env_file),
             env_values,
             network: c.network.clone(),
             cpus: Some(c.cpus),
@@ -228,6 +277,7 @@ impl Planner<'_> {
             program: runtime_program.clone(),
             args: runtime_args.to_vec(),
             cwd: input.job_dir.to_path_buf(),
+            env: Vec::new(),
             runtime_env: true,
             container: Some(ContainerRef {
                 runtime: c.runtime,
@@ -353,6 +403,10 @@ impl JobBackend for CoreBackend {
         }
         if !env.iter().any(|(n, _)| n == "HARNESS2_RUNS_DIR") {
             env.push(("HARNESS2_RUNS_DIR".to_owned(), runs_dir));
+        }
+        if container && input.container.is_some() {
+            plan.files
+                .push((CONTAINER_ENV_FILE.to_owned(), container_env_file(&env)?));
         }
         let split_view = input
             .split_file
@@ -608,12 +662,12 @@ impl JobBackend for CoreBackend {
                 let Some((dir, _)) = out.experiment else {
                     return Ok(None);
                 };
-                match std::fs::read_to_string(dir.join("demo.json")) {
+                match read_text(&dir.join("demo.json")) {
                     Ok(t) => parse::demo_json(&t)
                         .map(|d| Some(JobResult::Demo(d)))
                         .map_err(|e| e.to_string()),
                     Err(_) if !ok => Ok(None),
-                    Err(e) => Err(format!("demo.json: {e}")),
+                    Err(e) => Err(crate::util::job_file_error("demo.json", &e)),
                 }
             }
             ParseKind::Setup { dry_run } => Ok(Some(JobResult::Setup(parse::setup_output(
@@ -672,8 +726,8 @@ impl JobBackend for CoreBackend {
                 let JobSpec::Split(p) = out.spec else {
                     return Ok(None);
                 };
-                let t = std::fs::read_to_string(out.job_dir.join(SPLIT_OUT_DIR).join(SPLIT_FILE))
-                    .map_err(|e| format!("split file: {e}"))?;
+                let t = read_text(&out.job_dir.join(SPLIT_OUT_DIR).join(SPLIT_FILE))
+                    .map_err(|e| crate::util::job_file_error("the split file", &e))?;
                 let (train, test) = parse::split_file(&t).map_err(|e| e.to_string())?;
                 Ok(Some(JobResult::Split(SplitResult {
                     name: p.name.clone(),
@@ -721,6 +775,25 @@ mod tests {
         // With the core stubs this reports "cannot be validated"; with core it is empty.
         let problems = CoreBackend.check_names(&spec);
         assert!(problems.iter().all(|p| p.field == "params.experiment"));
+    }
+
+    #[test]
+    fn env_files_hold_one_variable_per_line() {
+        let env = vec![
+            ("HARNESS2_RUNS_DIR".to_owned(), "/h2s/experiment".to_owned()),
+            ("KEY".to_owned(), "a=b c \"quoted\" #hash".to_owned()),
+            ("EMPTY".to_owned(), String::new()),
+        ];
+        assert_eq!(
+            container_env_file(&env).unwrap().as_str(),
+            "HARNESS2_RUNS_DIR=/h2s/experiment\nKEY=a=b c \"quoted\" #hash\nEMPTY=\n"
+        );
+        for bad in ["line1\nOTHER=x", "carriage\r", "nul\0"] {
+            let e = container_env_file(&[("SECRET_KEY".to_owned(), bad.to_owned())]).unwrap_err();
+            assert!(e.contains("SECRET_KEY") && !e.contains(bad), "{e}");
+        }
+        let long = "x".repeat(ENV_FILE_LINE_MAX);
+        assert!(container_env_file(&[("K".to_owned(), long)]).is_err());
     }
 
     #[test]

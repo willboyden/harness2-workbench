@@ -609,10 +609,11 @@ mod tests {
     async fn connect_falls_back_to_the_next_checked_address() {
         let good = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let good_addr = good.local_addr().unwrap();
-        let closed_addr = {
-            let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            l.local_addr().unwrap()
-        };
+        // Bound but never listening: connections are refused, and the port stays ours for
+        // the whole test (a released port can be taken by a parallel test).
+        let closed = tokio::net::TcpSocket::new_v4().unwrap();
+        closed.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let closed_addr = closed.local_addr().unwrap();
         let s = connect_any(vec![closed_addr, good_addr], Duration::from_secs(5))
             .await
             .unwrap();

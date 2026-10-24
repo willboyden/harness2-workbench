@@ -91,6 +91,16 @@ pub fn b64url_decode(s: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
+/// Make this process non-dumpable (`prctl(PR_SET_DUMPABLE, 0)`): no core dumps, and no
+/// other process of the same user (a host-mode job) can read its `/proc/<pid>/environ` or
+/// memory, or ptrace it. Children are not affected: `execve` resets the attribute.
+///
+/// # Errors
+/// When the kernel refuses (not expected on Linux).
+pub fn make_non_dumpable() -> std::io::Result<()> {
+    nix::sys::prctl::set_dumpable(false).map_err(std::io::Error::from)
+}
+
 /// Create `dir` (and parents) and set its mode to 0700 explicitly.
 ///
 /// # Errors
@@ -158,6 +168,57 @@ pub fn open_private_append(path: &Path) -> std::io::Result<File> {
         .open(path)?;
     f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     Ok(f)
+}
+
+/// Largest result file a job leaves for the server to read (`demo.json`, `split.json`).
+pub const MAX_RESULT_FILE: u64 = 16 * 1024 * 1024;
+
+/// Read a regular file a job may have written, at most `max` bytes: the last component is
+/// never followed when it is a symlink, a FIFO or device is refused without blocking (it is
+/// opened non-blocking and checked before any read), and a larger file is refused.
+///
+/// # Errors
+/// I/O errors (`NotFound` passes through), or `InvalidData` for a symlink, a file that is
+/// not regular, or one over `max`.
+pub fn read_job_file(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let refused = |why: String| std::io::Error::new(std::io::ErrorKind::InvalidData, why);
+    let flags = nix::fcntl::OFlag::O_NOFOLLOW | nix::fcntl::OFlag::O_NONBLOCK;
+    let f = match OpenOptions::new()
+        .read(true)
+        .custom_flags(flags.bits())
+        .open(path)
+    {
+        Ok(f) => f,
+        Err(e) if e.raw_os_error() == Some(nix::errno::Errno::ELOOP as i32) => {
+            return Err(refused("is a symbolic link; it is not followed".to_owned()));
+        }
+        Err(e) => return Err(e),
+    };
+    let meta = f.metadata()?;
+    if !meta.is_file() {
+        return Err(refused("is not a regular file".to_owned()));
+    }
+    if meta.len() > max {
+        return Err(refused(format!("is larger than {max} bytes")));
+    }
+    let mut buf = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or(0));
+    f.take(max.saturating_add(1)).read_to_end(&mut buf)?;
+    if u64::try_from(buf.len()).unwrap_or(u64::MAX) > max {
+        return Err(refused(format!("is larger than {max} bytes")));
+    }
+    Ok(buf)
+}
+
+/// `"<name> is a symbolic link; ..."` for [`read_job_file`]'s refusals, `"<name>: <error>"`
+/// for other I/O errors.
+#[must_use]
+pub fn job_file_error(name: &str, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::InvalidData {
+        format!("{name} {e}")
+    } else {
+        format!("{name}: {e}")
+    }
 }
 
 /// Set `path`'s mode when it exists (used to tighten files other code created).
@@ -242,6 +303,59 @@ mod tests {
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(&target, &link).unwrap();
         assert!(open_private_append(&link).is_err());
+    }
+
+    #[test]
+    fn the_process_can_be_made_non_dumpable() {
+        // Run in a child process: the attribute is process-wide and would also apply to
+        // the other tests of this binary.
+        let me = std::env::current_exe().unwrap();
+        if std::env::var_os("H2S_TEST_DUMPABLE_CHILD").is_some() {
+            make_non_dumpable().unwrap();
+            assert!(!nix::sys::prctl::get_dumpable().unwrap());
+            return;
+        }
+        let out = std::process::Command::new(me)
+            .args([
+                "--exact",
+                "util::tests::the_process_can_be_made_non_dumpable",
+                "--nocapture",
+            ])
+            .env("H2S_TEST_DUMPABLE_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(nix::sys::prctl::get_dumpable().unwrap());
+    }
+
+    #[test]
+    fn job_files_are_read_safely() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("demo.json");
+        std::fs::write(&file, b"{}").unwrap();
+        assert_eq!(read_job_file(&file, 16).unwrap(), b"{}");
+        // Over the cap.
+        std::fs::write(&file, vec![b'x'; 17]).unwrap();
+        let e = read_job_file(&file, 16).unwrap_err();
+        assert!(e.to_string().contains("larger than 16"), "{e}");
+        // A symlink is not followed, whatever it points at.
+        let link = dir.path().join("link.json");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let e = read_job_file(&link, 1024).unwrap_err();
+        assert!(e.to_string().contains("symbolic link"), "{e}");
+        // A FIFO is refused at once instead of blocking the reader forever.
+        let fifo = dir.path().join("fifo.json");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
+        let e = read_job_file(&fifo, 1024).unwrap_err();
+        assert!(e.to_string().contains("not a regular file"), "{e}");
+        // A directory, and a missing file.
+        assert!(read_job_file(dir.path(), 1024).is_err());
+        let missing = read_job_file(&dir.path().join("none"), 1024).unwrap_err();
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test]

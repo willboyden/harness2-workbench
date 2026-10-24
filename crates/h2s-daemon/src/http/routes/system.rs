@@ -69,6 +69,7 @@ pub async fn info(
         build_commit: BUILD_COMMIT.map(str::to_owned),
         harness2,
         isolation: state.cfg.isolation(),
+        host_risks_preacknowledged: state.cfg.file.isolation.preacknowledge_host_risks,
         container_runtime,
         auth_mode: state.cfg.file.auth.mode,
         server_time: crate::util::now_rfc3339(),
@@ -129,6 +130,8 @@ pub async fn doctor(
             isolation: st.cfg.isolation(),
             data_dir: st.cfg.paths.data_dir.clone(),
             uses_vertex,
+            container: (st.cfg.isolation() == Isolation::Container)
+                .then(|| st.cfg.file.isolation.container.clone()),
         }
     };
     Ok(Json(state.doctor.report(refresh, facts).await))

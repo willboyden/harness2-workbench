@@ -12,8 +12,8 @@
 //! stream never overlap or miss anything. The database is written at every state change.
 //!
 //! On startup, jobs left `running` by a previous server become `failed` ("server
-//! restarted") and their process groups are terminated when the recorded leader pid and
-//! start time still match (see [`procfs`]).
+//! restarted") and their process groups are terminated when they are positively identified:
+//! same boot, and a group member still carrying the job's marker (see [`procfs`]).
 
 pub mod backend;
 pub mod container;
@@ -62,8 +62,14 @@ pub struct JobSettings {
     /// SIGTERM -> SIGKILL grace on cancellation (10 s in production).
     pub kill_grace: Duration,
     pub log_retention: Duration,
+    /// `jobs.max_log_bytes`.
+    pub max_log_bytes: u64,
+    /// `jobs.min_free_disk_mb` in bytes (0 = no floor).
+    pub min_free_disk: u64,
     pub isolation: Isolation,
     pub preacknowledged: bool,
+    /// `paths.allow_untested_harness2_rev`.
+    pub allow_untested_rev: bool,
     pub paths: Paths,
     pub container: ContainerSection,
 }
@@ -79,8 +85,11 @@ impl JobSettings {
             budget_poll: cfg.budget_poll,
             kill_grace: Duration::from_secs(10),
             log_retention: Duration::from_secs(u64::from(j.log_retention_days) * 86_400),
+            max_log_bytes: j.max_log_bytes,
+            min_free_disk: j.min_free_disk_mb.saturating_mul(1024 * 1024),
             isolation: cfg.file.isolation.mode,
             preacknowledged: cfg.file.isolation.preacknowledge_host_risks,
+            allow_untested_rev: cfg.file.paths.allow_untested_harness2_rev,
             paths: cfg.paths.clone(),
             container: cfg.file.isolation.container.clone(),
         }
@@ -140,6 +149,8 @@ pub enum CancelReason {
     Timeout(Duration),
     /// The server is shutting down.
     Shutdown,
+    /// Free space on the data directory fell below `jobs.min_free_disk_mb` (MiB).
+    DiskSpace(u64),
 }
 
 impl CancelReason {
@@ -147,7 +158,9 @@ impl CancelReason {
     pub fn status(&self) -> JobStatus {
         match self {
             CancelReason::User(_) | CancelReason::Budget => JobStatus::Cancelled,
-            CancelReason::Timeout(_) | CancelReason::Shutdown => JobStatus::Failed,
+            CancelReason::Timeout(_) | CancelReason::Shutdown | CancelReason::DiskSpace(_) => {
+                JobStatus::Failed
+            }
         }
     }
 
@@ -158,6 +171,9 @@ impl CancelReason {
             CancelReason::Budget => "budget reached".to_owned(),
             CancelReason::Timeout(d) => format!("timed out after {}", human_duration(*d)),
             CancelReason::Shutdown => "server stopped".to_owned(),
+            CancelReason::DiskSpace(mb) => {
+                format!("stopped: less than {mb} MiB free on the data directory")
+            }
         }
     }
 }
@@ -471,7 +487,7 @@ impl JobManager {
         let need = spec.required_role();
         if !actor.principal.role.allows(need) {
             return Err(ApiError::forbidden(format!(
-                "starting a {} job requires the {} role",
+                "starting a job of kind {} requires the {} role",
                 kind.as_str(),
                 need.as_str()
             )));
@@ -501,11 +517,25 @@ impl JobManager {
                  user's files and network); set acknowledge_risks to true to proceed",
             ));
         }
-        if matches!(spec, JobSpec::InstallHarness2(_)) {
+        if let JobSpec::InstallHarness2(p) = &spec {
             if !self.settings.paths.harness2_managed {
                 return Err(ApiError::conflict(
                     "harness2_home is an existing checkout (paths.harness2_managed = false); \
                      the server does not modify it",
+                ));
+            }
+            if let Some(rev) = &p.rev
+                && rev != h2s_core::TESTED_HARNESS2_COMMIT
+                && !self.settings.allow_untested_rev
+            {
+                return Err(ApiError::invalid(
+                    "params.rev",
+                    format!(
+                        "only the tested harness2 commit {} can be installed; an \
+                         administrator can allow others with \
+                         paths.allow_untested_harness2_rev = true",
+                        h2s_core::TESTED_HARNESS2_COMMIT
+                    ),
                 ));
             }
         } else if !self.harness2_installed() {
@@ -879,7 +909,7 @@ impl JobManager {
         let need = live.spec.required_role().max(h2s_api::Role::Operator);
         if !actor.principal.role.allows(need) {
             return Err(ApiError::forbidden(format!(
-                "cancelling a {} job requires the {} role",
+                "cancelling a job of kind {} requires the {} role",
                 live.spec.kind().as_str(),
                 need.as_str()
             )));
@@ -1071,11 +1101,8 @@ impl JobManager {
             .await
             .ok()
             .flatten();
-        if let Some(r) = row
-            && let (Some(pid), Some(start)) = (r.pid, r.pid_start)
-            && let (Ok(pid), Ok(start)) = (i32::try_from(pid), u64::try_from(start))
-        {
-            procfs::terminate_recorded_group(pid, start, self.settings.kill_grace).await;
+        if let Some(rec) = row.as_ref().and_then(recorded_process) {
+            procfs::terminate_recorded_group(&rec, self.settings.kill_grace).await;
         }
         let now = now_rfc3339();
         live.mutate(|job| {
@@ -1135,11 +1162,28 @@ impl JobManager {
                     Err(e) => notes.push(format!("container not stopped: {e}")),
                 }
             }
-            if let (Some(pid), Some(start)) = (row.pid, row.pid_start)
-                && let (Ok(pid), Ok(start)) = (i32::try_from(pid), u64::try_from(start))
-                && procfs::terminate_recorded_group(pid, start, self.settings.kill_grace).await
-            {
-                notes.push(format!("terminated its process group {pid}"));
+            if row.pid.is_some() {
+                let note = match recorded_process(&row) {
+                    Some(rec) => {
+                        match procfs::terminate_recorded_group(&rec, self.settings.kill_grace).await
+                        {
+                            procfs::Termination::Signalled => {
+                                Some(format!("terminated its process group {}", rec.pid))
+                            }
+                            procfs::Termination::OtherBoot => Some(
+                                "its processes were recorded before a reboot; nothing signalled"
+                                    .to_owned(),
+                            ),
+                            procfs::Termination::NotFound => None,
+                        }
+                    }
+                    None => Some(
+                        "its processes could not be identified (incomplete record); nothing \
+                         signalled"
+                            .to_owned(),
+                    ),
+                };
+                notes.extend(note);
             }
             let mut job = row.job;
             let log_path = logs::log_path(&self.settings.paths.job_logs_dir, &id);
@@ -1183,7 +1227,7 @@ impl JobManager {
             self.db
                 .call(move |c| {
                     crate::db::jobs::save_state(c, &j)?;
-                    crate::db::jobs::set_process(c, &j.id, None, None, false)
+                    crate::db::jobs::set_process(c, &j.id, None)
                 })
                 .await?;
             self.metrics
@@ -1326,12 +1370,36 @@ impl JobManager {
                     tracing::warn!(error = %e, "the container runtime did not answer; container jobs will fail until it does");
                 }
             }
+            // With a proxy configured, jobs must not have another way out.
+            if let Some(check) =
+                container::network_check(&container::SystemRunner, &me.settings.container).await
+            {
+                if check.level == h2s_api::CheckLevel::Ok {
+                    tracing::info!("{}", check.detail);
+                } else {
+                    tracing::warn!(
+                        remedy = check.remedy.as_deref().unwrap_or(""),
+                        "SECURITY: {}",
+                        check.detail
+                    );
+                }
+            }
         });
     }
 
     pub(crate) fn job_dir(&self, id: &str) -> PathBuf {
         self.settings.paths.job_files_dir.join(id)
     }
+}
+
+/// What a job row recorded about its running step's process, when complete.
+fn recorded_process(row: &crate::db::jobs::JobRow) -> Option<procfs::Recorded> {
+    Some(procfs::Recorded {
+        pid: i32::try_from(row.pid?).ok()?,
+        start: u64::try_from(row.pid_start?).ok()?,
+        boot_id: row.pid_boot.clone()?,
+        job_id: row.job.id.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -1360,5 +1428,11 @@ mod tests {
             JobStatus::Failed
         );
         assert_eq!(CancelReason::Shutdown.status(), JobStatus::Failed);
+        assert_eq!(CancelReason::DiskSpace(256).status(), JobStatus::Failed);
+        assert!(
+            CancelReason::DiskSpace(256)
+                .message()
+                .contains("256 MiB free")
+        );
     }
 }

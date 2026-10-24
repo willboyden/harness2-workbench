@@ -18,6 +18,8 @@ pub struct JobRow {
     pub pid: Option<i64>,
     /// Its start time in clock ticks since boot (`/proc/<pid>/stat` field 22).
     pub pid_start: Option<i64>,
+    /// The boot both belong to (`/proc/sys/kernel/random/boot_id`).
+    pub pid_boot: Option<String>,
     pub in_container: bool,
     /// The main command line (sanitized), for reproducibility manifests.
     pub argv: Option<Vec<String>>,
@@ -38,7 +40,7 @@ pub(crate) fn isolation_str(i: Isolation) -> &'static str {
 
 const COLUMNS: &str = "seq, id, kind, spec, experiment, status, isolation, created_by, created_at, \
      started_at, finished_at, exit_code, steps, progress, result, error, log_lines, spent_usd, \
-     pid, pid_start, in_container, argv, log_purged";
+     pid, pid_start, in_container, argv, log_purged, pid_boot";
 
 fn ts(v: Option<i64>) -> Option<String> {
     v.map(rfc3339)
@@ -68,6 +70,7 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DbResult<JobRow>> {
     let spent_usd: Option<f64> = r.get(17)?;
     let pid: Option<i64> = r.get(18)?;
     let pid_start: Option<i64> = r.get(19)?;
+    let pid_boot: Option<String> = r.get(23)?;
     Ok((|| {
         let kind: JobKind =
             parse_enum(&kind).ok_or_else(|| DbError::Invalid(format!("job kind {kind}")))?;
@@ -103,6 +106,7 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DbResult<JobRow>> {
             experiment,
             pid,
             pid_start,
+            pid_boot,
             in_container: in_container != 0,
             argv,
             log_purged: log_purged != 0,
@@ -288,20 +292,29 @@ pub fn transition(
     Ok(n == 1)
 }
 
+/// The process a job's current step runs as, recorded for restart recovery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessRecord {
+    pub pid: i64,
+    /// Start time in clock ticks since boot (`/proc/<pid>/stat` field 22).
+    pub start: Option<i64>,
+    /// `/proc/sys/kernel/random/boot_id` when the process started.
+    pub boot_id: Option<String>,
+    pub in_container: bool,
+}
+
 /// Record the process the job's current step runs as (`None` clears it).
 ///
 /// # Errors
 /// SQLite errors.
-pub fn set_process(
-    conn: &Connection,
-    id: &str,
-    pid: Option<i64>,
-    pid_start: Option<i64>,
-    in_container: bool,
-) -> DbResult<()> {
+pub fn set_process(conn: &Connection, id: &str, process: Option<&ProcessRecord>) -> DbResult<()> {
+    let (pid, start, boot, in_container) = match process {
+        Some(p) => (Some(p.pid), p.start, p.boot_id.as_deref(), p.in_container),
+        None => (None, None, None, false),
+    };
     conn.execute(
-        "UPDATE jobs SET pid = ?2, pid_start = ?3, in_container = ?4 WHERE id = ?1",
-        params![id, pid, pid_start, i64::from(in_container)],
+        "UPDATE jobs SET pid = ?2, pid_start = ?3, pid_boot = ?4, in_container = ?5 WHERE id = ?1",
+        params![id, pid, start, boot, i64::from(in_container)],
     )?;
     Ok(())
 }
@@ -460,12 +473,26 @@ mod tests {
         j.log_lines = 12;
         j.spent_usd = Some(0.5);
         save_state(&c, &j).unwrap();
-        set_process(&c, "j1", Some(42), Some(7), true).unwrap();
+        let process = ProcessRecord {
+            pid: 42,
+            start: Some(7),
+            boot_id: Some("b".into()),
+            in_container: true,
+        };
+        set_process(&c, "j1", Some(&process)).unwrap();
         set_argv(&c, "j1", &["harness2-demo".to_owned()]).unwrap();
         let r = get(&c, "j1").unwrap().unwrap();
         assert_eq!(r.job, j);
-        assert_eq!(r.pid, Some(42));
+        assert_eq!(
+            (r.pid, r.pid_start, r.pid_boot.as_deref()),
+            (Some(42), Some(7), Some("b"))
+        );
         assert!(r.in_container);
+        set_process(&c, "j1", None).unwrap();
+        let r = get(&c, "j1").unwrap().unwrap();
+        assert_eq!((r.pid, r.pid_start, r.pid_boot), (None, None, None));
+        assert!(!r.in_container);
+        set_process(&c, "j1", Some(&process)).unwrap();
         assert_eq!(r.argv.unwrap(), vec!["harness2-demo".to_owned()]);
         assert_eq!(for_experiment(&c, "e1").unwrap().len(), 1);
         assert_eq!(logs_to_purge(&c, i64::MAX).unwrap(), vec!["j1".to_owned()]);

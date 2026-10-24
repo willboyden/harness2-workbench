@@ -11,6 +11,7 @@ pub mod openapi;
 pub mod routes;
 pub mod server;
 pub mod static_ui;
+pub mod sweeps;
 
 use std::net::SocketAddr;
 use std::ops::Deref;
@@ -45,10 +46,25 @@ pub struct AppInner {
     pub secrets: SecretStore,
     pub metrics: Arc<Metrics>,
     pub login_limiter: RateLimiter,
+    /// Failed authentications (credentials presented) per client; past
+    /// [`extract::AUTH_FAILURES_PER_MINUTE`] they are answered 429.
+    pub auth_failures: RateLimiter,
+    /// Audit records of failed authentication per client
+    /// ([`extract::AUDITED_FAILURES_PER_MINUTE`]); further failures are only counted.
+    pub failure_audits: RateLimiter,
     pub doctor: DoctorService,
+    /// Bounds the blocking reads of experiment results running at once
+    /// ([`routes::RESULTS_READS`]); more wait for a permit.
+    pub results_reads: Arc<tokio::sync::Semaphore>,
+    /// Sweep summaries for the experiment views (see [`sweeps`]).
+    pub sweep_cache: Arc<sweeps::SweepCache>,
     /// `Host` values this server answers to (configured + loopback forms of the bound port).
     pub hosts: Vec<HostEntry>,
     pub sse_open: AtomicUsize,
+    /// Open event streams per principal (see `routes::jobs`).
+    pub sse_by_principal: std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    /// Heartbeat of event streams; the caller's credential is re-checked at each one.
+    pub sse_heartbeat: std::time::Duration,
     pub shutdown: watch::Receiver<bool>,
     /// Shared secret a trusted reverse proxy presents (proxy auth mode).
     pub proxy_secret: Option<Zeroizing<String>>,
@@ -74,6 +90,18 @@ impl AppState {
     #[must_use]
     pub fn new(inner: AppInner) -> AppState {
         AppState(Arc::new(inner))
+    }
+
+    /// Append a record of a failed authentication, unless this client already used its
+    /// share of such records this minute (then it is only counted in the metrics), so
+    /// unauthenticated clients cannot flood the hash-chained audit log.
+    pub async fn audit_failure(&self, client: Option<std::net::IpAddr>, entry: AuditEntry) {
+        let key = client.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+        if self.failure_audits.check(key).is_ok() {
+            self.audit(entry).await;
+        } else {
+            self.metrics.audit_suppressed.inc();
+        }
     }
 
     /// Append to the audit log; failures are logged (the request itself proceeds).

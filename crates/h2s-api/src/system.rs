@@ -37,6 +37,11 @@ pub struct SystemInfo {
     pub harness2: Harness2Status,
     /// Isolation new jobs use.
     pub isolation: Isolation,
+    /// `isolation.preacknowledge_host_risks`: an administrator accepted the risks of host
+    /// isolation for everyone, so jobs need no `acknowledge_risks`. Additive after contract
+    /// v1.2.
+    #[serde(default)]
+    pub host_risks_preacknowledged: bool,
     /// `docker` or `podman` when container isolation is configured and the runtime answers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_runtime: Option<String>,
