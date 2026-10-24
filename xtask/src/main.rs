@@ -46,11 +46,17 @@ enum Cmd {
         /// harness2 checkout with its .venv (default: $H2S_E2E_HARNESS2_HOME).
         #[arg(long)]
         harness2_home: Option<String>,
-        /// Run only test names containing this filter.
+        /// Run one suite: server_demo, browser or mcp (default: all).
+        #[arg(long)]
+        suite: Option<String>,
+        /// Run only test names containing this filter (test names, not file names).
         #[arg(long)]
         filter: Option<String>,
     },
 }
+
+/// The end-to-end suites (`crates/h2s-e2e/tests/<name>.rs`).
+const E2E_SUITES: &[&str] = &["server_demo", "browser", "mcp"];
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -70,8 +76,9 @@ fn main() -> Result<()> {
         Cmd::Hooks => run(&root, "git", &["config", "core.hooksPath", ".githooks"]),
         Cmd::E2e {
             harness2_home,
+            suite,
             filter,
-        } => e2e(&root, harness2_home, filter.as_deref()),
+        } => e2e(&root, harness2_home, suite.as_deref(), filter.as_deref()),
     }
 }
 
@@ -206,8 +213,19 @@ fn check(root: &Path) -> Result<()> {
 }
 
 /// Build the UI (embedded by the server at compile time), then the binaries, then run the
-/// ignored end-to-end tests against them.
-fn e2e(root: &Path, harness2_home: Option<String>, filter: Option<&str>) -> Result<()> {
+/// ignored end-to-end tests against them. Zero tests run is a failure: a filter that
+/// matches nothing must not report success.
+fn e2e(
+    root: &Path,
+    harness2_home: Option<String>,
+    suite: Option<&str>,
+    filter: Option<&str>,
+) -> Result<()> {
+    if let Some(s) = suite
+        && !E2E_SUITES.contains(&s)
+    {
+        bail!("unknown suite {s:?}; use one of {}", E2E_SUITES.join(", "));
+    }
     let home = harness2_home
         .or_else(|| std::env::var("H2S_E2E_HARNESS2_HOME").ok())
         .context("pass --harness2-home <checkout with .venv> or set H2S_E2E_HARNESS2_HOME")?;
@@ -221,22 +239,70 @@ fn e2e(root: &Path, harness2_home: Option<String>, filter: Option<&str>) -> Resu
         &["build", "--locked", "-p", "h2s-daemon", "-p", "h2s-mcp"],
     )?;
     let bin_dir = root.join("target/debug");
-    let mut args = vec!["test", "--locked", "-p", "h2s-e2e", "--"];
+    let mut args = vec!["test", "--locked", "-p", "h2s-e2e"];
+    if let Some(s) = suite {
+        args.extend(["--test", s]);
+    }
+    args.push("--");
     if let Some(f) = filter {
         args.push(f);
     }
     args.extend(["--ignored", "--test-threads=2"]);
     eprintln!("$ cargo {}", args.join(" "));
-    let status = Command::new("cargo")
+    let mut child = Command::new("cargo")
         .args(&args)
         .current_dir(root)
         .env("H2S_E2E_BIN_DIR", &bin_dir)
         .env("H2S_E2E_HARNESS2_HOME", &home)
-        .status()
+        .stdout(std::process::Stdio::piped())
+        .spawn()
         .context("could not start cargo test")?;
+    let stdout = child.stdout.take().context("no stdout from cargo test")?;
+    let mut passed = 0;
+    for line in std::io::BufRead::lines(std::io::BufReader::new(stdout)) {
+        let line = line.context("reading cargo test output")?;
+        println!("{line}");
+        passed += passed_count(&line).unwrap_or(0);
+    }
+    let status = child.wait().context("waiting for cargo test")?;
     if !status.success() {
         bail!("end-to-end tests failed ({status}); screenshots are in target/e2e-artifacts/");
     }
-    eprintln!("end-to-end tests passed; screenshots in target/e2e-artifacts/");
+    if passed == 0 {
+        bail!(
+            "no end-to-end test ran: --filter matches test names (e.g. \
+             login_browse_the_demo_and_diff_a_harness); use --suite for a file"
+        );
+    }
+    eprintln!("{passed} end-to-end tests passed; screenshots in target/e2e-artifacts/");
     Ok(())
+}
+
+/// `N` from libtest's summary line `test result: ok. N passed; ...`.
+fn passed_count(line: &str) -> Option<u64> {
+    line.strip_prefix("test result: ")?
+        .split_once(". ")?
+        .1
+        .split(' ')
+        .next()?
+        .parse()
+        .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::passed_count;
+
+    #[test]
+    fn libtest_summaries_are_counted() {
+        let ok = "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.94s";
+        assert_eq!(passed_count(ok), Some(4));
+        let none = "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out";
+        assert_eq!(passed_count(none), Some(0));
+        assert_eq!(
+            passed_count("test result: FAILED. 1 passed; 1 failed; 0 ignored"),
+            Some(1)
+        );
+        assert_eq!(passed_count("test login ... ok"), None);
+    }
 }

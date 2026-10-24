@@ -146,11 +146,30 @@ async fn login_browse_the_demo_and_diff_a_harness() {
         .expect("click");
     wait_for(&c, &tid("login-error")).await;
 
-    // The right token logs in (session cookie) and reaches the dashboard.
+    // The right token logs in (session cookie) and returns to the page that was asked for,
+    // so a shared deep link survives the sign-in.
     let token = wait_for(&c, &tid("login-token")).await;
     token.clear().await.expect("clear");
     token.send_keys(&studio.admin_token).await.expect("type");
     wait_for(&c, &tid("login-submit"))
+        .await
+        .click()
+        .await
+        .expect("click");
+    wait_for(
+        &c,
+        &format!("{}[data-name=\"demo\"]", tid("experiment-row")),
+    )
+    .await;
+    let here = c.current_url().await.expect("url");
+    assert_eq!(
+        here.path(),
+        "/experiments",
+        "sign-in did not return to the deep link"
+    );
+
+    // The dashboard.
+    wait_for(&c, &tid("nav-dashboard"))
         .await
         .click()
         .await
