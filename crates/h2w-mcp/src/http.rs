@@ -61,6 +61,8 @@ pub struct HttpOptions {
     pub max_waits_per_token: usize,
     /// Pass `acknowledge_risks=true` from MCP clients on to the server (off by default).
     pub allow_risk_acknowledgement: bool,
+    /// Pass `acknowledge_cloud_judge=true` from MCP clients on to the server (off by default).
+    pub allow_cloud_judge_acknowledgement: bool,
 }
 
 /// Default for [`HttpOptions::max_concurrent_requests`].
@@ -75,6 +77,7 @@ impl Default for HttpOptions {
             max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
             max_waits_per_token: DEFAULT_WAITS_PER_TOKEN,
             allow_risk_acknowledgement: false,
+            allow_cloud_judge_acknowledgement: false,
         }
     }
 }
@@ -123,11 +126,13 @@ pub fn router(
     // One limiter for every per-request handler, so the cap holds across requests.
     let waits = WaitLimiter::new(options.max_waits_per_token);
     let allow_risk_acknowledgement = options.allow_risk_acknowledgement;
+    let allow_cloud_judge_acknowledgement = options.allow_cloud_judge_acknowledgement;
     let service = StreamableHttpService::new(
         move || {
             Ok(H2sMcp::new(api.clone(), Credentials::PerRequest)
                 .with_wait_limiter(waits.clone())
-                .with_risk_acknowledgement(allow_risk_acknowledgement))
+                .with_risk_acknowledgement(allow_risk_acknowledgement)
+                .with_cloud_judge_acknowledgement(allow_cloud_judge_acknowledgement))
         },
         Arc::new(NeverSessionManager::default()),
         config,

@@ -606,3 +606,29 @@ independent audit (findings F1–F16):
   across both sides. The file is data harness2 reads, never a path the server uses. Audit
   `split.choose`. Existence of the ids is harness2's check when a job uses the split.
 - MCP `choose_split` (operator, 43 tools). The web UI's split dialog offers *Chosen tasks*.
+
+**v1.10 (2026-10-27) — cloud judges.**
+- `h2w_api::judge`: `JudgeSite { kind: JudgeSiteKind (local | cloud | unknown), provider?, hosts }`,
+  `judge_site(profile, private_hosts)` (pure; the server, the web UI and the mock API share it),
+  `cloud_judge_warning`, `CLOUD_JUDGE_RULE`, `CloudJudgePolicy` (`acknowledge` | `refuse`). Hosts
+  come from the judge endpoint (or an OpenAI-compatible profile's own endpoint), `extra_env`
+  literals for `HARNESS2_JUDGE_BASE_URL`, `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL`, and Vertex AI
+  for `claude*`, `gemini*` and `vertex/` judges when the profile has Vertex settings. Loopback,
+  private, link-local and CGNAT addresses, single-label names, local-only domains and
+  `[judge] private_hosts` entries are local; an endpoint set through a secret is `unknown`.
+- Additive fields: `ModelProfile.judge_site` and `ProfileCheck.judge_site` (response only, never
+  stored), `SystemInfo.cloud_judges` and `SystemInfo.private_judge_hosts`,
+  `JudgeParams.acknowledge_cloud_judge` and `PipelineParams.acknowledge_cloud_judge` (default
+  false; the pipeline passes it to its judge steps).
+- Job validation, after the profile's secrets: a `judge` or `pipeline` job whose profile's judge is
+  not local is `409` under `[judge] cloud = "refuse"`, else `422` on
+  `params.acknowledge_cloud_judge` without the acknowledgement. Audit detail on success:
+  `acknowledge_cloud_judge: data is generated or synthetic`. The profile check lists the
+  cloud-judge warning first, and `profile_warnings` adds two compatibility warnings: a `claude` or
+  `gemini` judge without Vertex settings cannot judge LAB at the tested commit, and a Claude judge
+  from 4.7 on fails JobBench's temperature-0 calls.
+- Configuration `[judge] cloud` and `[judge] private_hosts`. MCP: `acknowledge_cloud_judge` on
+  `start_judge` and `start_pipeline`, passed on only with `--allow-cloud-judge-acknowledgement`
+  (`H2W_MCP_ALLOW_CLOUD_JUDGE_ACK`), reported in `server_info`'s policy. The web UI's profile
+  editor has judge presets and a live judge-site notice; judging and pipelines with a cloud judge
+  ask for the synthetic-data confirmation.

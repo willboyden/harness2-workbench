@@ -1,8 +1,8 @@
 //! One sweep: tasks, the score report, the experience library and the improver audit trail.
 
 use h2w_api::{
-    AuditSession, CompareSide, Experiment, JobSpec, JudgeParams, LibraryDomain, Mode, Page, Role,
-    ScoreReport, SweepSummary, TaskRow,
+    AuditSession, CompareSide, Experiment, JobSpec, JudgeParams, LibraryDomain, Mode, Page,
+    ProfileCheck, Role, ScoreReport, SweepSummary, TaskRow,
 };
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
@@ -18,9 +18,10 @@ use crate::components::ui::{
     Badge, Card, CodeBlock, CopyButton, Crumb, Cursor, EmptyState, ErrorPanel, Notice, PageHeader,
     Pager, Skeleton, Term, loaded,
 };
-use crate::components::widgets::{HeadlineScores, mode_label};
+use crate::components::widgets::{CloudJudgeConfirm, HeadlineScores, mode_label};
 use crate::logic::format;
 use crate::logic::jobs::Tone;
+use crate::logic::judge::JudgeGate;
 use crate::logic::report::{NoteLevel, note_level};
 use crate::logic::tasks::base_detail;
 use crate::logic::urls::{SweepRef, api as paths, route};
@@ -280,6 +281,25 @@ fn ReportTab(
         async move { api::get::<ScoreReport>(&paths::report(&e, &sw)).await }
     });
     let busy = RwSignal::new(false);
+    // Where the pinned profile's judge runs: a cloud judge needs the synthetic-data
+    // confirmation (or is refused) before the buttons work.
+    let cloud_ok = RwSignal::new(false);
+    let pinned = profile.clone();
+    let check = LocalResource::new(move || {
+        let name = pinned.clone();
+        async move {
+            match name {
+                Some(n) => api::get::<ProfileCheck>(&paths::profile_check(&n))
+                    .await
+                    .ok()
+                    .and_then(|c| c.judge_site),
+                None => None,
+            }
+        }
+    });
+    let site = Signal::derive(move || check.get().flatten());
+    let gate = Signal::derive(move || JudgeGate::of(site.get().as_ref(), s.cloud_judges()));
+    let blocked = move || busy.get() || !gate.get().allows(cloud_ok.get());
     let judge = move |bases: bool| {
         let (Some(cell), Some(profile)) = (summary.cell, profile.clone()) else {
             t.warn(
@@ -297,6 +317,9 @@ fn ReportTab(
                 modes: summary.modes.clone(),
                 bases,
                 profile,
+                acknowledge_cloud_judge: gate
+                    .get_untracked()
+                    .acknowledgement(cloud_ok.get_untracked()),
             }),
             t,
             Some(busy),
@@ -323,10 +346,11 @@ fn ReportTab(
                                 s.can(Role::Operator)
                                     .then(|| {
                                         view! {
-                                            <button type="button" class="btn btn-primary" disabled=move || busy.get() on:click=move |_| judge(false)>
+                                            <CloudJudgeConfirm site=site confirmed=cloud_ok id="judge-cloud-ok" />
+                                            <button type="button" class="btn btn-primary" disabled=blocked on:click=move |_| judge(false)>
                                                 "Judge this sweep"
                                             </button>
-                                            <button type="button" class="btn btn-secondary" disabled=move || busy.get() on:click=move |_| judge2(true)>
+                                            <button type="button" class="btn btn-secondary" disabled=blocked on:click=move |_| judge2(true)>
                                                 "Judge the base runs"
                                             </button>
                                         }

@@ -73,8 +73,18 @@ Read these first; everything else supports them.
    model-written content. An agent with an operator token can still spend money and, in host mode,
    run code through jobs. The MCP server refuses a model's `acknowledge_risks=true` (the
    acknowledgement that host isolation is acceptable) unless a person started it with
-   `--allow-risk-acknowledgement`; `budget_usd` and everything else an operator may do remain
-   parameters the model chooses.
+   `--allow-risk-acknowledgement`; it likewise refuses `acknowledge_cloud_judge=true` unless a
+   person started it with `--allow-cloud-judge-acknowledgement`. `budget_usd` and everything else
+   an operator may do remain parameters the model chooses.
+6a. **Every model endpoint receives the experiment's data.** The executor and improver see the
+   tasks and documents, and the judge sees each task, its reference material and the agent's
+   deliverables. A profile whose endpoints are at a cloud provider sends all of that there. The
+   Workbench classifies the judge (`judge_site`) and requires a person's confirmation that the data
+   is generated or synthetic before a judge or pipeline job sends it to a cloud judge (or refuses
+   such jobs under `[judge] cloud = "refuse"`); it does not classify the executor or improver
+   endpoints, and the classification is by host name only, so a local gateway that forwards to a
+   cloud provider counts as local. The confirmation is a statement a person makes, not a check of
+   the data.
 7. The server has **no TLS** and **no general rate limit**. Failed authentication is throttled per
    client address (60 a minute), logins are limited, and connections and event streams are capped per
    address and per principal; everything else an authenticated client does is not. Put it behind a

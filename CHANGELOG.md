@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Judging with a cloud model: the profile editor's **Judge** part fills the judge from a provider
+  with one click (**Claude (Anthropic API)**, **OpenAI**, **Google Gemini API**, **OpenRouter**, or
+  the executor's own endpoint) and says what works with each benchmark.
+- Every profile now says where its judge runs (`judge_site`: local, cloud with its provider and
+  hosts, or unknown), shared by the server, the web UI and the MCP server. A cloud judge sees
+  every task and output it grades, so the app warns that it should be used **only with generated
+  or synthetic data**: in the profile editor as you type, on the profile's card, in the profile
+  check, and before judging.
+- Judge and pipeline jobs whose profile has a cloud judge need `acknowledge_cloud_judge: true`,
+  the caller's confirmation that the experiment's data is generated or synthetic (`422` without
+  it); the web UI asks with a checkbox, and the audit log records the confirmation. `[judge] cloud
+  = "refuse"` refuses such jobs outright (`409`), and `[judge] private_hosts` declares internal
+  gateways with public-looking names local. Run jobs never call the judge and are unaffected.
+- `h2workbench-mcp --allow-cloud-judge-acknowledgement` (`H2W_MCP_ALLOW_CLOUD_JUDGE_ACK=1`): without
+  it the MCP server refuses `acknowledge_cloud_judge=true`, because only the user knows what the
+  data is.
+- The profile check warns that harness2 judges `claude` and `gemini` ids for LAB on Vertex AI (so
+  such a judge needs Vertex settings to judge LAB), and that JobBench's judge sends temperature 0,
+  which Claude models from 4.7 on refuse.
+
+### Changed
+
+- `judge` and `pipeline` jobs with a profile whose judge is not local (including the upstream
+  Vertex AI setup) are refused until `acknowledge_cloud_judge` is set. API clients that judge with
+  a cloud model must add it.
+
 ## [0.1.3] - 2026-10-27
 
 Measuring harness2 on self-hosted models under container isolation found an environment fault

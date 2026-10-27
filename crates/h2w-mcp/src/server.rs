@@ -63,6 +63,7 @@ pub struct H2sMcp {
     credentials: Credentials,
     waits: WaitLimiter,
     allow_risk_acknowledgement: bool,
+    allow_cloud_judge_acknowledgement: bool,
     tools: Arc<ToolRouter<H2sMcp>>,
 }
 
@@ -75,6 +76,10 @@ impl std::fmt::Debug for H2sMcp {
             .field(
                 "allow_risk_acknowledgement",
                 &self.allow_risk_acknowledgement,
+            )
+            .field(
+                "allow_cloud_judge_acknowledgement",
+                &self.allow_cloud_judge_acknowledgement,
             )
             .finish_non_exhaustive()
     }
@@ -101,6 +106,8 @@ struct McpServerVersion {
 struct McpPolicy {
     /// `acknowledge_risks=true` is passed on (`--allow-risk-acknowledgement`).
     allow_risk_acknowledgement: bool,
+    /// `acknowledge_cloud_judge=true` is passed on (`--allow-cloud-judge-acknowledgement`).
+    allow_cloud_judge_acknowledgement: bool,
     /// Concurrent waits allowed per API token.
     max_waits_per_token: usize,
 }
@@ -112,6 +119,15 @@ user's files and network (host isolation). A human can start this run from the W
 an admin can pre-acknowledge host risks in the server configuration; or the person who runs \
 h2workbench-mcp can start it with --allow-risk-acknowledgement (H2W_MCP_ALLOW_RISK_ACK=1). Without \
 acknowledge_risks the call goes through and the Workbench server decides.";
+
+/// Why `acknowledge_cloud_judge=true` is refused unless a human enabled it.
+const CLOUD_JUDGE_ACK_REFUSED: &str = "forbidden: this MCP server does not let a model set \
+acknowledge_cloud_judge=true, which tells the Workbench that the experiment's tasks and outputs are \
+generated or synthetic data and may go to a cloud judge. Only a person can know that: ask the user \
+to start judging from the Workbench web UI (it asks them to confirm), or the person who runs \
+h2workbench-mcp can start it with --allow-cloud-judge-acknowledgement \
+(H2W_MCP_ALLOW_CLOUD_JUDGE_ACK=1). Without acknowledge_cloud_judge the call goes through and the \
+Workbench server decides.";
 
 const MCP_NAME: &str = "h2workbench-mcp";
 const MCP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -131,6 +147,7 @@ impl H2sMcp {
             credentials,
             waits: WaitLimiter::default(),
             allow_risk_acknowledgement: false,
+            allow_cloud_judge_acknowledgement: false,
             tools,
         }
     }
@@ -140,6 +157,14 @@ impl H2sMcp {
     #[must_use]
     pub fn with_risk_acknowledgement(mut self, allow: bool) -> Self {
         self.allow_risk_acknowledgement = allow;
+        self
+    }
+
+    /// Pass `acknowledge_cloud_judge=true` on to the server (off by default: whether an
+    /// experiment's data is synthetic is the user's knowledge, not a model's).
+    #[must_use]
+    pub fn with_cloud_judge_acknowledgement(mut self, allow: bool) -> Self {
+        self.allow_cloud_judge_acknowledgement = allow;
         self
     }
 
@@ -453,6 +478,7 @@ impl H2sMcp {
                 version: MCP_VERSION,
                 policy: McpPolicy {
                     allow_risk_acknowledgement: self.allow_risk_acknowledgement,
+                    allow_cloud_judge_acknowledgement: self.allow_cloud_judge_acknowledgement,
                     max_waits_per_token: self.waits.max_per_token(),
                 },
             },
@@ -873,6 +899,9 @@ impl H2sMcp {
         if input.params.acknowledge_risks && !self.allow_risk_acknowledgement {
             return output::error(RISK_ACK_REFUSED.to_owned());
         }
+        if input.params.acknowledge_cloud_judge && !self.allow_cloud_judge_acknowledgement {
+            return output::error(CLOUD_JUDGE_ACK_REFUSED.to_owned());
+        }
         self.start_job(&ctx, JobSpec::Pipeline(input.params), input.wait_secs)
             .await
     }
@@ -917,6 +946,9 @@ impl H2sMcp {
         ctx: RequestContext<RoleServer>,
         Args(input): Args<JudgeInput>,
     ) -> rmcp::model::CallToolResult {
+        if input.params.acknowledge_cloud_judge && !self.allow_cloud_judge_acknowledgement {
+            return output::error(CLOUD_JUDGE_ACK_REFUSED.to_owned());
+        }
         self.start_job(&ctx, JobSpec::Judge(input.params), input.wait_secs)
             .await
     }

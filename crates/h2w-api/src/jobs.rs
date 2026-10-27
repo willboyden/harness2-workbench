@@ -282,6 +282,12 @@ pub struct JudgeParams {
     pub bases: bool,
     /// Model profile name; must be the profile the experiment is pinned to.
     pub profile: String,
+    /// Confirms that this experiment's tasks and outputs are generated or synthetic data.
+    /// Required (422 without it) when the profile's judge is not local (its `judge_site`),
+    /// because judging sends them to that service. Set it only on the user's word. Additive
+    /// after contract v1.9.
+    #[serde(default)]
+    pub acknowledge_cloud_judge: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,6 +372,12 @@ pub struct PipelineParams {
     /// Must be `true` when the server runs jobs without container isolation (the executor then has the server user's files and network). Set it only with the user's informed consent.
     #[serde(default)]
     pub acknowledge_risks: bool,
+    /// Confirms that this experiment's tasks and outputs are generated or synthetic data.
+    /// Required (422 without it) when the profile's judge is not local (its `judge_site`),
+    /// because the pipeline's judging step sends them to that service. Set it only on the
+    /// user's word. Additive after contract v1.9.
+    #[serde(default)]
+    pub acknowledge_cloud_judge: bool,
 }
 
 /// Where a job's processes run.

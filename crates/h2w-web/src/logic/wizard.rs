@@ -5,6 +5,8 @@ use h2w_api::{
     PreviewParams, RunOptions, RunParams, Split, Substrate, WORKERS_MAX, WbSubset,
 };
 
+use super::judge::JudgeGate;
+
 /// `(field, problem)` pairs, as `RunOptions::validate` reports them.
 pub(crate) type Problems = Vec<(String, String)>;
 
@@ -132,6 +134,9 @@ pub(crate) struct RunForm {
     pub(crate) pipeline: bool,
     pub(crate) judge_bases: bool,
     pub(crate) acknowledge_risks: bool,
+    /// The user confirmed that the experiment's data is generated or synthetic (a pipeline
+    /// with a cloud judge asks).
+    pub(crate) acknowledge_cloud_judge: bool,
 }
 
 impl Default for RunForm {
@@ -155,6 +160,7 @@ impl Default for RunForm {
             pipeline: true,
             judge_bases: false,
             acknowledge_risks: false,
+            acknowledge_cloud_judge: false,
         }
     }
 }
@@ -312,8 +318,13 @@ impl RunForm {
         }
     }
 
-    /// The job to start: a `pipeline` (check, run, judge, report) or a bare `run`.
-    pub(crate) fn submit_spec(&self, risk: HostRisk) -> Result<JobSpec, Problems> {
+    /// The job to start: a `pipeline` (check, run, judge, report) or a bare `run`. `judge` is
+    /// where the profile's judge runs; only a pipeline judges.
+    pub(crate) fn submit_spec(
+        &self,
+        risk: HostRisk,
+        judge: JudgeGate,
+    ) -> Result<JobSpec, Problems> {
         let mut problems = self.cell_problems();
         let options = match self.options() {
             Ok(o) => Some(o),
@@ -335,6 +346,23 @@ impl RunForm {
                 "confirm that you understand the executor runs directly on the server".into(),
             ));
         }
+        if self.pipeline {
+            match judge {
+                JudgeGate::Refused => problems.push((
+                    "acknowledge_cloud_judge".into(),
+                    "this server refuses cloud judges: start the sweep only, or use a profile \
+                     whose judge runs on your own infrastructure"
+                        .into(),
+                )),
+                JudgeGate::Confirm if !self.acknowledge_cloud_judge => problems.push((
+                    "acknowledge_cloud_judge".into(),
+                    "confirm that this experiment's tasks and outputs are generated or synthetic \
+                     data before a cloud model judges them"
+                        .into(),
+                )),
+                _ => {}
+            }
+        }
         let Some(options) = options.filter(|_| problems.is_empty()) else {
             return Err(problems);
         };
@@ -349,6 +377,7 @@ impl RunForm {
                 judge_bases: self.judge_bases,
                 budget_usd: budget,
                 acknowledge_risks,
+                acknowledge_cloud_judge: judge.acknowledgement(self.acknowledge_cloud_judge),
             })
         } else {
             JobSpec::Run(RunParams {
@@ -567,10 +596,10 @@ mod tests {
         );
         f.bench = Bench::Jb;
         assert_eq!(f.cell().subset, None);
-        assert!(f.submit_spec(HostRisk::AskUser).is_err());
+        assert!(f.submit_spec(HostRisk::AskUser, JudgeGate::Open).is_err());
         f.acknowledge_risks = true;
         f.budget_usd = "$25".into();
-        match f.submit_spec(HostRisk::AskUser).unwrap() {
+        match f.submit_spec(HostRisk::AskUser, JudgeGate::Open).unwrap() {
             JobSpec::Pipeline(p) => {
                 assert_eq!(p.budget_usd, Some(25.0));
                 assert!(p.acknowledge_risks);
@@ -579,16 +608,18 @@ mod tests {
         }
         f.pipeline = false;
         assert!(matches!(
-            f.submit_spec(HostRisk::Contained).unwrap(),
+            f.submit_spec(HostRisk::Contained, JudgeGate::Open).unwrap(),
             JobSpec::Run(_)
         ));
         f.budget_usd = "-3".into();
-        assert!(f.submit_spec(HostRisk::Contained).is_err());
+        assert!(f.submit_spec(HostRisk::Contained, JudgeGate::Open).is_err());
         let empty = RunForm {
             acknowledge_risks: true,
             ..RunForm::default()
         };
-        let problems = empty.submit_spec(HostRisk::Contained).unwrap_err();
+        let problems = empty
+            .submit_spec(HostRisk::Contained, JudgeGate::Open)
+            .unwrap_err();
         assert!(
             describe(&problems)
                 .iter()
@@ -610,17 +641,75 @@ mod tests {
         let f = filled();
         assert!(!f.acknowledge_risks);
         // Asked: refused until ticked, then sent.
-        assert!(f.submit_spec(HostRisk::AskUser).is_err());
+        assert!(f.submit_spec(HostRisk::AskUser, JudgeGate::Open).is_err());
         let ticked = RunForm {
             acknowledge_risks: true,
             ..f.clone()
         };
-        assert!(ack(ticked.submit_spec(HostRisk::AskUser).unwrap()));
+        assert!(ack(ticked
+            .submit_spec(HostRisk::AskUser, JudgeGate::Open)
+            .unwrap()));
         // Pre-acknowledged by the server: no tick needed and none sent, even if one lingers.
-        assert!(!ack(f.submit_spec(HostRisk::PreAcknowledged).unwrap()));
-        assert!(!ack(ticked.submit_spec(HostRisk::PreAcknowledged).unwrap()));
+        assert!(!ack(f
+            .submit_spec(HostRisk::PreAcknowledged, JudgeGate::Open)
+            .unwrap()));
+        assert!(!ack(ticked
+            .submit_spec(HostRisk::PreAcknowledged, JudgeGate::Open)
+            .unwrap()));
         // Container isolation: nothing to acknowledge.
-        assert!(!ack(f.submit_spec(HostRisk::Contained).unwrap()));
+        assert!(!ack(f
+            .submit_spec(HostRisk::Contained, JudgeGate::Open)
+            .unwrap()));
+    }
+
+    #[test]
+    fn cloud_judge_confirmation_only_for_pipelines() {
+        let ack = |spec: JobSpec| match spec {
+            JobSpec::Pipeline(p) => p.acknowledge_cloud_judge,
+            other => panic!("unexpected {other:?}"),
+        };
+        let f = filled();
+        // A cloud judge: refused until confirmed, then sent.
+        let problems = f
+            .submit_spec(HostRisk::Contained, JudgeGate::Confirm)
+            .unwrap_err();
+        assert!(
+            problems.iter().any(|(k, v)| k == "acknowledge_cloud_judge"
+                && v.contains("generated or synthetic data")),
+            "{problems:?}"
+        );
+        let confirmed = RunForm {
+            acknowledge_cloud_judge: true,
+            ..f.clone()
+        };
+        assert!(ack(confirmed
+            .submit_spec(HostRisk::Contained, JudgeGate::Confirm)
+            .unwrap()));
+        // A local judge: nothing asked, nothing sent even if a tick lingers.
+        assert!(!ack(confirmed
+            .submit_spec(HostRisk::Contained, JudgeGate::Open)
+            .unwrap()));
+        // Refused by the server's policy: a pipeline cannot start, a sweep can.
+        assert!(
+            confirmed
+                .submit_spec(HostRisk::Contained, JudgeGate::Refused)
+                .is_err()
+        );
+        let sweep = RunForm {
+            pipeline: false,
+            ..f
+        };
+        assert!(matches!(
+            sweep
+                .submit_spec(HostRisk::Contained, JudgeGate::Refused)
+                .unwrap(),
+            JobSpec::Run(_)
+        ));
+        assert!(
+            sweep
+                .submit_spec(HostRisk::Contained, JudgeGate::Confirm)
+                .is_ok()
+        );
     }
 
     #[test]

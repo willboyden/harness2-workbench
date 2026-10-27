@@ -8,6 +8,7 @@ pub(crate) mod format;
 pub(crate) mod glossary;
 pub(crate) mod harness;
 pub(crate) mod jobs;
+pub(crate) mod judge;
 pub(crate) mod logbuf;
 pub(crate) mod names;
 pub(crate) mod palette;

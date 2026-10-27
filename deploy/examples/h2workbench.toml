@@ -117,3 +117,14 @@ metrics_token_secret = ""
 #   url = "https://wb-workbench.example.com"
 [benchmarks]
 not_offered = []
+
+# Judges at cloud providers. Judging sends each task and the agent's output to the profile's judge.
+# The server places a judge by its hosts: loopback, private addresses, single-label names and
+# local-only domains are local; anything else is cloud (an endpoint set through a secret counts as
+# cloud too). "acknowledge": judge and pipeline jobs with a cloud judge need
+# acknowledge_cloud_judge = true, the caller's confirmation that the data is generated or
+# synthetic. "refuse": such jobs are refused.
+[judge]
+cloud = "acknowledge"
+# Internal gateways whose names look public, e.g. "llm.corp.example.com" or ".corp.example.com".
+private_hosts = []

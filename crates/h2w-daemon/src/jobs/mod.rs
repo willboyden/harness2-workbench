@@ -74,6 +74,11 @@ pub struct JobSettings {
     pub container: ContainerSection,
     /// `[[benchmarks.not_offered]]`: their jobs are refused.
     pub not_offered: Vec<h2w_core::bench::NotOffered>,
+    /// `[judge] cloud`: judge and pipeline jobs with a cloud judge need an acknowledgement or
+    /// are refused.
+    pub cloud_judges: h2w_api::CloudJudgePolicy,
+    /// `[judge] private_hosts` (validated).
+    pub judge_private_hosts: Vec<String>,
 }
 
 impl JobSettings {
@@ -95,6 +100,8 @@ impl JobSettings {
             paths: cfg.paths.clone(),
             container: cfg.file.isolation.container.clone(),
             not_offered: cfg.not_offered.clone(),
+            cloud_judges: cfg.file.judge.cloud,
+            judge_private_hosts: cfg.judge_private_hosts.clone(),
         }
     }
 }
@@ -491,11 +498,16 @@ impl JobManager {
             || kind.as_str().to_owned(),
             |e| format!("{}:{e}", kind.as_str()),
         );
+        let synthetic = validate::cloud_judge_acknowledged(&spec) == Some(true);
         let result = self.create_inner(spec, actor).await;
         let entry = match &result {
             Ok(job) => actor
                 .audit("job.create", &job.id, h2w_api::AuditOutcome::Success)
-                .detail(target),
+                .detail(if synthetic {
+                    format!("{target}; acknowledge_cloud_judge: data is generated or synthetic")
+                } else {
+                    target
+                }),
             Err(e) => {
                 let entry = actor
                     .audit("job.create", &target, h2w_api::AuditOutcome::Denied)
@@ -657,6 +669,30 @@ impl JobManager {
             }
             if !missing.is_empty() {
                 return Err(ApiError::validation(missing));
+            }
+            // A judge that is not local sees the experiment's tasks and outputs: the caller
+            // confirms they are generated or synthetic, or the policy refuses the job.
+            if let Some(acknowledged) = validate::cloud_judge_acknowledged(&spec)
+                && let Some(site) = h2w_api::judge_site(&p, &self.settings.judge_private_hosts)
+                && site.needs_acknowledgement()
+            {
+                if self.settings.cloud_judges == h2w_api::CloudJudgePolicy::Refuse {
+                    return Err(ApiError::conflict(format!(
+                        "this server refuses cloud judges ([judge] cloud = \"refuse\") and \
+                         profile {pn}'s judge is not local ({})",
+                        site.describe()
+                    )));
+                }
+                if !acknowledged {
+                    return Err(ApiError::invalid(
+                        "params.acknowledge_cloud_judge",
+                        format!(
+                            "{} Set acknowledge_cloud_judge to true to confirm that this \
+                             experiment's tasks and outputs are generated or synthetic data.",
+                            h2w_api::cloud_judge_warning(&site)
+                        ),
+                    ));
+                }
             }
             profile = Some(p);
         }

@@ -181,8 +181,10 @@ is not zero. Click a task to open it ([section 6](#6-a-task-in-depth)).
 **Report.** Before judging the tab says **Not judged yet** and offers **Judge this sweep** and
 **Judge the base runs** (operators; each starts a `judge` job; the unmodified harness is scored too
 so you can see the score to beat). It says **Cannot judge from here** when the sweep has no
-benchmark cell or the experiment has no pinned profile (which is the case for the demo). Once
-judged:
+benchmark cell or the experiment has no pinned profile (which is the case for the demo). When the
+experiment's profile has a **cloud judge**, a warning above the buttons says where the data goes,
+and the buttons stay disabled until you tick **This experiment's tasks and outputs are generated or
+synthetic data** ([section 11.1](#111-model-profiles)). Once judged:
 
 ![The report tab (mock)](images/mock-sweep-report.png)
 
@@ -343,6 +345,9 @@ shown (read from the UI's source, not tried). If an administrator has set
 `isolation.preacknowledge_host_risks`, the banner and the checkbox are replaced by one line, *The
 server pre-acknowledges host-isolation risks (isolation.preacknowledge_host_risks).*, and **Start the
 pipeline** needs no tick; the UI learns this from the server's `host_risks_preacknowledged` field.
+For a **Full pipeline** whose profile has a cloud judge, the same step shows the cloud-judge warning
+and **Start the pipeline** waits for the synthetic-data tick; **Sweep only** never asks, because a
+sweep does not call the judge.
 That was seen in headless Firefox against the mock API started with its pre-acknowledge option
 (wizard) and against a real server with the setting on (the System page, which then says runs do not
 ask); a real run through such a server was not started.
@@ -467,6 +472,33 @@ administrator adds them to `[egress] allow`.
 After you save, a card says what the profile still lacks (the **profile check**):
 
 ![The profile check after saving](images/profile-check.png)
+
+**Judging with a cloud model.** The form's **Judge** part fills the judge model, base URL and key
+secret from a provider with one click: **Executor's endpoint** (no separate judge endpoint),
+**Claude (Anthropic API)**, **OpenAI**, **Google Gemini API** and **OpenRouter**. Each click shows a
+line on what works with that provider. Under the fields, the form says where the judge as typed would
+run: *The judge runs on your own infrastructure (…)*, or a **Cloud judge: generated or synthetic
+data only** warning. The judge sees every task and every output it grades, and a cloud provider
+stores and processes them under its own terms, so **use a cloud judge only with generated or
+synthetic data, never with private, confidential or customer data**. Profiles with a cloud judge
+carry a **cloud judge · provider** chip on their card, the profile check repeats the warning, and
+judging or a pipeline with such a profile asks you to confirm that the experiment's data is
+generated or synthetic. An administrator can refuse cloud judges on the server, or declare internal
+gateways private ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#judge-judges-at-cloud-providers)).
+
+What each benchmark's judge needs, at harness2's tested commit:
+
+| Judge | LAB | JobBench | WorkBuddy-Bench |
+|---|---|---|---|
+| Claude through Anthropic's API | needs Vertex AI settings: harness2 judges `claude` ids on Vertex AI | yes, through Anthropic's OpenAI-compatible endpoint; it sends temperature 0, which Claude models from 4.7 on refuse, so use `claude-sonnet-4-6`, `claude-opus-4-6` or `claude-haiku-4-5` | no: it needs Gemini on Vertex AI |
+| Claude or Gemini on Vertex AI (Vertex settings in the profile) | yes | Gemini yes; Claude needs a judge endpoint with a key | Gemini yes |
+| OpenAI | ids starting with `gpt`, `o1`, `o3`, `o4` or `o5` | yes | no |
+| Google Gemini API | needs Vertex AI settings, as for Claude | yes, through Google's OpenAI-compatible endpoint | no |
+| OpenRouter | no: LAB's judge recognises none of its ids | yes | no |
+
+The profile check flags the cases it can detect: a `claude` or `gemini` judge without Vertex
+settings, and a Claude model from 4.7 on with a JobBench endpoint. Run one task first with any new
+judge. A cloud judge under container isolation also needs its host on the egress allowlist.
 
 ### 11.2 Secrets
 
@@ -630,6 +662,18 @@ the audit log picture, which was taken again after the audit log began to name t
   **Download** buttons; the wizard's Preview, Estimate and Confirm on the real server (a benchmark
   must be installed first); the narrow layouts of other pages; any browser other than Firefox; any
   screen reader; and everything that needs a model-backed run.
+- **Cloud judges** (2026-10-27, headless Firefox against the mock API, no console errors): the
+  **cloud judge · Anthropic** and **cloud judge · Google Vertex AI** chips on the profile cards; the
+  editor's **Claude (Anthropic API)** preset filling `claude-sonnet-4-6`,
+  `https://api.anthropic.com/v1/` and `ANTHROPIC_API_KEY`, its note, and the notice changing from
+  *runs on your own infrastructure (127.0.0.1)* to the cloud-judge warning and back with
+  **Executor's endpoint**; the report tab of an unjudged sweep pinned to a Vertex AI profile with both
+  judge buttons disabled until the synthetic-data box was ticked, then a `judge` job carrying
+  `acknowledge_cloud_judge: true`; the same tab on a mock that refuses cloud judges, with the
+  refusal and both buttons disabled; and the wizard's confirm step, where **Start the pipeline**
+  waited for both the host-risk and the synthetic-data ticks and **Sweep only** did not ask. Not
+  tried: judging with a real cloud judge (no data was sent to any provider) and the same screens on
+  the real server.
 
 The screenshots contain demo data only. Before saving each one the capture script refused any page
 whose visible text held a home-directory path, a temporary-directory path, a user name or a token.

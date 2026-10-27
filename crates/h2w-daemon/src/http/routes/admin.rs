@@ -20,6 +20,8 @@ use crate::util::now_unix;
 /// Longest secret value accepted (a service-account key file is a few KiB).
 pub const SECRET_MAX_BYTES: usize = 64 * 1024;
 
+/// A stored profile as the API returns it: with the state of its secrets and where its
+/// judge runs.
 async fn with_secret_infos(
     state: &AppState,
     mut p: ModelProfile,
@@ -29,7 +31,21 @@ async fn with_secret_infos(
         infos.push(state.secrets.info(&name).await?);
     }
     p.secrets = infos;
+    p.judge_site = h2w_api::judge_site(&p, &state.cfg.judge_private_hosts);
     Ok(p)
+}
+
+/// `h2w_core::env::profile_warnings` plus, for a judge that is not local, the cloud-judge
+/// warning first.
+fn warnings_with_judge(profile: &ModelProfile, site: Option<&h2w_api::JudgeSite>) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if let Some(s) = site
+        && s.needs_acknowledgement()
+    {
+        warnings.push(h2w_api::cloud_judge_warning(s));
+    }
+    warnings.extend(h2w_core::env::profile_warnings(profile));
+    warnings
 }
 
 /// Every model profile (with the state of the secrets each references).
@@ -47,8 +63,9 @@ pub async fn list_profiles(
     Ok(Json(out))
 }
 
-/// What jobs with a profile would lack: `h2w_core::env::profile_warnings` and the referenced
-/// secrets without a value (job creation refuses those with 422).
+/// What jobs with a profile would lack: `h2w_core::env::profile_warnings`, the referenced
+/// secrets without a value (job creation refuses those with 422), and where the judge runs
+/// (a cloud judge adds its warning first).
 #[utoipa::path(get, path = "/api/v1/profiles/{name}/check", tag = "profiles",
     params(("name" = String, Path, description = "Profile name")),
     responses((status = 200, body = ProfileCheck), (status = "default", description = "Error", body = ErrorBody)))]
@@ -70,9 +87,11 @@ pub async fn check_profile(
             missing_secrets.push(secret);
         }
     }
+    let judge_site = h2w_api::judge_site(&profile, &state.cfg.judge_private_hosts);
     Ok(Json(ProfileCheck {
-        warnings: h2w_core::env::profile_warnings(&profile),
+        warnings: warnings_with_judge(&profile, judge_site.as_ref()),
         missing_secrets,
+        judge_site,
     }))
 }
 
@@ -95,8 +114,10 @@ pub async fn put_profile(
         ));
     }
     profile.secrets.clear();
+    profile.judge_site = None;
     h2w_core::env::validate_profile(&profile)?;
-    let warnings = h2w_core::env::profile_warnings(&profile);
+    let site = h2w_api::judge_site(&profile, &state.cfg.judge_private_hosts);
+    let warnings = warnings_with_judge(&profile, site.as_ref());
     for w in &warnings {
         tracing::warn!(profile = %name, "{w}");
     }

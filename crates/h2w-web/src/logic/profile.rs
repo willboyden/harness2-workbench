@@ -1,6 +1,6 @@
 //! The model-profile editor: a text form that round-trips `ModelProfile`.
 
-use h2w_api::{Endpoint, EnvVar, ModelProfile, Prices, ProfileKind, VertexSettings};
+use h2w_api::{Endpoint, EnvVar, JudgeSite, ModelProfile, Prices, ProfileKind, VertexSettings};
 
 use super::names;
 
@@ -368,9 +368,128 @@ impl ProfileForm {
             prices,
             egress_hosts,
             secrets: Vec::new(),
+            judge_site: None,
         })
     }
+
+    /// Where the judge of the profile as typed would run, without validating the rest (the
+    /// editor shows it while the form is being filled in).
+    pub(crate) fn judge_preview(&self, private_hosts: &[String]) -> Option<JudgeSite> {
+        let endpoint = |url: &str, secret: &str| {
+            opt(url).map(|base_url| Endpoint {
+                base_url,
+                api_key_secret: opt(secret),
+            })
+        };
+        let p = ModelProfile {
+            name: String::new(),
+            kind: self.kind,
+            description: String::new(),
+            solver_model: String::new(),
+            improver_model: None,
+            judge_model: opt(&self.judge_model),
+            codex_model: None,
+            vertex: (self.kind == ProfileKind::Vertex).then(|| VertexSettings {
+                project: self.vertex_project.trim().to_owned(),
+                location: opt(&self.vertex_location).unwrap_or_else(|| "global".to_owned()),
+                credentials_secret: None,
+            }),
+            endpoint: endpoint(&self.endpoint_url, &self.endpoint_secret),
+            judge_endpoint: endpoint(&self.judge_url, &self.judge_secret),
+            codex_endpoint: None,
+            extra_env: self
+                .extra_env
+                .iter()
+                .filter(|r| !r.name.trim().is_empty())
+                .map(|r| EnvVar {
+                    name: r.name.trim().to_owned(),
+                    value: (!r.from_secret).then(|| r.value.clone()),
+                    secret: r.from_secret.then(|| r.secret.trim().to_owned()),
+                })
+                .collect(),
+            prices: None,
+            egress_hosts: Vec::new(),
+            secrets: Vec::new(),
+            judge_site: None,
+        };
+        h2w_api::judge_site(&p, private_hosts)
+    }
+
+    /// Fill the judge fields from a preset: its endpoint and key secret always, its model
+    /// only when it suggests one.
+    pub(crate) fn apply_judge_preset(&mut self, preset: &JudgePreset) {
+        self.judge_url = preset.url.to_owned();
+        self.judge_secret = preset.secret.to_owned();
+        if !preset.model.is_empty() {
+            preset.model.clone_into(&mut self.judge_model);
+        }
+    }
 }
+
+/// A judge the profile editor can fill in with one click.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct JudgePreset {
+    pub(crate) id: &'static str,
+    pub(crate) label: &'static str,
+    /// Judge model filled in; empty = keep what the form has.
+    pub(crate) model: &'static str,
+    /// Judge base URL; empty = no separate judge endpoint (the executor's endpoint judges).
+    pub(crate) url: &'static str,
+    /// Secret NAME the key is stored under.
+    pub(crate) secret: &'static str,
+    /// What works with it, shown under the buttons.
+    pub(crate) note: &'static str,
+}
+
+/// The judge presets, in the order the editor shows them. Every one but the first sends
+/// tasks and outputs to a cloud provider.
+pub(crate) static JUDGE_PRESETS: [JudgePreset; 5] = [
+    JudgePreset {
+        id: "executor",
+        label: "Executor's endpoint",
+        model: "",
+        url: "",
+        secret: "",
+        note: "No separate judge endpoint: OpenAI-compatible profiles judge on their own endpoint.",
+    },
+    JudgePreset {
+        id: "anthropic",
+        label: "Claude (Anthropic API)",
+        model: "claude-sonnet-4-6",
+        url: "https://api.anthropic.com/v1/",
+        secret: "ANTHROPIC_API_KEY",
+        note: "JobBench judges through Anthropic's OpenAI-compatible endpoint, which Anthropic \
+               describes as meant for testing and comparing models. It sends temperature 0, \
+               which Claude models from 4.7 on refuse: keep claude-sonnet-4-6, claude-opus-4-6 \
+               or claude-haiku-4-5. LAB judges claude ids on Vertex AI, so LAB judging also \
+               needs Vertex AI settings.",
+    },
+    JudgePreset {
+        id: "openai",
+        label: "OpenAI",
+        model: "",
+        url: "https://api.openai.com/v1",
+        secret: "OPENAI_API_KEY",
+        note: "LAB's judge needs a model id starting with gpt or o1/o3/o4/o5; JobBench takes any.",
+    },
+    JudgePreset {
+        id: "gemini",
+        label: "Google Gemini API",
+        model: "",
+        url: "https://generativelanguage.googleapis.com/v1beta/openai/",
+        secret: "GEMINI_API_KEY",
+        note: "JobBench judges through Google's OpenAI-compatible endpoint. LAB judges gemini \
+               ids on Vertex AI, and WorkBuddy-Bench needs Gemini on Vertex AI.",
+    },
+    JudgePreset {
+        id: "openrouter",
+        label: "OpenRouter",
+        model: "",
+        url: "https://openrouter.ai/api/v1",
+        secret: "OPENROUTER_API_KEY",
+        note: "JobBench only: LAB's judge recognises no OpenRouter model id.",
+    },
+];
 
 #[cfg(test)]
 mod tests {
@@ -384,6 +503,63 @@ mod tests {
             endpoint_url: "http://127.0.0.1:4000/v1".into(),
             endpoint_secret: "LITELLM_KEY".into(),
             ..ProfileForm::default()
+        }
+    }
+
+    #[test]
+    fn judge_presets_fill_the_judge_and_the_preview_follows() {
+        let mut f = local();
+        f.judge_model = "glm-5".into();
+        // The executor's endpoint (a loopback gateway) judges: local.
+        let site = f.judge_preview(&[]).unwrap();
+        assert_eq!(site.kind, h2w_api::JudgeSiteKind::Local);
+        let anthropic = JUDGE_PRESETS.iter().find(|p| p.id == "anthropic").unwrap();
+        f.apply_judge_preset(anthropic);
+        assert_eq!(
+            (
+                f.judge_model.as_str(),
+                f.judge_url.as_str(),
+                f.judge_secret.as_str()
+            ),
+            (
+                "claude-sonnet-4-6",
+                "https://api.anthropic.com/v1/",
+                "ANTHROPIC_API_KEY"
+            )
+        );
+        let site = f.judge_preview(&[]).unwrap();
+        assert_eq!(site.kind, h2w_api::JudgeSiteKind::Cloud);
+        assert_eq!(site.provider.as_deref(), Some("Anthropic"));
+        // A preset without a model keeps the one typed.
+        let openai = JUDGE_PRESETS.iter().find(|p| p.id == "openai").unwrap();
+        f.apply_judge_preset(openai);
+        assert_eq!(f.judge_model, "claude-sonnet-4-6");
+        assert_eq!(
+            f.judge_preview(&[]).unwrap().provider.as_deref(),
+            Some("OpenAI")
+        );
+        // Back to the executor's endpoint: local again, and it saves without a judge endpoint.
+        f.apply_judge_preset(&JUDGE_PRESETS[0]);
+        assert_eq!(
+            f.judge_preview(&[]).unwrap().kind,
+            h2w_api::JudgeSiteKind::Local
+        );
+        assert!(f.to_profile().unwrap().judge_endpoint.is_none());
+        // No judge model: nothing to preview.
+        f.judge_model.clear();
+        assert!(f.judge_preview(&[]).is_none());
+        // Every preset but the first is a cloud service with a valid secret name.
+        for p in &JUDGE_PRESETS[1..] {
+            let mut g = local();
+            g.judge_model = "gpt-judge".into();
+            g.apply_judge_preset(p);
+            assert_eq!(
+                g.judge_preview(&[]).unwrap().kind,
+                h2w_api::JudgeSiteKind::Cloud,
+                "{}",
+                p.id
+            );
+            assert!(g.to_profile().is_ok(), "{}", p.id);
         }
     }
 

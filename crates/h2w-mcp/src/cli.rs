@@ -124,6 +124,18 @@ pub struct Cli {
     )]
     pub allow_risk_acknowledgement: bool,
 
+    /// Let MCP clients set acknowledge_cloud_judge=true on start_judge and start_pipeline,
+    /// telling the Workbench that an experiment's tasks and outputs are generated or synthetic
+    /// data, so a cloud judge may see them. Off by default: only the user knows what the data
+    /// is, so a human starts such judging from the web UI. Turn it on only if every experiment
+    /// agents reach through this server holds generated or synthetic data.
+    #[arg(
+        long,
+        env = "H2W_MCP_ALLOW_CLOUD_JUDGE_ACK",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub allow_cloud_judge_acknowledgement: bool,
+
     /// Allow a plain-http --server-url on a non-loopback host (API tokens would cross the
     /// network unencrypted).
     #[arg(long)]
@@ -149,6 +161,13 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
              network"
         );
     }
+    if cli.allow_cloud_judge_acknowledgement {
+        tracing::warn!(
+            "--allow-cloud-judge-acknowledgement: MCP clients may set \
+             acknowledge_cloud_judge=true, so a model can send an experiment's tasks and \
+             outputs to a cloud judge"
+        );
+    }
     match cli.transport {
         TransportKind::Stdio => {
             let token = Token::resolve(env_token.as_deref(), cli.token_file.as_deref())?;
@@ -156,6 +175,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             let service = H2sMcp::new(api, Credentials::Fixed(token))
                 .with_wait_limiter(WaitLimiter::new(max_waits))
                 .with_risk_acknowledgement(cli.allow_risk_acknowledgement)
+                .with_cloud_judge_acknowledgement(cli.allow_cloud_judge_acknowledgement)
                 .serve(rmcp::transport::stdio())
                 .await?;
             let reason = service.waiting().await?;
@@ -192,6 +212,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     .unwrap_or(usize::MAX),
                 max_waits_per_token: max_waits,
                 allow_risk_acknowledgement: cli.allow_risk_acknowledgement,
+                allow_cloud_judge_acknowledgement: cli.allow_cloud_judge_acknowledgement,
             };
             http::serve(listener, api, &http_options, shutdown).await?;
         }
@@ -263,5 +284,12 @@ mod tests {
         );
         let on = Cli::try_parse_from(["h2workbench-mcp", "--allow-risk-acknowledgement"]).unwrap();
         assert!(on.allow_risk_acknowledgement);
+        assert!(
+            !cli.allow_cloud_judge_acknowledgement && !on.allow_cloud_judge_acknowledgement,
+            "off unless a human turns it on"
+        );
+        let on = Cli::try_parse_from(["h2workbench-mcp", "--allow-cloud-judge-acknowledgement"])
+            .unwrap();
+        assert!(on.allow_cloud_judge_acknowledgement && !on.allow_risk_acknowledgement);
     }
 }

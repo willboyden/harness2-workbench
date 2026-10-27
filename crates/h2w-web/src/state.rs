@@ -33,6 +33,22 @@ impl Session {
         self.principal.with(|p| p.as_ref().map(|p| p.role))
     }
 
+    /// Reactive: `[judge] cloud` (an unknown server asks for the confirmation, the default).
+    pub(crate) fn cloud_judges(&self) -> h2w_api::CloudJudgePolicy {
+        self.system
+            .with(|s| s.as_ref().map(|s| s.cloud_judges).unwrap_or_default())
+    }
+
+    /// Reactive: `[judge] private_hosts`, so the profile editor places judges as the server
+    /// does.
+    pub(crate) fn private_judge_hosts(&self) -> Vec<String> {
+        self.system.with(|s| {
+            s.as_ref()
+                .map(|s| s.private_judge_hosts.clone())
+                .unwrap_or_default()
+        })
+    }
+
     /// Reactive: what a run asks about host isolation (an unknown server asks).
     pub(crate) fn host_risk(&self) -> HostRisk {
         self.system.with(|s| match s {

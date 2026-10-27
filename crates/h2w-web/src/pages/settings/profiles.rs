@@ -1,6 +1,9 @@
 //! Model profiles: list, create, edit, delete. API keys are referenced by secret NAME.
 
-use h2w_api::{ModelProfile, ProfileCheck, ProfileKind, Role, SecretInfo};
+use h2w_api::{
+    CloudJudgePolicy, JudgeSite, JudgeSiteKind, ModelProfile, ProfileCheck, ProfileKind, Role,
+    SecretInfo,
+};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -13,7 +16,8 @@ use crate::components::widgets::ProfileCheckNotes;
 use crate::logic::format;
 use crate::logic::jobs::Tone;
 use crate::logic::profile::{
-    EnvRow, KINDS, ProfileForm, kind_from_value, kind_help, kind_label, kind_value,
+    EnvRow, JUDGE_PRESETS, JudgePreset, KINDS, ProfileForm, kind_from_value, kind_help, kind_label,
+    kind_value,
 };
 use crate::logic::urls::api as paths;
 use crate::state::{ConfirmRequest, session, toasts, ui};
@@ -215,6 +219,107 @@ fn EnvRows(f: Fields) -> impl IntoView {
     }
 }
 
+/// Where the judge as typed would run: a quiet line for a local judge, the cloud-judge warning
+/// otherwise (with what judging will then ask, or that the server refuses it).
+fn judge_site_note(site: Option<JudgeSite>, policy: CloudJudgePolicy) -> AnyView {
+    match site {
+        None => ().into_any(),
+        Some(s) if s.kind == JudgeSiteKind::Local => view! {
+            <p class="small check-ok" data-testid="judge-site-local">
+                {icon(Icon::Check)}
+                {format!(" The judge runs on your own infrastructure ({}).", s.hosts.join(", "))}
+            </p>
+        }
+        .into_any(),
+        Some(s) => {
+            let then = match policy {
+                CloudJudgePolicy::Acknowledge => {
+                    "Judging and pipelines with this profile will ask to confirm that the \
+                     experiment's tasks and outputs are generated or synthetic data."
+                }
+                CloudJudgePolicy::Refuse => {
+                    "This server refuses cloud judges ([judge] cloud = \"refuse\"): judging and \
+                     pipelines with this profile will be refused."
+                }
+            };
+            view! {
+                <div data-testid="judge-site-cloud">
+                    <Notice tone=Tone::Warning title="Cloud judge: generated or synthetic data only">
+                        <p>{h2w_api::cloud_judge_warning(&s)}</p>
+                        <p class="small">{then}</p>
+                    </Notice>
+                </div>
+            }
+            .into_any()
+        }
+    }
+}
+
+/// The judge: one-click presets, the judge fields, and where the judge as typed would run.
+#[component]
+fn JudgeSection(
+    f: Fields,
+    model_error: Signal<Option<String>>,
+    url_error: Signal<Option<String>>,
+    secret_error: Signal<Option<String>>,
+) -> impl IntoView {
+    let s = session();
+    let chosen = RwSignal::new(None::<&'static str>);
+    let apply = move |preset: &'static JudgePreset| {
+        let mut form = f.form();
+        form.apply_judge_preset(preset);
+        f.judge.set(form.judge_model);
+        f.judge_url.set(form.judge_url);
+        f.judge_secret.set(form.judge_secret);
+        chosen.set(Some(preset.id));
+    };
+    let site = Memo::new(move |_| f.form().judge_preview(&s.private_judge_hosts()));
+    view! {
+        <h3>"Judge"</h3>
+        <p class="field-help">
+            "The judge grades each task's output against the benchmark's criteria. Fill it in from a provider, or type it below. A "
+            <Term id="cloud-judge">"cloud judge"</Term>
+            " sees everything it grades."
+        </p>
+        <div class="pill-row" role="group" aria-label="Judge presets">
+            {JUDGE_PRESETS
+                .iter()
+                .map(|p| {
+                    view! {
+                        <button
+                            type="button"
+                            class="btn btn-secondary btn-sm"
+                            data-testid=format!("judge-preset-{}", p.id)
+                            aria-pressed=move || (chosen.get() == Some(p.id)).to_string()
+                            on:click=move |_| apply(p)
+                        >
+                            {p.label}
+                        </button>
+                    }
+                })
+                .collect_view()}
+        </div>
+        {move || {
+            chosen
+                .get()
+                .and_then(|id| JUDGE_PRESETS.iter().find(|p| p.id == id))
+                .map(|p| view! { <p class="small muted" data-testid="judge-preset-note">{p.note}</p> })
+        }}
+        <div class="form-grid">
+            <TextField id="pf-judge" label="Judge model" value=f.judge error=model_error help="Bare model id the judge uses." />
+            <TextField
+                id="pf-judge-url"
+                label="Judge base URL"
+                value=f.judge_url
+                error=url_error
+                help="HARNESS2_JUDGE_BASE_URL. Empty: an OpenAI-compatible profile judges on its own endpoint."
+            />
+            <TextField id="pf-judge-secret" label="Judge API key secret" value=f.judge_secret error=secret_error help="The NAME of a secret, never the key itself." />
+        </div>
+        {move || judge_site_note(site.get(), s.cloud_judges())}
+    }
+}
+
 #[component]
 fn ProfileEditor(
     open: RwSignal<bool>,
@@ -320,7 +425,6 @@ fn ProfileEditor(
                         })
                     />
                     <TextField id="pf-improver" label="Improver model" value=f.improver error=err("improver_model") help="Empty = same as the solver." />
-                    <TextField id="pf-judge" label="Judge model" value=f.judge error=err("judge_model") help="Bare model id the judge uses." />
                     <TextField id="pf-codex" label="Codex model" value=f.codex error=err("codex_model") help="For the Codex executor." />
                 </div>
                 {move || match kind.get() {
@@ -354,11 +458,10 @@ fn ProfileEditor(
                     }
                     .into_any(),
                 }}
+                <JudgeSection f=f model_error=err("judge_model") url_error=err("judge") secret_error=err("judge_secret") />
                 <details class="disclosure">
-                    <summary>"Judge and Codex endpoints (optional)"</summary>
+                    <summary>"Codex endpoint (optional)"</summary>
                     <div class="form-grid">
-                        <TextField id="pf-judge-url" label="Judge base URL" value=f.judge_url error=err("judge") help="HARNESS2_JUDGE_BASE_URL" />
-                        <TextField id="pf-judge-secret" label="Judge API key secret" value=f.judge_secret error=err("judge_secret") />
                         <TextField id="pf-codex-url" label="Codex base URL" value=f.codex_url error=err("codex") help="A Responses-API endpoint (or the Codex bridge)." />
                         <TextField id="pf-codex-secret" label="Codex API key secret" value=f.codex_secret error=err("codex_secret") />
                     </div>
@@ -524,6 +627,18 @@ pub(crate) fn Profiles() -> impl IntoView {
                                         <div class="pill-row">
                                             <Badge tone=Tone::Info text=kind_label(p.kind) />
                                             {missing.then(|| view! { <Badge tone=Tone::Danger text="secret missing" /> })}
+                                            {p.judge_site.clone().filter(JudgeSite::needs_acknowledgement).map(|j| {
+                                                let text = match &j.provider {
+                                                    Some(provider) => format!("cloud judge · {provider}"),
+                                                    None if j.kind == JudgeSiteKind::Unknown => "judge location unknown".to_owned(),
+                                                    None => "cloud judge".to_owned(),
+                                                };
+                                                view! {
+                                                    <span title=h2w_api::cloud_judge_warning(&j) data-testid="profile-cloud-judge">
+                                                        <Badge tone=Tone::Warning text=text />
+                                                    </span>
+                                                }
+                                            })}
                                         </div>
                                         {(!p.description.is_empty()).then(|| view! { <p>{p.description.clone()}</p> })}
                                         <dl class="kv">

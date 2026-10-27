@@ -1446,3 +1446,213 @@ async fn chosen_splits_are_validated_saved_listed_and_usable() {
     );
     t.stop().await;
 }
+
+fn judge_spec(experiment: &str, profile: &str, ack: Option<bool>) -> serde_json::Value {
+    let mut p = json!({
+        "experiment": experiment,
+        "cell": {"bench": "lab", "substrate": "oc"},
+        "k": 1,
+        "modes": ["parallel"],
+        "profile": profile,
+    });
+    if let Some(a) = ack {
+        p["acknowledge_cloud_judge"] = json!(a);
+    }
+    json!({"kind": "judge", "params": p})
+}
+
+fn claude_profile(name: &str, judge_url: &str) -> serde_json::Value {
+    json!({
+        "name": name, "kind": "openai_compatible", "solver_model": "glm-5",
+        "endpoint": {"base_url": "http://127.0.0.1:4000/v1"},
+        "judge_model": "claude-sonnet-4-6",
+        "judge_endpoint": {"base_url": judge_url, "api_key_secret": "JUDGE_KEY"},
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cloud_judges_need_the_synthetic_data_acknowledgement() {
+    let t = TestServer::start().await;
+    t.put_secret("JUDGE_KEY", "k-123456").await;
+    t.put_profile(claude_profile("cloud", "https://api.anthropic.com/v1/"))
+        .await;
+    t.put_profile(json!({
+        "name": "local", "kind": "openai_compatible", "solver_model": "glm-5",
+        "endpoint": {"base_url": "http://litellm:4000/v1"}, "judge_model": "gpt-judge",
+    }))
+    .await;
+
+    // Profiles and their check say where the judge runs; only the cloud one warns.
+    let profiles: Vec<h2w_api::ModelProfile> = t
+        .get("/api/v1/profiles", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let site = |n: &str| {
+        profiles
+            .iter()
+            .find(|p| p.name == n)
+            .and_then(|p| p.judge_site.clone())
+            .unwrap()
+    };
+    assert_eq!(site("cloud").kind, h2w_api::JudgeSiteKind::Cloud);
+    assert_eq!(site("cloud").provider.as_deref(), Some("Anthropic"));
+    assert_eq!(site("local").kind, h2w_api::JudgeSiteKind::Local);
+    let check: h2w_api::ProfileCheck = t
+        .get("/api/v1/profiles/cloud/check", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(check.judge_site.unwrap().hosts, ["api.anthropic.com"]);
+    assert!(
+        check.warnings[0].contains("cloud service (Anthropic: api.anthropic.com)"),
+        "{:?}",
+        check.warnings
+    );
+    assert!(check.warnings[0].ends_with(h2w_api::CLOUD_JUDGE_RULE));
+    let check: h2w_api::ProfileCheck = t
+        .get("/api/v1/profiles/local/check", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!check.warnings.iter().any(|w| w.contains("cloud service")));
+
+    // A judge job with the cloud judge needs the acknowledgement; false counts as absent.
+    t.put_experiment("cj", Some("cloud")).await;
+    for ack in [None, Some(false)] {
+        let r = t
+            .create_job(&t.operator, judge_spec("cj", "cloud", ack))
+            .await;
+        assert_eq!(r.status(), 422, "{ack:?}");
+        let e = r.json::<ErrorBody>().await.unwrap().error;
+        let d = &e.details[0];
+        assert_eq!(d.field, "params.acknowledge_cloud_judge");
+        assert!(
+            d.problem.contains("generated or synthetic data"),
+            "{}",
+            d.problem
+        );
+    }
+    let mut pipeline = run_spec("cj", "cloud", None);
+    pipeline["kind"] = json!("pipeline");
+    let r = t.create_job(&t.operator, pipeline.clone()).await;
+    assert_eq!(r.status(), 422);
+    pipeline["params"]["acknowledge_cloud_judge"] = json!(true);
+    let r = t.create_job(&t.operator, pipeline).await;
+    assert_eq!(r.status(), 201);
+    let j: Job = r.json().await.unwrap();
+    t.wait_terminal(&j.id, 30).await;
+    let r = t
+        .create_job(&t.operator, judge_spec("cj", "cloud", Some(true)))
+        .await;
+    assert_eq!(r.status(), 201);
+    let j: Job = r.json().await.unwrap();
+    t.wait_terminal(&j.id, 30).await;
+    // A run never calls the judge: no acknowledgement needed.
+    let r = t
+        .create_job(&t.operator, run_spec("cj", "cloud", None))
+        .await;
+    assert_eq!(r.status(), 201);
+    let j: Job = r.json().await.unwrap();
+    t.wait_terminal(&j.id, 30).await;
+    // A local judge needs none either.
+    t.put_experiment("lj", Some("local")).await;
+    let r = t
+        .create_job(&t.operator, judge_spec("lj", "local", None))
+        .await;
+    assert_eq!(r.status(), 201);
+    let j: Job = r.json().await.unwrap();
+    t.wait_terminal(&j.id, 30).await;
+
+    // The audit log records the refusal and the acknowledgement.
+    let audit: h2w_api::Page<h2w_api::AuditEvent> = t
+        .get("/api/v1/audit?limit=100", Some(&t.admin))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let details: Vec<String> = audit
+        .items
+        .iter()
+        .filter(|e| e.action == "job.create")
+        .filter_map(|e| e.detail.clone())
+        .collect();
+    assert!(
+        details
+            .iter()
+            .any(|d| d.contains("acknowledge_cloud_judge: data is generated or synthetic")),
+        "{details:?}"
+    );
+    assert!(
+        details.iter().any(|d| d.contains("cloud service")),
+        "{details:?}"
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_refuse_policy_and_private_hosts() {
+    let t = TestServer::start_with(|s| {
+        s.file.judge.cloud = h2w_api::CloudJudgePolicy::Refuse;
+        s.file.judge.private_hosts = vec![".corp.example.com".into()];
+    })
+    .await;
+    t.put_secret("JUDGE_KEY", "k-123456").await;
+    t.put_profile(claude_profile("cloud", "https://api.anthropic.com/v1/"))
+        .await;
+    t.put_profile(claude_profile("gateway", "https://llm.corp.example.com/v1"))
+        .await;
+    let info: h2w_api::SystemInfo = t
+        .get("/api/v1/system/info", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(info.cloud_judges, h2w_api::CloudJudgePolicy::Refuse);
+    assert_eq!(info.private_judge_hosts, [".corp.example.com"]);
+
+    // Refused even with the acknowledgement.
+    t.put_experiment("rc", Some("cloud")).await;
+    let r = t
+        .create_job(&t.operator, judge_spec("rc", "cloud", Some(true)))
+        .await;
+    assert_eq!(r.status(), 409);
+    let msg = r.json::<ErrorBody>().await.unwrap().error.message;
+    assert!(msg.contains("refuses cloud judges"), "{msg}");
+    assert!(msg.contains("Anthropic: api.anthropic.com"), "{msg}");
+    // An internal gateway the administrator declared private is local.
+    t.put_experiment("rg", Some("gateway")).await;
+    let r = t
+        .create_job(&t.operator, judge_spec("rg", "gateway", None))
+        .await;
+    assert_eq!(r.status(), 201);
+    let j: Job = r.json().await.unwrap();
+    t.wait_terminal(&j.id, 30).await;
+    t.stop().await;
+    // The default server reports the default policy and no hosts.
+    let t = TestServer::start().await;
+    let info: h2w_api::SystemInfo = t
+        .get("/api/v1/system/info", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(info.cloud_judges, h2w_api::CloudJudgePolicy::Acknowledge);
+    assert!(info.private_judge_hosts.is_empty());
+    t.stop().await;
+}

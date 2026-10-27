@@ -296,6 +296,7 @@ fn judge_of(p: &PipelineParams, bases: bool) -> JudgeParams {
         modes: p.options.modes.clone(),
         bases,
         profile: p.profile.clone(),
+        acknowledge_cloud_judge: p.acknowledge_cloud_judge,
     }
 }
 

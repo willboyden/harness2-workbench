@@ -31,6 +31,15 @@ const RUN_MODES: &str = "Recursion modes, the same ones the run used.";
 const BUDGET: &str = "Stop the job once recorded spend reaches this many USD (checked as task \
                       summaries land; a task in flight finishes first). harness2 records \
                       improver spend only, not executor rollouts. Omit for no cap.";
+const ACKNOWLEDGE_CLOUD_JUDGE: &str = "Confirms that this experiment's tasks and outputs are \
+                                       generated or synthetic data. Needed when the profile's \
+                                       judge is a cloud service (check_profile: judge_site kind \
+                                       cloud or unknown), because judging sends them there. Only \
+                                       the user can confirm this: this MCP server accepts true \
+                                       only when started with \
+                                       --allow-cloud-judge-acknowledgement; otherwise a human \
+                                       starts the judging in the web UI.";
+
 const ACKNOWLEDGE_RISKS: &str = "Needed when the server runs jobs without container isolation \
                                  (server_info shows isolation host): the executor then has the \
                                  server user's files and network. This MCP server accepts true \
@@ -651,6 +660,11 @@ job_input!(
         redescribe(schema, &["profile"], PROFILE_PINNED);
         redescribe(schema, &["budget_usd"], BUDGET);
         redescribe(schema, &["acknowledge_risks"], ACKNOWLEDGE_RISKS);
+        redescribe(
+            schema,
+            &["acknowledge_cloud_judge"],
+            ACKNOWLEDGE_CLOUD_JUDGE,
+        );
     }
 );
 
@@ -683,6 +697,11 @@ job_input!(
         redescribe(schema, &["seed"], RUN_SEED);
         redescribe(schema, &["modes"], RUN_MODES);
         redescribe(schema, &["profile"], PROFILE_PINNED);
+        redescribe(
+            schema,
+            &["acknowledge_cloud_judge"],
+            ACKNOWLEDGE_CLOUD_JUDGE,
+        );
     }
 );
 

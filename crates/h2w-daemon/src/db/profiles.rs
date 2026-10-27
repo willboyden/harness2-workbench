@@ -1,4 +1,5 @@
-//! Model profiles, stored as JSON (without the response-only `secrets` field).
+//! Model profiles, stored as JSON (without the response-only `secrets` and `judge_site`
+//! fields).
 
 use h2w_api::ModelProfile;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -12,6 +13,7 @@ use super::DbResult;
 pub fn put(conn: &Connection, p: &ModelProfile, now: i64) -> DbResult<()> {
     let mut stored = p.clone();
     stored.secrets.clear();
+    stored.judge_site = None;
     conn.execute(
         "INSERT INTO profiles (name, spec, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)
          ON CONFLICT(name) DO UPDATE SET spec = excluded.spec, updated_at = excluded.updated_at",
@@ -107,9 +109,15 @@ mod tests {
             chars: Some(3),
             updated_at: None,
         });
+        p.judge_site = Some(h2w_api::JudgeSite {
+            kind: h2w_api::JudgeSiteKind::Local,
+            provider: None,
+            hosts: vec![],
+        });
         put(&c, &p, 1).unwrap();
         let got = get(&c, "local").unwrap().unwrap();
         assert!(got.secrets.is_empty());
+        assert!(got.judge_site.is_none());
         assert_eq!(got.kind, ProfileKind::OpenaiCompatible);
         p.description = "changed".into();
         put(&c, &p, 2).unwrap();

@@ -1337,6 +1337,76 @@ async fn models_cannot_acknowledge_host_risks_unless_a_human_allowed_it() {
 }
 
 #[tokio::test]
+async fn models_cannot_confirm_synthetic_data_for_a_cloud_judge_unless_a_human_allowed_it() {
+    let workbench = Workbench::start().await;
+    workbench.mount_happy(TOKEN, "alice", "operator").await;
+    let judge = json!({"experiment": "e1", "cell": cell(), "k": 1, "modes": ["parallel"],
+                       "profile": "local", "acknowledge_cloud_judge": true});
+    let pipeline = json!({"experiment": "e1", "cell": cell(), "options": options(),
+                          "profile": "local", "acknowledge_cloud_judge": true});
+
+    let client = connect(&workbench.url(), TOKEN).await;
+    let policy =
+        payload(&call(&client, "server_info", json!({})).await)["mcp_server"]["policy"].clone();
+    assert_eq!(policy["allow_cloud_judge_acknowledgement"], false);
+    for (tool, args) in [("start_judge", &judge), ("start_pipeline", &pipeline)] {
+        let refused = call(&client, tool, args.clone()).await;
+        assert_eq!(refused.is_error, Some(true), "{tool}");
+        let t = text(&refused);
+        assert!(
+            t.starts_with(
+                "forbidden: this MCP server does not let a model set acknowledge_cloud_judge"
+            ),
+            "{tool}: {t}"
+        );
+        for way in [
+            "generated or synthetic data",
+            "web UI",
+            "--allow-cloud-judge-acknowledgement",
+            "H2W_MCP_ALLOW_CLOUD_JUDGE_ACK=1",
+        ] {
+            assert!(t.contains(way), "{tool}: no mention of {way}: {t}");
+        }
+    }
+    assert!(
+        requests_to(&workbench.received().await, "POST", &api("/jobs")).is_empty(),
+        "refused calls must not reach the server"
+    );
+
+    // Without it the call goes through; the server decides (it refuses a cloud judge).
+    let mut plain = judge.clone();
+    plain["acknowledge_cloud_judge"] = json!(false);
+    let started = call(&client, "start_judge", plain).await;
+    assert_eq!(started.is_error, Some(false), "{}", text(&started));
+
+    // With the opt-in, the confirmation is passed on; risk acknowledgement stays refused.
+    let allowed = connect_allowing_cloud_judge_acknowledgement(&workbench.url(), TOKEN).await;
+    let policy =
+        payload(&call(&allowed, "server_info", json!({})).await)["mcp_server"]["policy"].clone();
+    assert_eq!(policy["allow_cloud_judge_acknowledgement"], true);
+    assert_eq!(policy["allow_risk_acknowledgement"], false);
+    let started = call(&allowed, "start_judge", judge).await;
+    assert_eq!(started.is_error, Some(false), "{}", text(&started));
+    let mut risky = pipeline.clone();
+    risky["acknowledge_risks"] = json!(true);
+    let refused = call(&allowed, "start_pipeline", risky).await;
+    assert!(
+        text(&refused).contains("acknowledge_risks"),
+        "{}",
+        text(&refused)
+    );
+    let specs: Vec<JobSpec> = requests_to(&workbench.received().await, "POST", &api("/jobs"))
+        .into_iter()
+        .map(|r| r.body_json::<JobSpec>().unwrap())
+        .collect();
+    assert!(
+        matches!(&specs[..], [JobSpec::Judge(a), JobSpec::Judge(b)]
+            if !a.acknowledge_cloud_judge && b.acknowledge_cloud_judge),
+        "{specs:?}"
+    );
+}
+
+#[tokio::test]
 async fn server_info_asks_for_less_than_an_admin_token() {
     let workbench = Workbench::start().await;
     workbench.mount_happy(TOKEN, "alice", "admin").await;

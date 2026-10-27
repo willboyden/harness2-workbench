@@ -53,6 +53,8 @@ pub(crate) struct Inner {
     pub(crate) host_risks_preacknowledged: bool,
     /// `[[benchmarks.not_offered]]`, as `--not-offered` sets it.
     pub(crate) not_offered: Vec<Bench>,
+    /// `[judge] cloud`, as `--refuse-cloud-judges` sets it.
+    pub(crate) cloud_judges: h2w_api::CloudJudgePolicy,
     pub(crate) experiments: BTreeMap<String, ExpData>,
     pub(crate) jobs: Vec<JobData>,
     pub(crate) profiles: BTreeMap<String, ModelProfile>,
@@ -156,6 +158,7 @@ impl Inner {
                 })
             })
             .collect();
+        out.judge_site = h2w_api::judge_site(p, &[]);
         out
     }
 }
@@ -522,6 +525,7 @@ fn profiles() -> BTreeMap<String, ModelProfile> {
                 "oauth2.googleapis.com".to_owned(),
             ],
             secrets: Vec::new(),
+            judge_site: None,
         },
     );
     m.insert(
@@ -556,6 +560,7 @@ fn profiles() -> BTreeMap<String, ModelProfile> {
             prices: None,
             egress_hosts: Vec::new(),
             secrets: Vec::new(),
+            judge_site: None,
         },
     );
     m.insert(
@@ -580,6 +585,36 @@ fn profiles() -> BTreeMap<String, ModelProfile> {
             prices: None,
             egress_hosts: Vec::new(),
             secrets: Vec::new(),
+            judge_site: None,
+        },
+    );
+    m.insert(
+        "claude-judge".to_owned(),
+        ModelProfile {
+            name: "claude-judge".to_owned(),
+            kind: ProfileKind::OpenaiCompatible,
+            description: "The local model executes and improves; Claude judges through \
+                          Anthropic's API (synthetic data only)."
+                .to_owned(),
+            solver_model: "open-model-32b".to_owned(),
+            improver_model: None,
+            judge_model: Some("claude-sonnet-4-6".to_owned()),
+            codex_model: None,
+            vertex: None,
+            endpoint: Some(Endpoint {
+                base_url: "http://127.0.0.1:8000/v1".to_owned(),
+                api_key_secret: Some("MODEL_GATEWAY_KEY".to_owned()),
+            }),
+            judge_endpoint: Some(Endpoint {
+                base_url: "https://api.anthropic.com/v1/".to_owned(),
+                api_key_secret: Some("ANTHROPIC_API_KEY".to_owned()),
+            }),
+            codex_endpoint: None,
+            extra_env: Vec::new(),
+            prices: None,
+            egress_hosts: Vec::new(),
+            secrets: Vec::new(),
+            judge_site: None,
         },
     );
     m
@@ -589,6 +624,7 @@ fn secrets() -> BTreeMap<String, SecretInfo> {
     let mut m = BTreeMap::new();
     for (name, chars, age) in [
         ("MODEL_GATEWAY_KEY", 40, 6 * DAY),
+        ("ANTHROPIC_API_KEY", 108, 2 * DAY),
         ("VERTEX_SA_KEY", 2_311, 9 * DAY),
         ("SLACK_WEBHOOK_URL", 77, 12 * DAY),
     ] {
@@ -1042,6 +1078,7 @@ fn past_jobs() -> Vec<JobData> {
                 judge_bases: true,
                 budget_usd: Some(40.0),
                 acknowledge_risks: true,
+                acknowledge_cloud_judge: true,
             }),
             JobStatus::Partial,
             2 * DAY,
@@ -1066,7 +1103,7 @@ fn past_jobs() -> Vec<JobData> {
             &[("[Contracts] 1/4 ok contracts/nda-review-014", Stdout), ("[Employment] 1/3 ok employment/handbook-update-003", Stdout), ("[Employment] 3/3 partial employment/leave-policy-026", Stdout), ("Traceback (most recent call last):", Stderr), ("  bun: out of memory while starting the executor", Stderr), ("[Litigation] 2/3 base-failed litigation/motion-outline-019", Stdout), ("sweep finished: 10 done, 2 failed", Stdout), ("judge: 20 rows, 19 graded, 1 ungraded", Stdout)],
         ),
         past_job(
-            JobSpec::Judge(JudgeParams { experiment: "jobbench-baseline".into(), cell: jb, k: 2, seed: None, modes: vec![Mode::Parallel, Mode::Sequential], bases: false, profile: "local-model".into() }),
+            JobSpec::Judge(JudgeParams { experiment: "jobbench-baseline".into(), cell: jb, k: 2, seed: None, modes: vec![Mode::Parallel, Mode::Sequential], bases: false, profile: "local-model".into(), acknowledge_cloud_judge: false }),
             JobStatus::Succeeded,
             4 * DAY,
             900,
@@ -1232,6 +1269,7 @@ impl Inner {
             isolation: Isolation::Host,
             host_risks_preacknowledged: false,
             not_offered: Vec::new(),
+            cloud_judges: h2w_api::CloudJudgePolicy::Acknowledge,
             experiments: experiments(),
             jobs: past_jobs(),
             profiles: profiles(),
@@ -1253,6 +1291,7 @@ impl Inner {
             isolation: Isolation::Host,
             host_risks_preacknowledged: false,
             not_offered: Vec::new(),
+            cloud_judges: h2w_api::CloudJudgePolicy::Acknowledge,
             experiments: BTreeMap::new(),
             jobs: Vec::new(),
             profiles: BTreeMap::new(),
@@ -1296,5 +1335,6 @@ pub(crate) fn queued_spec() -> JobSpec {
         judge_bases: false,
         budget_usd: Some(15.0),
         acknowledge_risks: true,
+        acknowledge_cloud_judge: true,
     })
 }
