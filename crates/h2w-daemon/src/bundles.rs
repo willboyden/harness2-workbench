@@ -42,7 +42,7 @@ pub fn export(
             home.display()
         );
     };
-    if let Some(job) = running(cfg)?
+    if let Some(job) = jobs_in(cfg, &[JobStatus::Running])?
         .into_iter()
         .find(|j| matches!(j.kind, JobKind::InstallHarness2 | JobKind::Setup))
     {
@@ -196,11 +196,17 @@ pub fn import(cfg: &Config, path: &Path, expected: &str) -> anyhow::Result<ExitC
              Workbench manages"
         );
     }
-    if let Some(job) = running(cfg)?.first() {
+    // A queued job could start between the two renames below, so the queue must be empty too.
+    if let Some(job) = jobs_in(cfg, &[JobStatus::Running, JobStatus::Queued])?.first() {
         bail!(
-            "job {} ({}) is running; import when no job runs",
+            "job {} ({}) is {}; import when no job is queued or running",
             job.id,
-            kind_name(job.kind)
+            kind_name(job.kind),
+            if job.status == JobStatus::Queued {
+                "queued"
+            } else {
+                "running"
+            }
         );
     }
     let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
@@ -318,16 +324,25 @@ fn problems(cfg: &Config, m: &BundleManifest) -> Vec<String> {
                 ));
             }
         }
-        Isolation::Container => {
-            // An image the bundle brings is loaded on import; otherwise ask the configured one.
-            if m.runner_image.is_none() && !image_has_dir(cfg, py) {
+        // An image the bundle brings is loaded on import; otherwise ask the configured one.
+        Isolation::Container if m.runner_image.is_none() => {
+            let c = &cfg.file.isolation.container;
+            if !matches!(image_id(c.runtime.as_str(), &c.image), Ok(Some(_))) {
+                problems.push(format!(
+                    "the runner image {} is not present for {} (build it, or export the bundle \
+                     with --with-runner-image)",
+                    c.image,
+                    c.runtime.as_str()
+                ));
+            } else if !image_has_dir(cfg, py) {
                 problems.push(format!(
                     "the runner image {} has no {py}, the interpreter the bundle's Python \
                      environment needs (export with --with-runner-image, or build the same image)",
-                    cfg.file.isolation.container.image
+                    c.image
                 ));
             }
         }
+        Isolation::Container => {}
     }
     problems
 }
@@ -387,16 +402,21 @@ fn check_sha(expected: &str, actual: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Jobs running now, per the database (none when it does not exist yet).
-fn running(cfg: &Config) -> anyhow::Result<Vec<h2w_api::Job>> {
+/// Jobs in any of `states`, per the database (none when it does not exist yet).
+fn jobs_in(cfg: &Config, states: &[JobStatus]) -> anyhow::Result<Vec<h2w_api::Job>> {
     if !cfg.paths.db_path.exists() {
         return Ok(Vec::new());
     }
     let conn = crate::db::open_connection(&cfg.paths.db_path)?;
-    Ok(crate::db::jobs::with_status(&conn, JobStatus::Running)?
-        .into_iter()
-        .map(|r| r.job)
-        .collect())
+    let mut jobs = Vec::new();
+    for state in states {
+        jobs.extend(
+            crate::db::jobs::with_status(&conn, *state)?
+                .into_iter()
+                .map(|r| r.job),
+        );
+    }
+    Ok(jobs)
 }
 
 fn audit(cfg: &Config, action: &str, target: &str, detail: &str) -> anyhow::Result<()> {

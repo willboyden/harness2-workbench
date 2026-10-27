@@ -119,7 +119,7 @@ pub enum BundleCommand {
         sha256: Option<String>,
     },
     /// Replace the managed installation with a bundle's; the previous one is kept as
-    /// `<harness2_home>.previous`. Refused while any job runs.
+    /// `<harness2_home>.previous`. Refused while any job is queued or running.
     Import {
         file: PathBuf,
         /// The SHA-256 received with the bundle (required).

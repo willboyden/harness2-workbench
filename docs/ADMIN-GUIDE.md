@@ -233,7 +233,7 @@ $ h2workbench doctor
 `verify` changes nothing: it compares the SHA-256, checks every entry, and names whatever keeps this
 Workbench from using the bundle (another architecture, a harness2 commit other than the tested one
 unless `paths.allow_untested_harness2_rev`, or a Python environment whose interpreter is missing where
-jobs run). `import` does the same checks, then needs `paths.harness2_managed = true`, no running job and
+jobs run). `import` does the same checks, then needs `paths.harness2_managed = true`, no queued or running job and
 enough free space; it unpacks next to `paths.harness2_home`, loads the runner image if the bundle has
 one (container isolation; the image id must match), and swaps the installation in, keeping the
 previous one as `<harness2_home>.previous`. Both are command-line only, and both are audited
@@ -1413,7 +1413,7 @@ the runtime CLI); that line is untested. Secrets for the service belong in a fil
 | `h2workbench egress-proxy` | `h2workbench egress proxy listening on <ip>:<port>` | [section 9](#9-the-egress-allowlist); non-dumpable; logs each allowlist entry with its ports |
 | `h2workbench bundle export --output F [--with-runner-image] [--force]` | `<sha256>  <file name>` (also written to `F.sha256`) | [section 3.5](#35-offline-installation-bundles); refused while an install or setup job runs |
 | `h2workbench bundle verify F [--sha256 HEX]` | `bundle OK: <sha256>`, or `problem: ...` lines | changes nothing; exit 1 when the bundle cannot be used here |
-| `h2workbench bundle import F --sha256 HEX` | `installed <sha256>` | refused while any job runs; the previous installation stays in `<harness2_home>.previous` |
+| `h2workbench bundle import F --sha256 HEX` | `installed <sha256>` | refused while any job is queued or running; the previous installation stays in `<harness2_home>.previous` |
 | `h2workbench-mcp ...` | | [MCP.md](MCP.md) |
 
 Every `h2workbench` command accepts `--config PATH` anywhere on the line. Explanations and logs go to

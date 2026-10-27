@@ -35,11 +35,12 @@ Three administrator commands on the host, `h2workbench bundle export | verify | 
   harness2 commit must be the tested one unless `paths.allow_untested_harness2_rev`; the interpreter the
   environment needs must exist where jobs run (on the host in host isolation; in the runner image in
   container isolation, asked of a throw-away container without network, or brought by the bundle).
-- **Import.** Managed installations only; refused while any job runs; a free-space check; unpacked
-  into a private directory next to `paths.harness2_home`; the runner image loaded and its id checked
-  (container isolation); then two renames: the current installation to `<home>.previous` (an older
-  one is removed), the new one into place, the first undone if the second fails. Export and import
-  are audited (`bundle.export`, `bundle.import`, actor `cli`).
+- **Import.** Managed installations only; refused while any job is queued or running (a queued job
+  could start between the two renames); a free-space check; unpacked into a private directory next
+  to `paths.harness2_home`; the runner image loaded and its id checked (container isolation); then
+  two renames: the current installation to `<home>.previous` (an older one is removed), the new one
+  into place, the first undone if the second fails. Export and import are audited
+  (`bundle.export`, `bundle.import`, actor `cli`).
 - **Command line only.** Importing code is the most privileged thing the Workbench can do, so it is not
   a REST operation or an MCP tool: no token, session or agent can reach it.
 
