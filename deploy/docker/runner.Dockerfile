@@ -8,8 +8,10 @@
 #
 # Contents: Node 22 + npm (harness2 setup installs Bun and OpenCode through npm), uv with a
 # managed CPython 3.12 (harness2's benchmarks require 3.12), git, curl, unzip, Pandoc and
-# Poppler (LAB documents). No harness2 code is baked in: the checkout is mounted, so the image
-# stays generic and a harness2 bump never requires a rebuild.
+# Poppler (LAB documents), and ripgrep (OpenCode's grep, glob and list tools: without `rg` on
+# PATH OpenCode downloads it from GitHub, which a job behind the egress proxy cannot reach).
+# No harness2 code is baked in: the checkout is mounted, so the image stays generic and a
+# harness2 bump never requires a rebuild.
 #
 # Every base is pinned by digest. Dependabot proposes Node updates (14-day cooldown); uv is
 # bumped by hand, because its registry gives Dependabot no publication date to check the
@@ -22,7 +24,7 @@ FROM docker.io/library/node:22-trixie-slim@sha256:8eb619e402eaede1748a3c8173bffa
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl git unzip pandoc poppler-utils tini \
+        ca-certificates curl git unzip pandoc poppler-utils ripgrep tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /uvx /usr/local/bin/

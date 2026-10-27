@@ -9,10 +9,13 @@ rules that decide whether a local model can grade, and what a sweep costs.
 
 > **Read this first.** harness2's own documentation only describes Google Vertex AI. Running it
 > on OpenAI-compatible servers (LiteLLM, vLLM, SGLang, Ollama, a hosted gateway) rests on facts
-> read from the pinned upstream sources and on the Workbench's own tests with fakes. **As far as the
-> repository's tests and notes record, no model-backed sweep has been run through the Workbench, on
-> either kind of profile**: the only real harness2 workflow exercised end to end is the offline
-> demo. The compatibility table below says, row by row, how each fact was established.
+> read from the pinned upstream sources, on the Workbench's own tests with fakes, and on **one
+> model-backed run**: on 2026-10-26 the maintainers ran one LAB task (k = 1, parallel) end to end
+> through an `openai_compatible` profile in container isolation, behind an egress allowlist that
+> held only a LiteLLM gateway serving self-hosted open-weight models (GLM-5.3-Flash as executor and
+> improver, DeepSeek V4.1 Flash as judge). It found the two problems described in section 2. No
+> Vertex AI sweep has been run. The compatibility table below says, row by row, how each fact was
+> established.
 
 Terms: [CONCEPTS.md](CONCEPTS.md). Administering profiles and secrets: [ADMIN-GUIDE.md](ADMIN-GUIDE.md).
 
@@ -59,6 +62,7 @@ profile-derived variables added to it. `HARNESS2_RUNS_DIR` is always set to the 
 | `GOOGLE_APPLICATION_CREDENTIALS` | path of a per-job 0600 key file | same | `vertex.credentials_secret` |
 | `OPENCODE_CONFIG` | n/a | path of a generated config registering provider `h2w` (`@ai-sdk/openai-compatible`, `baseURL`, `apiKey` as `{env:H2W_PROVIDER_API_KEY}`) | `endpoint` |
 | `H2W_PROVIDER_API_KEY` | n/a | the key | `endpoint.api_key_secret` |
+| `OPENCODE_DISABLE_MODELS_FETCH`, `OPENCODE_DISABLE_LSP_DOWNLOAD` | n/a | `1` (no models.dev catalogue fetch, no language-server downloads; section 2) | `endpoint` |
 | `HARNESS2_JUDGE_BASE_URL`, `HARNESS2_JUDGE_API_KEY` | when `judge_endpoint` is given | `judge_endpoint`, else `endpoint` | `judge_endpoint` |
 | `OPENAI_BASE_URL`, `OPENAI_API_KEY` | when a `judge_endpoint` is given and the judge model starts with `gpt`, `o1`, `o3`, `o4` or `o5` | when the judge model starts with `gpt`, `o1`, `o3`, `o4` or `o5` | the judge endpoint |
 | `HARNESS2_CODEX_BASE_URL`, `_API_KEY`, `HARNESS2_CODEX_MODEL` | from `codex_endpoint` / `codex_model` | same | `codex_endpoint` |
@@ -98,23 +102,35 @@ contains a line break or NUL, ...`); a line (`NAME=value`) is limited to 64 KiB.
 Status words: **source-read** means the fact was read from the pinned upstream source (harness2
 `1cfe254`, OpenCode `23fb5e05` / v1.14.18); **upstream docs** means upstream's documentation says
 so; **fakes only** means the Workbench's wiring is covered by tests with stub executables, not by a
-real model call. Nothing in this table has been exercised against a real model through the
-Workbench.
+real model call; **verified live** means the 2026-10-26 LAB run above exercised it, on the
+`openai_compatible` side only.
 
 | Part of harness2 | Reads its model settings from | `vertex` profile | `openai_compatible` profile | Basis |
 |---|---|---|---|---|
-| Improver and selector sessions | OpenCode `--model provider/model`, environment copied from the server's job | yes | yes, through the generated provider `h2w` | source-read |
-| Executor, LAB (`oc`) | OpenCode, environment copied | yes | yes, same provider | source-read |
+| Improver and selector sessions | OpenCode `--model provider/model`, environment copied from the server's job | yes | yes, through the generated provider `h2w` | source-read; improver sessions verified live (at k = 1 there is no selector session) |
+| Executor, LAB (`oc`) | OpenCode, environment copied | yes | yes, same provider | source-read; verified live |
 | Executor, JobBench (`oc`) | OpenCode, `{**os.environ, ...}` | yes | yes, same provider | source-read |
 | Executor, WorkBuddy (`oc`) | Harbor containers; setup refuses anything but `google-vertex/gemini...` | yes | **no** (upstream restriction) | source-read |
 | Executor, Codex (`cx`), any benchmark | `HARNESS2_CODEX_BASE_URL` / `_API_KEY` / `_MODEL` | yes, with a Responses-API endpoint (`harness2-bridge` provides one on Vertex AI) | yes if the endpoint speaks the Responses API | upstream docs |
 | Judge, JobBench | `HARNESS2_JUDGE_BASE_URL` / `HARNESS2_JUDGE_API_KEY`, or Vertex with a Gemini judge | yes | yes (judge endpoint and key) | upstream docs |
-| Judge, LAB | `evaluation/judge.py` `_detect_provider()` by model-id prefix | yes (`gemini...`, `claude...`, `vertex/...`) | only through ids starting `gpt` or `o1`, `o3`, `o4`, `o5` (see below) | source-read |
+| Judge, LAB | `evaluation/judge.py` `_detect_provider()` by model-id prefix | yes (`gemini...`, `claude...`, `vertex/...`) | only through ids starting `gpt` or `o1`, `o3`, `o4`, `o5` (see below); it calls the OpenAI **Responses API** (`responses.create` with a strict JSON schema), so the gateway must serve `/v1/responses` | source-read; verified live through a LiteLLM key alias |
 | Judge, WorkBuddy | generated Vertex route | yes (`gemini...`) | **no** | source-read |
 
 OpenCode merges the file named by `OPENCODE_CONFIG` and bundles `@ai-sdk/openai-compatible`
-(2.0.41), so the generated provider needs no package download. That is why it works offline and
-inside network-restricted containers (source-read).
+(2.0.41), so the generated provider needs no package download (source-read). It still needed two
+things from the internet, which the first model-backed run (LAB, container isolation, an egress
+allowlist holding only the model gateway) found:
+
+- **The models.dev catalogue.** harness2 runs OpenCode from source, which has no bundled
+  catalogue, so every session fetched `https://models.dev/api.json` at start-up and parsed whatever
+  came back. The egress proxy's refusal is not JSON, and every session exited before its first turn
+  (`SyntaxError: JSON Parse error: Unexpected identifier "denied"` in `opencode_stderr.log`, 0
+  turns, exit 0). For `openai_compatible` profiles the server now sets
+  `OPENCODE_DISABLE_MODELS_FETCH=1` (and `OPENCODE_DISABLE_LSP_DOWNLOAD=1`): the generated provider
+  needs nothing from the catalogue. Vertex profiles keep the fetch, because OpenCode learns the
+  `google-vertex` models from it; in container isolation, add `models.dev` to the allowlist for them.
+- **ripgrep.** OpenCode's grep, glob and list tools download `rg` from GitHub when it is not on
+  `PATH`; the runner image now ships Debian's ripgrep.
 
 ### The judge rules that surprise people
 
@@ -299,11 +315,17 @@ hand ([ADMIN-GUIDE.md](ADMIN-GUIDE.md)):
 
 ## 7. Open questions
 
-These need a real model-backed run to settle and are listed so nobody assumes otherwise
-(from the maintainers' notes):
+These need more model-backed runs to settle and are listed so nobody assumes otherwise
+(from the maintainers' notes). The one LAB task of 2026-10-26 gives a single data point on three of them:
 
 - The LAB runner adds Gemini-specific `thinkingConfig` agent options when a reasoning effort is
-  set; whether a given OpenAI-compatible endpoint accepts or drops them is untested.
-- Tool-call fidelity of local models inside OpenCode over long multi-step tasks.
-- Structured-output support of the judge endpoint (LAB's judge asks for a JSON schema).
-- Whether OpenCode records a non-zero cost for a custom provider (section 5).
+  set; whether a given OpenAI-compatible endpoint accepts or drops them is untested (that run set
+  no reasoning effort).
+- Tool-call fidelity of local models inside OpenCode over long multi-step tasks. One data point:
+  GLM-5.3-Flash finished the task's reference rollout with 31 tool calls (3 failed and were
+  recovered) and wrote a `.docx` deliverable that passed its own validation.
+- Structured-output support of the judge endpoint. One data point: LAB's judge sends a strict
+  JSON schema through the Responses API; LiteLLM 1.102 served it to DeepSeek V4.1 Flash, and all
+  50 criteria came back graded for both the refined and the base run.
+- Whether OpenCode records a non-zero cost for a custom provider (section 5). It recorded 0 in that
+  run (the sweep's `usd` is 0.0), as section 5 expected, so `budget_usd` cannot guard such a sweep.
