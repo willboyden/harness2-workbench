@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-27
+
+Measuring harness2 on self-hosted models under container isolation found an environment fault
+that biased every LAB measurement and showed that single runs cannot tell refinement from noise;
+this release fixes the first and makes both visible.
+
 ### Added
 
 - `cargo xtask runner-docs --harness2-home <home>`: reads one .docx, .pptx and .xlsx document of
@@ -35,6 +41,12 @@ All notable changes to this project are documented here. The format follows
   option at the tested commit, and with a seed `max_tasks` takes the first tasks of the shuffled
   order, so this was the missing way to run specific tasks (for example JobBench's tasks that need
   no internet).
+
+### Changed
+
+- The default runner image is `harness2-workbench-runner:0.1.3` (the tag follows the Workbench
+  version), and the documentation, Dockerfiles, compose file and CI build that tag. **Rebuild the
+  runner image**: it gained the `podman` stand-in (see Fixed).
 
 ### Fixed
 
@@ -218,7 +230,8 @@ Each change, its tests and how it was checked are in
   an environment that reads empty or denied for that moment is read again for up to about 0.25 s
   (found by a test that failed once on a CI runner).
 
-[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/willboyden/harness2-workbench/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/willboyden/harness2-workbench/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/willboyden/harness2-workbench/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/willboyden/harness2-workbench/releases/tag/v0.1.0
