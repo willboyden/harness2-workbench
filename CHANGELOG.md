@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Benchmark availability: an entry of `GET /api/v1/benchmarks` carries `unavailable` (reason
+  `not_offered` or `isolation`, a message, and an optional link) when the server does not set up or
+  run that benchmark, and jobs for it are refused with the same message (`409`). Administrators list
+  the benchmarks a server does not offer under `[[benchmarks.not_offered]]`, with a note and a link
+  to the Workbench that runs them
+  ([ADMIN-GUIDE §5](docs/ADMIN-GUIDE.md#benchmarks-benchmarks-this-server-does-not-offer)), so two
+  Workbenches that split the benchmarks between them point at each other.
+
+### Changed
+
+- The Benchmarks page shows a benchmark the server does not run as **needs host isolation**
+  (WorkBuddy-Bench under container isolation) or **not on this server**, with the reason and the
+  link, instead of "not set up" with setup and check buttons the server would refuse. The New run
+  wizard stops at its first step for such a benchmark, train/test splits are offered only for
+  benchmarks the server runs, and Getting started counts only those.
+- Container isolation's refusals are separate now: WorkBuddy jobs get `WorkBuddy-Bench needs host
+  isolation in this version: …`, the bridge `The Codex bridge needs host isolation in this
+  version` (one message covered both before).
+- The MCP tool `list_benchmarks` describes `unavailable`.
+
 ## [0.1.1] - 2026-10-26
 
 The first model-backed run through the Workbench (one LAB task on self-hosted models behind LiteLLM,

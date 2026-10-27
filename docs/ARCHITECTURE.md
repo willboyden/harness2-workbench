@@ -349,6 +349,9 @@ log_level = "info"
 otlp_endpoint = ""                   # OTLP/HTTP, e.g. http://127.0.0.1:4318
 service_name = "harness2-workbench"
 metrics_token_secret = ""            # secret NAME accepted as a bearer token on /metrics
+
+[benchmarks]                         # v1.6
+not_offered = []                     # [{bench="wb", note="Runs on the sandbox Workbench.", url="https://wb.example.com"}]
 ```
 
 ## 12. Web UI (`h2w-web`)
@@ -551,3 +554,21 @@ independent audit (findings F1–F16):
   REST operation, no MCP tool). Stdout carries one line: the `sha256sum` line (export), `bundle OK:
   <hex>` or `problem:` lines (verify), `installed <hex>` (import). Audit actions `bundle.export`,
   `bundle.import` (actor `cli`).
+
+**v1.6 (2026-10-27) — benchmark availability.**
+- `BenchmarkStatus.unavailable: Option<BenchmarkUnavailable>` (additive; absent = the server
+  sets the benchmark up and runs it). `BenchmarkUnavailable { reason, message, url? }` with
+  `UnavailableReason` `not_offered` | `isolation`; `h2w_api::WB_NEEDS_HOST_ISOLATION` is the
+  message for WorkBuddy-Bench under container isolation.
+- Configuration `[benchmarks] not_offered = [{ bench, note, url }]` (each benchmark at most once;
+  note at most 300 characters; url `http(s)` with a host, no credentials). An entry wins over the
+  isolation rule.
+- `h2w_core::bench`: `NotOffered`, `unavailable(bench, isolation, not_offered)`,
+  `status_on(home, isolation, not_offered)`. `GET /benchmarks` and job creation use the same
+  rule: a job whose cell, `setup` or `split` names an unavailable benchmark gets `409` with its
+  `message`. The bridge's container refusal now reads `The Codex bridge needs host isolation in
+  this version`.
+- Web UI: such a card shows the reason as its badge (`not on this server`, `needs host
+  isolation`), the message and the link, and no setup or check buttons; the New run wizard stops
+  at its first step with the message; splits are offered only for benchmarks the server runs.
+  The mock API mirrors the rule (`--container`, `--not-offered BENCH`).

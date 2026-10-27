@@ -63,7 +63,9 @@ server's log line for that request and the audit record. Start there.
 
 | Message | Meaning and fix |
 |---|---|
-| `WorkBuddy-Bench and the Codex bridge need host isolation in this version` | `isolation.mode = "container"` refuses WorkBuddy cells, `setup`/`split` for `wb`, and the `bridge` job. Use host isolation for those, or another benchmark. |
+| `WorkBuddy-Bench needs host isolation in this version: …` | `isolation.mode = "container"` refuses every WorkBuddy job (cells, `setup`, `split`); its cards say **needs host isolation**. Run WorkBuddy-Bench on a Workbench with host isolation, or use another benchmark. |
+| `The Codex bridge needs host isolation in this version` | `isolation.mode = "container"` refuses the `bridge` job. Use host isolation for it. |
+| The administrator's note for a benchmark, or `<benchmark> is not offered on this server.` | This server lists the benchmark under `[[benchmarks.not_offered]]` ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#benchmarks-benchmarks-this-server-does-not-offer)): another Workbench runs it. Its card links there. |
 | `harness2_home is an existing checkout (paths.harness2_managed = false); the server does not modify it` | `install_harness2` against an unmanaged checkout. Install into it yourself, or set `paths.harness2_managed = true`. |
 | `experiment X is pinned to profile Y; harness2 refuses to resume or judge a sweep under different models` | An experiment is pinned to the profile of its first writing job. Use profile `Y`, or a new experiment. |
 | `X is archived` | Unarchive it (`PATCH /experiments/X` with `{"archived": false}`) before running into it. |
