@@ -152,7 +152,7 @@ enforces the role written here.
 | GET | `/metrics` | viewer, or the metrics token |  | 200 openmetrics-text | Prometheus metrics (OpenMetrics text). |
 | GET | `/system/info` | viewer |  | 200 SystemInfo | Server status (admin-only fields filled for admins). |
 | GET | `/system/doctor` | viewer |  | 200 DoctorReport | Environment checks (cached for 60 s). |
-| GET | `/benchmarks` | viewer |  | 200 [BenchmarkStatus] | Benchmarks and their installation state. |
+| GET | `/benchmarks` | viewer |  | 200 [BenchmarkStatus] | Benchmarks and their installation state. `unavailable` (absent when the server runs the benchmark): `reason` `not_offered` (an administrator's `[[benchmarks.not_offered]]` entry) or `isolation` (WorkBuddy-Bench under container isolation), a `message`, and the `url` of the Workbench that runs it when one was configured. Jobs for such a benchmark get `409` with that message. |
 | GET | `/openapi.json` | viewer |  | 200 json | This API's OpenAPI 3.1 document. |
 
 ### Authentication

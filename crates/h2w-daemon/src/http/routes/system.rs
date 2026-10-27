@@ -137,7 +137,9 @@ pub async fn doctor(
     Ok(Json(state.doctor.report(refresh, facts).await))
 }
 
-/// Benchmarks and their installation state.
+/// Benchmarks, their installation state, and whether this server sets them up and runs them
+/// (`unavailable`: an administrator's `[[benchmarks.not_offered]]` entry, or WorkBuddy-Bench
+/// under container isolation; their jobs are refused).
 #[utoipa::path(get, path = "/api/v1/benchmarks", tag = "system",
     responses((status = 200, body = Vec<BenchmarkStatus>), (status = "default", description = "Error", body = ErrorBody)))]
 pub async fn benchmarks(
@@ -145,8 +147,10 @@ pub async fn benchmarks(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<BenchmarkStatus>>, ApiError> {
     let home = state.cfg.paths.harness2_home.clone();
+    let isolation = state.cfg.isolation();
+    let not_offered = state.cfg.not_offered.clone();
     Ok(Json(
-        blocking(move || Ok(h2w_core::bench::status(&home))).await?,
+        blocking(move || Ok(h2w_core::bench::status_on(&home, isolation, &not_offered))).await?,
     ))
 }
 

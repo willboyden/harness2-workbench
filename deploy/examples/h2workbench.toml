@@ -107,3 +107,13 @@ otlp_endpoint = ""
 service_name = "harness2-workbench"
 # Name of a secret that Prometheus may present as a bearer token on /metrics.
 metrics_token_secret = ""
+
+# Benchmarks this server neither sets up nor runs, for example because another Workbench runs them:
+# their cards say "not on this server" with the note and a link, and their jobs are refused. Without
+# an entry, isolation.mode = "container" marks WorkBuddy-Bench "needs host isolation" by itself.
+#   [[benchmarks.not_offered]]
+#   bench = "wb"                      # jb, lab or wb (all three WorkBuddy-Bench subsets)
+#   note = "WorkBuddy-Bench runs on the team's host-isolation Workbench."
+#   url = "https://wb-workbench.example.com"
+[benchmarks]
+not_offered = []

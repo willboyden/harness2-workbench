@@ -24,8 +24,11 @@ on the server: JobBench (jb, professional tasks by occupation), LAB (lab, legal 
 practice area; needs Pandoc and Poppler) and WorkBuddy-Bench (wb, one entry per subset \
 office/web/code; needs Docker; custom Tencent licence with a territorial limitation). Each \
 entry: installed, at_pinned_commit, data_present, domains with task counts (from the last \
-preview), requirements, upstream URL, licence note and what it grades. A benchmark must be \
-installed (setup_benchmark, admin) and pass check_benchmark before preview_run or start_run.";
+preview), requirements, upstream URL, licence note and what it grades. An entry with \
+unavailable (reason not_offered or isolation, a message and maybe the url of the Workbench that \
+runs it) is not set up or run on this server: its jobs are refused, so use that Workbench \
+instead. A benchmark must be installed (setup_benchmark, admin) and pass check_benchmark before \
+preview_run or start_run.";
 
 pub(crate) const SETUP_BENCHMARK: &str = "Install a benchmark on the server (harness2-setup): \
 clone its pinned upstream code, apply harness2's patches, build its environments and download \

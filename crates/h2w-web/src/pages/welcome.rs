@@ -101,7 +101,7 @@ pub(crate) fn Welcome() -> impl IntoView {
         benchmarks
             .get()
             .and_then(Result::ok)
-            .is_some_and(|l| l.iter().any(|b| b.installed))
+            .is_some_and(|l| l.iter().any(|b| b.installed && b.unavailable.is_none()))
     });
     let has_run = Signal::derive(move || {
         experiments.get().and_then(Result::ok).is_some_and(|l| {
@@ -229,7 +229,11 @@ pub(crate) fn Welcome() -> impl IntoView {
                             .get()
                             .and_then(Result::ok)
                             .map(|l| {
-                                let names: Vec<String> = l.iter().filter(|b| b.installed).map(|b| b.display_name.clone()).collect();
+                                let names: Vec<String> = l
+                                    .iter()
+                                    .filter(|b| b.installed && b.unavailable.is_none())
+                                    .map(|b| b.display_name.clone())
+                                    .collect();
                                 if names.is_empty() {
                                     view! { <p class="small muted">"Nothing is set up yet."</p> }.into_any()
                                 } else {

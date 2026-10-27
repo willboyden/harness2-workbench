@@ -528,6 +528,27 @@ An `allow` entry is `"host"`, `"*.suffix"`, or `{ host = "...", allow_private = 
 | `telemetry.service_name` | string | `"harness2-workbench"` | 1 to 128 characters | `service.name` of exported traces |
 | `telemetry.metrics_token_secret` | string | `""` | empty, or a secret name `[A-Z][A-Z0-9_]{0,63}` | The secret whose value is accepted as a bearer token on `/metrics` ([section 11](#11-observability)) |
 
+### `[benchmarks]`: benchmarks this server does not offer
+
+| Key | Type | Default | Validation | Effect |
+|---|---|---|---|---|
+| `benchmarks.not_offered` | list of tables | `[]` | each benchmark at most once | Benchmarks this server neither sets up nor runs, for example because another Workbench runs them. Their cards say **not on this server** with the note and a link, the New run wizard will not start them, and every job for them (setup and splits included) is refused with `409` and the note |
+| `benchmarks.not_offered[].bench` | string | required | `jb`, `lab` or `wb` (all three WorkBuddy-Bench subsets) | Which benchmark |
+| `benchmarks.not_offered[].note` | string | `""` | at most 300 characters, no control characters; trimmed | One sentence for people, such as where it runs instead. Empty: "*\<benchmark\> is not offered on this server.*" |
+| `benchmarks.not_offered[].url` | string | `""` | empty, or an `http(s)` URL with a host, no credentials, at most 2,048 characters | The Workbench that runs it, shown as the link *Open the Workbench that runs it* |
+
+```toml
+[[benchmarks.not_offered]]
+bench = "wb"
+note = "WorkBuddy-Bench runs on the team's host-isolation Workbench."
+url = "https://wb-workbench.example.com"
+```
+
+Without an entry, a server with `isolation.mode = "container"` marks WorkBuddy-Bench **needs host
+isolation** by itself and refuses its jobs ([section 8](#8-container-isolation-step-by-step)); an
+entry replaces that with your note and link. Two Workbenches that split the benchmarks between them
+can each list the other's, so every card says where its benchmark runs.
+
 Two annotated examples ship with the code: `deploy/examples/h2workbench.toml` (every key, with
 comments) and `deploy/examples/h2workbench.compose.toml` (the compose deployment). `init` writes every
 key with its default.
@@ -934,9 +955,14 @@ on rootless Docker). The commands are from the example configuration's own comme
    while it runs, and the proxy's log (`docker logs h2w-egress`: `decision="allow"` and
    `decision="deny"` lines).
 
-Restrictions in this version: WorkBuddy-Bench and the Codex bridge refuse container isolation
-(`409` `WorkBuddy-Bench and the Codex bridge need host isolation in this version`), and
-`network = "none"` allows only the offline demo.
+Restrictions in this version: WorkBuddy-Bench and the Codex bridge refuse container isolation,
+and `network = "none"` allows only the offline demo. WorkBuddy-Bench starts a Docker container for
+every trial, which a job inside a container cannot do: its cards say **needs host isolation** (the
+Benchmarks API sets `unavailable` with reason `isolation`), and its jobs (setup, check, preview,
+run, judge, report, pipeline, split) get `409` `WorkBuddy-Bench needs host isolation in this
+version: …`. The bridge gets `409` `The Codex bridge needs host isolation in this version`. To
+point people at a host-isolation Workbench that runs WorkBuddy-Bench, list it under
+[`[benchmarks]`](#benchmarks-benchmarks-this-server-does-not-offer).
 
 **What was verified.** The maintainers ran steps 2 to 7 on rootless Docker on 2026-10-23: the install
 job fetched harness2 from GitHub and its packages from PyPI **through a real `egress-proxy`

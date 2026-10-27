@@ -1,8 +1,8 @@
 //! Domain widgets shared by several pages.
 
 use h2w_api::{
-    CheckLevel, DoctorReport, ExperimentKind, InstallParams, Job, JobSpec, Mode, ModeScore,
-    ProfileCheck, Role, SystemInfo,
+    BenchmarkUnavailable, CheckLevel, DoctorReport, ExperimentKind, InstallParams, Job, JobSpec,
+    Mode, ModeScore, ProfileCheck, Role, SystemInfo,
 };
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
@@ -27,6 +27,24 @@ pub(crate) fn kind_badge(kind: ExperimentKind) -> impl IntoView {
     match kind {
         ExperimentKind::Standard => view! { <Badge tone=Tone::Neutral text="benchmark" /> },
         ExperimentKind::Demo => view! { <Badge tone=Tone::Info text="demo" /> },
+    }
+}
+
+/// Why this server does not set up or run a benchmark, with a link to the Workbench that
+/// runs it when the administrator gave one.
+#[component]
+pub(crate) fn UnavailableNotice(u: BenchmarkUnavailable, tone: Tone) -> impl IntoView {
+    let title = crate::logic::benchmarks::title(&u);
+    let href = crate::logic::benchmarks::link(&u).map(str::to_owned);
+    view! {
+        <Notice tone=tone title=title>
+            <p>{u.message.clone()}</p>
+            {href.map(|h| view! {
+                <p>
+                    <a href=h rel="noopener noreferrer external" target="_blank">"Open the Workbench that runs it"</a>
+                </p>
+            })}
+        </Notice>
     }
 }
 

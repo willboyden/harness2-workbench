@@ -161,6 +161,44 @@ pub struct BenchmarkStatus {
     pub license_note: String,
     /// What this benchmark grades and how (one paragraph).
     pub description: String,
+    /// Set when this server does not set up or run the benchmark: its jobs are refused, and
+    /// the Web UI shows this instead of the setup state. Absent = available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<BenchmarkUnavailable>,
+}
+
+/// Why a server does not set up or run a benchmark (`BenchmarkStatus.unavailable`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct BenchmarkUnavailable {
+    pub reason: UnavailableReason,
+    /// One sentence for people: the administrator's note, or why the isolation mode rules
+    /// the benchmark out.
+    pub message: String,
+    /// Where the benchmark runs instead (`http` or `https`), when the administrator gave one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// `BenchmarkUnavailable.message` for WorkBuddy-Bench under container isolation, and the
+/// refusal of its jobs there.
+pub const WB_NEEDS_HOST_ISOLATION: &str = "WorkBuddy-Bench needs host isolation in this version: \
+     it starts a Docker container for every trial, which a job inside a container cannot do, so \
+     this server (isolation mode \"container\") refuses its jobs. Run it on a Workbench with host \
+     isolation.";
+
+/// What makes a benchmark unavailable on a server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UnavailableReason {
+    /// An administrator listed it under `[benchmarks] not_offered` (it runs elsewhere).
+    NotOffered,
+    /// This server's isolation mode cannot run it: WorkBuddy-Bench starts a Docker
+    /// container per trial, which a job inside a container cannot do.
+    Isolation,
 }
 
 #[cfg(test)]

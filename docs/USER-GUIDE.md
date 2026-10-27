@@ -291,8 +291,9 @@ secrets are set* (secrets the profile references that have no value) and *What t
 do* (the warnings in [MODELS.md](MODELS.md#warnings-the-server-raises); capability notes such as
 "WorkBuddy-Bench cannot use this profile" appear for every OpenAI-compatible profile). Then choose
 the **benchmark** (JobBench, LAB or WorkBuddy-Bench; one that is not installed says *Not set up yet*
-and links to the Benchmarks page) and the **executor** (OpenCode with a 24,000-character always-on
-budget, or Codex with 8,000 on a Responses-API endpoint).
+and links to the Benchmarks page; one this server does not run says why, links to the Workbench that
+runs it when the administrator gave one, and stops the wizard at this step) and the **executor**
+(OpenCode with a 24,000-character always-on budget, or Codex with 8,000 on a Responses-API endpoint).
 
 **2. Options.**
 
@@ -402,6 +403,15 @@ subsets. Each card says whether it is set up and has task data, what the benchma
 **licence** (WorkBuddy-Bench carries a custom licence with a **territorial limitation**; the card
 says so in a highlighted note: read it before you download or use that benchmark) and what it
 **needs** (Node.js, uv, git, Pandoc and Poppler for LAB, Docker and Vertex AI for WorkBuddy-Bench).
+
+A card can instead say this server does not run the benchmark, with a note in place of the setup
+state and no buttons:
+
+- **needs host isolation**: the server runs jobs in containers, and WorkBuddy-Bench starts a
+  container of its own for every trial, which a job inside a container cannot do. Ask your
+  administrator where WorkBuddy-Bench runs.
+- **not on this server**: your administrator says another Workbench runs it; the note says which,
+  and **Open the Workbench that runs it** goes there when a link was configured.
 
 - **Check readiness** (operators) runs harness2's offline readiness check for that benchmark; no
   model is called.
