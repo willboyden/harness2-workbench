@@ -70,13 +70,13 @@ preacknowledge_host_risks = false
 
 [isolation.container]
 runtime = "docker"
-image = "harness2-workbench-runner:0.1.0"
+image = "harness2-workbench-runner:0.1.1"
 # "none" for no network (the demo works; model calls and installs do not), or an internal
 # network you created with an `h2workbench egress-proxy` container on it (and on an uplink), e.g.
 #   docker network create --internal h2w-jobs
 #   docker network create h2w-uplink
 #   docker run -d --name h2w-egress --network h2w-jobs -v ./h2workbench.toml:/config/h2workbench.toml:ro \
-#     harness2-workbench:0.1.0 egress-proxy --config /config/h2workbench.toml
+#     harness2-workbench:0.1.1 egress-proxy --config /config/h2workbench.toml
 #   docker network connect h2w-uplink h2w-egress
 network = "none"
 # The proxy as job containers reach it, e.g. "http://h2w-egress:3128". Set inside each job as

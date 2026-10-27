@@ -257,7 +257,9 @@ impl Default for ContainerSection {
     fn default() -> Self {
         ContainerSection {
             runtime: RuntimeKind::Docker,
-            image: "harness2-workbench-runner:0.1.0".to_owned(),
+            // The runner image of this release: its tag follows the Workbench version, because
+            // the image's contents change with releases (0.1.1 added ripgrep).
+            image: concat!("harness2-workbench-runner:", env!("CARGO_PKG_VERSION")).to_owned(),
             network: "none".to_owned(),
             cpus: 4.0,
             memory_mb: 8192,
