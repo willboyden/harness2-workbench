@@ -539,3 +539,15 @@ independent audit (findings F1–F16):
   that peer's overflow bucket). Audit actors name their kind: `token:<name>`, `proxy:<user>`,
   `cli`, `server`, `anonymous`. The MCP HTTP Host guard refuses userinfo.
 
+
+**v1.5 (2026-10-26) — offline install bundles ([ADR 0009](adr/0009-offline-install-bundles.md)).**
+- `h2w_core::bundle`: `FORMAT`, `MANIFEST_NAME`, `RUNNER_IMAGE_NAME`, `TREE_PREFIX`;
+  `BundleManifest`, `BundleBenchmark`, `BundleImage`, `TreeStats`; `survey`, `write`,
+  `read_manifest`, `scan`, `unpack`, `compatibility`, `sha256_hex`, `sha256_line`. The module works
+  on administrator-given paths (never a request's) and checks every archive name before it becomes
+  a path.
+- `h2workbench bundle export --output FILE [--with-runner-image] [--force]`,
+  `bundle verify FILE [--sha256 HEX]`, `bundle import FILE --sha256 HEX`: command line only (no
+  REST operation, no MCP tool). Stdout carries one line: the `sha256sum` line (export), `bundle OK:
+  <hex>` or `problem:` lines (verify), `installed <hex>` (import). Audit actions `bundle.export`,
+  `bundle.import` (actor `cli`).

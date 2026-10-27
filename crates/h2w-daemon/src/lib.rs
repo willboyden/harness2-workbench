@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod auth;
+pub mod bundles;
 pub mod cli;
 pub mod config;
 pub mod db;

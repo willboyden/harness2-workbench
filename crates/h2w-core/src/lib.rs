@@ -12,13 +12,17 @@
 //! - [`report`], [`estimate`], [`export`], [`manifest`]: analysis on top of results.
 //! - [`env`], [`redact`], [`isolation`], [`install`], [`doctor`], [`bench`]: what the server
 //!   needs to run jobs safely.
+//! - [`bundle`]: offline install bundles of the managed harness2 installation.
 //!
 //! Nothing here spawns processes or opens sockets; filesystem access goes through
 //! `cap_std` handles so a path from a request or a results file cannot leave its root.
+//! The exception is [`bundle`], which works on paths an administrator gives the command line
+//! (never a request) and checks every name in an archive before it becomes a path.
 
 #![forbid(unsafe_code)]
 
 pub mod bench;
+pub mod bundle;
 pub mod cli;
 pub mod doctor;
 pub mod env;

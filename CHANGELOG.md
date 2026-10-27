@@ -6,7 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Offline install bundles ([ADR 0009](docs/adr/0009-offline-install-bundles.md),
+  [ADMIN-GUIDE §3.5](docs/ADMIN-GUIDE.md#35-offline-installation-bundles)): `h2workbench bundle
+  export` writes the managed harness2 installation (checkout, virtual environment, benchmark
+  dependencies and data), optionally with the runner image, to one archive with a manifest and a
+  `.sha256` file; `bundle verify` checks one without changing anything; `bundle import` installs one
+  after comparing the SHA-256 the administrator supplies, checking every entry (no absolute or `..`
+  paths, nothing below a link, links that stay inside, no hard links or devices, no setuid bits) and
+  the bundle's fit (architecture, harness2 commit, interpreter), and keeps the previous installation.
+  Command line only; audited as `bundle.export` and `bundle.import`.
+
 ### Fixed
+
+- ADMIN-GUIDE §3.2 still called the release archives unpublished; it now says what was verified for
+  v0.1.0.
 
 Found by the first model-backed run (LAB, container isolation, an egress allowlist holding only an
 OpenAI-compatible gateway):

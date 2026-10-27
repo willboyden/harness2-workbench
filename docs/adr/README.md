@@ -14,6 +14,7 @@ rejected. The one-line summaries of the original eight decisions are in
 | [0006](0006-isolation-modes.md) | Two isolation modes: `host` (with explicit acknowledgement) and `container` (hardened runner, egress allowlist proxy) | Accepted |
 | [0007](0007-dependency-cooldown.md) | Dependency cooldown: locked versions at least 14 days old, security fixes exempt with an expiry | Accepted |
 | [0008](0008-api-tokens-and-sessions.md) | Tokens `h2w_<id>_<secret>` stored as SHA-256 and compared in constant time; HttpOnly SameSite=Strict cookie sessions | Accepted |
+| [0009](0009-offline-install-bundles.md) | Offline install bundles: export, verify and import the managed installation as one checked archive, from the command line only | Accepted |
 
 ## Format
 

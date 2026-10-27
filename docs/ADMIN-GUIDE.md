@@ -145,9 +145,9 @@ server still builds and runs**: the API works and `/` shows a page saying `UI no
 `cargo xtask web` builds a release-size UI (a 3.4 MB `.wasm` here); `cargo xtask web --dev` builds
 a faster debug one (about 150 MB).
 
-### 3.2 Release archives (not yet published)
+### 3.2 Release archives
 
-Each tagged release will provide, per Linux target (`x86_64-unknown-linux-gnu`,
+Each tagged release provides, per Linux target (`x86_64-unknown-linux-gnu`,
 `aarch64-unknown-linux-gnu`), `harness2-workbench-<tag>-<target>.tar.gz` holding `bin/h2workbench`,
 `bin/h2workbench-mcp`, the documentation and the deployment files, plus `SHA256SUMS`, a CycloneDX SBOM
 and a build-provenance attestation. Verify before use:
@@ -157,8 +157,10 @@ sha256sum -c SHA256SUMS --ignore-missing
 gh attestation verify harness2-workbench-<tag>-<target>.tar.gz --repo willboyden/harness2-workbench
 ```
 
-See [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md) and [RELEASING.md](RELEASING.md). No release exists yet, so
-this path is **unverified**.
+See [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md) and [RELEASING.md](RELEASING.md). Verified for v0.1.0 by the
+maintainers (2026-10-24): the three files match `SHA256SUMS`, the provenance record names the release
+workflow at the tag, and the x86_64 binary served the web UI and ran the demo. The attestation's
+signature was not checked with `gh attestation verify` (the `gh` at hand had no such command).
 
 ### 3.3 Container images
 
@@ -193,6 +195,64 @@ runner image.
 install -Dm755 target/release/h2workbench target/release/h2workbench-mcp -t ~/.local/bin
 h2workbench version
 ```
+
+### 3.5 Offline installation: bundles
+
+Installing harness2 and setting up a benchmark download from GitHub, npm, PyPI and (JobBench) Hugging
+Face ([section 9](#9-the-egress-allowlist) lists the hosts). Where the Workbench host or its jobs must
+not reach the internet, do that once on a machine that may, then carry the result over as a
+**bundle**: one archive of the managed installation (the harness2 checkout, its virtual environment,
+and `dependencies/` with the benchmarks' checkouts, environments and data), with a manifest. The
+design and its limits are [ADR 0009](adr/0009-offline-install-bundles.md).
+
+**1. On the connected machine**, with the same isolation mode, runner image and architecture as the
+target: install harness2 and set up the benchmarks you need (as usual), then
+
+```console
+$ h2workbench bundle export --output harness2-bundle.tar.gz --with-runner-image
+<sha256>  harness2-bundle.tar.gz
+```
+
+The SHA-256 line is printed on stdout and written to `harness2-bundle.tar.gz.sha256`. Export refuses
+while an `install_harness2` or `setup` job runs. `--with-runner-image` adds the configured runner image
+(`docker save`); leave it out when the target already has that exact image or uses host isolation.
+
+**2. Carry the archive over, and the SHA-256 separately** through a channel you trust: the sidecar
+file travels with the archive and proves nothing about it.
+
+**3. On the target**, check it, then install it:
+
+```console
+$ h2workbench bundle verify harness2-bundle.tar.gz --sha256 <sha256>
+bundle OK: <sha256>
+$ h2workbench bundle import harness2-bundle.tar.gz --sha256 <sha256>
+installed <sha256>
+$ h2workbench doctor
+```
+
+`verify` changes nothing: it compares the SHA-256, checks every entry, and names whatever keeps this
+Workbench from using the bundle (another architecture, a harness2 commit other than the tested one
+unless `paths.allow_untested_harness2_rev`, or a Python environment whose interpreter is missing where
+jobs run). `import` does the same checks, then needs `paths.harness2_managed = true`, no queued or running job and
+enough free space; it unpacks next to `paths.harness2_home`, loads the runner image if the bundle has
+one (container isolation; the image id must match), and swaps the installation in, keeping the
+previous one as `<harness2_home>.previous`. Both are command-line only, and both are audited
+(`bundle.export`, `bundle.import`). Then run a `check` job for each benchmark: in container isolation it
+works with `isolation.container.network = "none"`, because nothing is downloaded any more.
+
+A bundle is **code**: a matching SHA-256 proves you have the bundle that was exported, not that the
+machine that exported it was trustworthy. Experiments are not part of a bundle
+([section 12](#12-data-backups-and-upgrades) covers backups).
+
+**Verified live by the maintainers on 2026-10-26**, with a real LAB installation in container
+isolation: export of 211,677 files (7.3 GiB) and the runner image (220 MiB) took 163 s and wrote a
+5.2 GiB archive, whose `.sha256` line `sha256sum -c` confirmed; `verify` took 13 s. Import into a
+second Workbench on the same host (its own data directory, `network = "none"`) refused a wrong
+SHA-256 without changing anything, then took 17 s; the two installations were identical (248,754
+entries compared by type, mode, size and link target, 213 sampled files byte for byte); there,
+`doctor` was ok, a LAB `check` job answered `Ready: lab/oc; 1143 tasks` in a container with network
+mode `none`, and the demo succeeded. **Not verified**: loading the runner image (that host already had
+it, with the same id), an import on another machine, host isolation, Podman.
 
 ## 4. First run
 
@@ -1355,6 +1415,9 @@ the runtime CLI); that line is untested. Secrets for the service belong in a fil
 | `h2workbench openapi` | the OpenAPI 3.1 document | needs neither configuration nor a server |
 | `h2workbench version` | `h2workbench <version>` (and the commit when built with `H2W_BUILD_COMMIT`) | |
 | `h2workbench egress-proxy` | `h2workbench egress proxy listening on <ip>:<port>` | [section 9](#9-the-egress-allowlist); non-dumpable; logs each allowlist entry with its ports |
+| `h2workbench bundle export --output F [--with-runner-image] [--force]` | `<sha256>  <file name>` (also written to `F.sha256`) | [section 3.5](#35-offline-installation-bundles); refused while an install or setup job runs |
+| `h2workbench bundle verify F [--sha256 HEX]` | `bundle OK: <sha256>`, or `problem: ...` lines | changes nothing; exit 1 when the bundle cannot be used here |
+| `h2workbench bundle import F --sha256 HEX` | `installed <sha256>` | refused while any job is queued or running; the previous installation stays in `<harness2_home>.previous` |
 | `h2workbench-mcp ...` | | [MCP.md](MCP.md) |
 
 Every `h2workbench` command accepts `--config PATH` anywhere on the line. Explanations and logs go to
