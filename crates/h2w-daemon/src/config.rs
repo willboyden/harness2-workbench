@@ -14,7 +14,8 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use h2w_api::{AuthMode, Isolation};
+use h2w_api::{AuthMode, Bench, Isolation};
+use h2w_core::bench::NotOffered;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +52,36 @@ pub struct FileConfig {
     pub isolation: IsolationSection,
     pub egress: EgressSection,
     pub telemetry: TelemetrySection,
+    pub benchmarks: BenchmarksSection,
 }
+
+/// `[benchmarks]`: benchmarks this server does not offer.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct BenchmarksSection {
+    /// Benchmarks this server neither sets up nor runs, say because another Workbench runs
+    /// them: their cards read "not on this server" with the note and link, and their jobs are
+    /// refused.
+    pub not_offered: Vec<NotOfferedEntry>,
+}
+
+/// One `[[benchmarks.not_offered]]` entry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotOfferedEntry {
+    /// `jb`, `lab` or `wb` (all three WorkBuddy-Bench subsets).
+    pub bench: Bench,
+    /// One sentence for people, such as where the benchmark runs instead (at most
+    /// [`NOTE_MAX_CHARS`] characters). Empty = "<benchmark> is not offered on this server."
+    #[serde(default)]
+    pub note: String,
+    /// The Workbench that runs it, shown as a link: `http` or `https`, without credentials.
+    #[serde(default)]
+    pub url: String,
+}
+
+/// Longest `[[benchmarks.not_offered]]` note.
+pub const NOTE_MAX_CHARS: usize = 300;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -533,6 +563,8 @@ pub struct Config {
     pub egress_allow: Vec<AllowRule>,
     /// Full OTLP/HTTP traces URL (`.../v1/traces`), when export is configured.
     pub otlp_traces_url: Option<String>,
+    /// `[[benchmarks.not_offered]]` after validation.
+    pub not_offered: Vec<NotOffered>,
 }
 
 /// Why a configuration could not be used.
@@ -1311,6 +1343,8 @@ fn validate(
         problems.push(format!("telemetry.metrics_token_secret: {e}"));
     }
 
+    let not_offered = not_offered_entries(&file.benchmarks.not_offered, problems);
+
     let (listen, public_url, egress_listen, data_dir, experiments_dir, harness2_home) = (
         listen?,
         public_url?,
@@ -1341,8 +1375,63 @@ fn validate(
         egress_listen,
         egress_allow,
         otlp_traces_url,
+        not_offered,
         file,
     })
+}
+
+/// Validate `[[benchmarks.not_offered]]`: each benchmark at most once, a short note of plain
+/// text, and an optional `http(s)` link without credentials (the Web UI shows it as a link).
+fn not_offered_entries(entries: &[NotOfferedEntry], problems: &mut Vec<String>) -> Vec<NotOffered> {
+    let mut out: Vec<NotOffered> = Vec::new();
+    for (i, e) in entries.iter().enumerate() {
+        let key = format!("benchmarks.not_offered[{i}]");
+        if out.iter().any(|n| n.bench == e.bench) {
+            problems.push(format!(
+                "{key}: {} is listed more than once",
+                e.bench.as_cli()
+            ));
+            continue;
+        }
+        let note = e.note.trim();
+        if note.chars().count() > NOTE_MAX_CHARS {
+            problems.push(format!(
+                "{key}.note: longer than {NOTE_MAX_CHARS} characters"
+            ));
+        }
+        if note.chars().any(char::is_control) {
+            problems.push(format!("{key}.note: control characters are not allowed"));
+        }
+        let url = if e.url.is_empty() {
+            None
+        } else {
+            match url::Url::parse(&e.url) {
+                Ok(u)
+                    if matches!(u.scheme(), "http" | "https")
+                        && u.host_str().is_some()
+                        && u.username().is_empty()
+                        && u.password().is_none()
+                        && e.url.len() <= 2048 =>
+                {
+                    Some(u.to_string())
+                }
+                _ => {
+                    problems.push(format!(
+                        "{key}.url: {:?} must be an http(s) URL with a host, no credentials and \
+                         at most 2048 characters",
+                        e.url
+                    ));
+                    None
+                }
+            }
+        };
+        out.push(NotOffered {
+            bench: e.bench,
+            note: note.to_owned(),
+            url,
+        });
+    }
+    out
 }
 
 /// The configuration file `h2workbench init` writes: every section with its defaults and the
@@ -1461,9 +1550,58 @@ log_level = "info"
 otlp_endpoint = ""
 service_name = "harness2-workbench"
 metrics_token_secret = ""
+
+[[benchmarks.not_offered]]
+bench = "wb"
+note = "WorkBuddy-Bench runs on the team's host-isolation Workbench."
+url = "https://wb-workbench.example.com"
 "#;
         let c = cfg_from(text).unwrap();
         assert_eq!(c.file.jobs.max_concurrent, 2);
+        assert_eq!(c.not_offered.len(), 1);
+    }
+
+    #[test]
+    fn benchmarks_not_offered() {
+        let c = cfg_from(
+            "[[benchmarks.not_offered]]\nbench = \"lab\"\n\
+             note = \"  LAB runs on the main Workbench.  \"\nurl = \"http://127.0.0.1:8722\"\n\
+             [[benchmarks.not_offered]]\nbench = \"jb\"\n",
+        )
+        .unwrap();
+        let lab = &c.not_offered[0];
+        assert_eq!(lab.bench, Bench::Lab);
+        assert_eq!(lab.note, "LAB runs on the main Workbench.");
+        assert_eq!(lab.url.as_deref(), Some("http://127.0.0.1:8722/"));
+        assert_eq!(c.not_offered[1].note, "");
+        assert_eq!(c.not_offered[1].url, None);
+        assert!(cfg_from("").unwrap().not_offered.is_empty());
+
+        let long = "x".repeat(NOTE_MAX_CHARS + 1);
+        let text = format!(
+            "[[benchmarks.not_offered]]\nbench = \"wb\"\nurl = \"javascript:alert(1)\"\n\
+             [[benchmarks.not_offered]]\nbench = \"wb\"\n\
+             [[benchmarks.not_offered]]\nbench = \"jb\"\nnote = \"{long}\"\n\
+             [[benchmarks.not_offered]]\nbench = \"lab\"\nnote = \"a\\u0007b\"\n\
+             url = \"https://user:pw@example.com/\"\n"
+        );
+        let e = cfg_from(&text).unwrap_err().to_string();
+        assert!(e.contains("benchmarks.not_offered[0].url"), "{e}");
+        assert!(
+            e.contains("benchmarks.not_offered[1]: wb is listed more than once"),
+            "{e}"
+        );
+        assert!(
+            e.contains("benchmarks.not_offered[2].note: longer than"),
+            "{e}"
+        );
+        assert!(
+            e.contains("benchmarks.not_offered[3].note: control characters"),
+            "{e}"
+        );
+        assert!(e.contains("benchmarks.not_offered[3].url"), "{e}");
+        assert!(cfg_from("[[benchmarks.not_offered]]\nbench = \"xx\"\n").is_err());
+        assert!(cfg_from("[[benchmarks.not_offered]]\nbench = \"wb\"\nextra = 1\n").is_err());
     }
 
     #[test]

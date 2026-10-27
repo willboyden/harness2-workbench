@@ -72,6 +72,8 @@ pub struct JobSettings {
     pub allow_untested_rev: bool,
     pub paths: Paths,
     pub container: ContainerSection,
+    /// `[[benchmarks.not_offered]]`: their jobs are refused.
+    pub not_offered: Vec<h2w_core::bench::NotOffered>,
 }
 
 impl JobSettings {
@@ -92,6 +94,7 @@ impl JobSettings {
             allow_untested_rev: cfg.file.paths.allow_untested_harness2_rev,
             paths: cfg.paths.clone(),
             container: cfg.file.isolation.container.clone(),
+            not_offered: cfg.not_offered.clone(),
         }
     }
 }
@@ -523,12 +526,21 @@ impl JobManager {
         }
 
         let isolation = self.settings.isolation;
-        let uses_wb = validate::cell_of(&spec).is_some_and(|c| c.bench == h2w_api::Bench::Wb)
-            || matches!(&spec, JobSpec::Setup(s) if s.bench == h2w_api::Bench::Wb)
-            || matches!(&spec, JobSpec::Split(s) if s.bench == h2w_api::Bench::Wb);
-        if isolation == Isolation::Container && (uses_wb || matches!(spec, JobSpec::Bridge(_))) {
+        // The same rule as `GET /benchmarks` shows: an administrator's `not_offered` entry,
+        // or WorkBuddy-Bench under container isolation.
+        let bench = validate::cell_of(&spec).map(|c| c.bench).or(match &spec {
+            JobSpec::Setup(s) => Some(s.bench),
+            JobSpec::Split(s) => Some(s.bench),
+            _ => None,
+        });
+        if let Some(why) = bench
+            .and_then(|b| h2w_core::bench::unavailable(b, isolation, &self.settings.not_offered))
+        {
+            return Err(ApiError::conflict(why.message));
+        }
+        if isolation == Isolation::Container && matches!(spec, JobSpec::Bridge(_)) {
             return Err(ApiError::conflict(
-                "WorkBuddy-Bench and the Codex bridge need host isolation in this version",
+                "The Codex bridge needs host isolation in this version",
             ));
         }
         if isolation == Isolation::Host

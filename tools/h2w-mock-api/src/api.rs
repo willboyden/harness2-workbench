@@ -298,7 +298,12 @@ async fn benchmarks(
     headers: HeaderMap,
 ) -> R<Json<Vec<h2w_api::BenchmarkStatus>>> {
     require(&st, &headers, Role::Viewer)?;
-    Ok(Json(lock(&st.s).benches.clone()))
+    let g = lock(&st.s);
+    let mut benches = g.benches.clone();
+    for b in &mut benches {
+        b.unavailable = crate::state::unavailable(&g, b.bench);
+    }
+    Ok(Json(benches))
 }
 
 async fn splits(
@@ -1514,6 +1519,25 @@ fn validate_spec(g: &Inner, spec: &JobSpec) -> R<()> {
             StatusCode::SERVICE_UNAVAILABLE,
             ErrorCode::Unavailable,
             "harness2 is not installed yet; an administrator can install it from the dashboard",
+        ));
+    }
+    // Like the server: benchmarks it does not offer, and WorkBuddy under container isolation.
+    let bench = match spec {
+        JobSpec::Check(p) => Some(p.cell.bench),
+        JobSpec::Preview(p) => Some(p.cell.bench),
+        JobSpec::Run(p) => Some(p.cell.bench),
+        JobSpec::Pipeline(p) => Some(p.cell.bench),
+        JobSpec::Judge(p) => Some(p.cell.bench),
+        JobSpec::Report(p) => Some(p.cell.bench),
+        JobSpec::Setup(p) => Some(p.bench),
+        JobSpec::Split(p) => Some(p.bench),
+        _ => None,
+    };
+    if let Some(why) = bench.and_then(|b| crate::state::unavailable(g, b)) {
+        return Err(fail(
+            StatusCode::CONFLICT,
+            ErrorCode::Conflict,
+            &why.message,
         ));
     }
     if let Some(exp) = spec.experiment()

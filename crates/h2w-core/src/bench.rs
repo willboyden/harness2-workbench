@@ -5,7 +5,9 @@
 
 use std::path::Path;
 
-use h2w_api::{Bench, BenchmarkStatus, WbSubset};
+use h2w_api::{
+    Bench, BenchmarkStatus, BenchmarkUnavailable, Isolation, UnavailableReason, WbSubset,
+};
 
 use crate::safefs;
 
@@ -82,6 +84,7 @@ fn entry(
         upstream_url: upstream_url.to_owned(),
         license_note: license_note.to_owned(),
         description: description.to_owned(),
+        unavailable: None,
     }
 }
 
@@ -199,9 +202,113 @@ pub fn status(harness2_home: &Path) -> Vec<BenchmarkStatus> {
     out
 }
 
+/// A benchmark an administrator does not offer on a server (`[benchmarks] not_offered`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotOffered {
+    pub bench: Bench,
+    /// One sentence for people, such as where the benchmark runs instead; empty = a
+    /// standard sentence.
+    pub note: String,
+    /// The Workbench that runs it (`http` or `https`, validated by the configuration).
+    pub url: Option<String>,
+}
+
+/// Why a server with this isolation mode and these administrator settings does not set up or
+/// run `bench`, or `None` when it does. An administrator's entry wins over the isolation rule:
+/// its note can say where the benchmark runs instead.
+#[must_use]
+pub fn unavailable(
+    bench: Bench,
+    isolation: Isolation,
+    not_offered: &[NotOffered],
+) -> Option<BenchmarkUnavailable> {
+    if let Some(n) = not_offered.iter().find(|n| n.bench == bench) {
+        let message = if n.note.is_empty() {
+            format!("{} is not offered on this server.", bench.display_name())
+        } else {
+            n.note.clone()
+        };
+        return Some(BenchmarkUnavailable {
+            reason: UnavailableReason::NotOffered,
+            message,
+            url: n.url.clone(),
+        });
+    }
+    (isolation == Isolation::Container && bench == Bench::Wb).then(|| BenchmarkUnavailable {
+        reason: UnavailableReason::Isolation,
+        message: h2w_api::WB_NEEDS_HOST_ISOLATION.to_owned(),
+        url: None,
+    })
+}
+
+/// [`status`], with each entry's availability on a server with this isolation mode and these
+/// administrator settings ([`unavailable`]).
+#[must_use]
+pub fn status_on(
+    harness2_home: &Path,
+    isolation: Isolation,
+    not_offered: &[NotOffered],
+) -> Vec<BenchmarkStatus> {
+    let mut out = status(harness2_home);
+    for b in &mut out {
+        b.unavailable = unavailable(b.bench, isolation, not_offered);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn availability_follows_isolation_and_settings() {
+        // Host isolation, nothing listed: everything is available.
+        for b in [Bench::Jb, Bench::Lab, Bench::Wb] {
+            assert_eq!(unavailable(b, Isolation::Host, &[]), None);
+        }
+        // Container isolation rules out WorkBuddy only.
+        let wb = unavailable(Bench::Wb, Isolation::Container, &[]).unwrap();
+        assert_eq!(wb.reason, UnavailableReason::Isolation);
+        assert!(wb.message.contains("host isolation"));
+        assert_eq!(wb.url, None);
+        assert_eq!(unavailable(Bench::Lab, Isolation::Container, &[]), None);
+        // An administrator's entry wins and carries its note and link.
+        let listed = [
+            NotOffered {
+                bench: Bench::Wb,
+                note: "WorkBuddy-Bench runs on the sandbox Workbench.".to_owned(),
+                url: Some("https://wb.example.com/".to_owned()),
+            },
+            NotOffered {
+                bench: Bench::Jb,
+                note: String::new(),
+                url: None,
+            },
+        ];
+        let wb = unavailable(Bench::Wb, Isolation::Container, &listed).unwrap();
+        assert_eq!(wb.reason, UnavailableReason::NotOffered);
+        assert_eq!(wb.message, "WorkBuddy-Bench runs on the sandbox Workbench.");
+        assert_eq!(wb.url.as_deref(), Some("https://wb.example.com/"));
+        let jb = unavailable(Bench::Jb, Isolation::Host, &listed).unwrap();
+        assert_eq!(jb.message, "JobBench is not offered on this server.");
+        assert_eq!(unavailable(Bench::Lab, Isolation::Host, &listed), None);
+    }
+
+    #[test]
+    fn status_on_marks_every_wb_subset() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = status_on(tmp.path(), Isolation::Container, &[]);
+        assert_eq!(s.len(), 5);
+        for b in &s {
+            assert_eq!(
+                b.unavailable.is_some(),
+                b.bench == Bench::Wb,
+                "{}",
+                b.display_name
+            );
+        }
+        assert!(status(tmp.path()).iter().all(|b| b.unavailable.is_none()));
+    }
 
     #[test]
     fn catalogue_covers_every_cell() {

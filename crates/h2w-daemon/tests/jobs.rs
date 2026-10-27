@@ -1185,8 +1185,40 @@ async fn workbuddy_and_the_bridge_refuse_container_isolation() {
         json!({"name": "p1", "kind": "custom", "solver_model": "m/x", "codex_model": "gpt-test"}),
     )
     .await;
+    // The benchmark list says so before anyone tries: every WorkBuddy subset, nothing else.
+    let benches: Vec<h2w_api::BenchmarkStatus> = t
+        .get("/api/v1/benchmarks", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    for b in &benches {
+        match b.bench {
+            h2w_api::Bench::Wb => {
+                let u = b.unavailable.as_ref().expect("wb is unavailable");
+                assert_eq!(u.reason, h2w_api::UnavailableReason::Isolation);
+                assert_eq!(u.message, h2w_api::WB_NEEDS_HOST_ISOLATION);
+            }
+            _ => assert!(b.unavailable.is_none(), "{}", b.display_name),
+        }
+    }
     let wb = json!({"kind": "check", "params": {"cell": {"bench": "wb", "subset": "office"}}});
     let r = t.create_job(&t.operator, wb).await;
+    assert_eq!(r.status(), 409);
+    assert_eq!(
+        r.json::<ErrorBody>().await.unwrap().error.message,
+        h2w_api::WB_NEEDS_HOST_ISOLATION
+    );
+    let setup = json!({"kind": "setup", "params": {"bench": "wb", "subset": "web"}});
+    assert_eq!(t.create_job(&t.admin, setup).await.status(), 409);
+    let r = t
+        .create_job(
+            &t.admin,
+            json!({"kind": "bridge", "params": {"profile": "p1"}}),
+        )
+        .await;
     assert_eq!(r.status(), 409);
     assert!(
         r.json::<ErrorBody>()
@@ -1196,13 +1228,6 @@ async fn workbuddy_and_the_bridge_refuse_container_isolation() {
             .message
             .contains("host isolation")
     );
-    let r = t
-        .create_job(
-            &t.admin,
-            json!({"kind": "bridge", "params": {"profile": "p1"}}),
-        )
-        .await;
-    assert_eq!(r.status(), 409);
     // Runs need no acknowledgement in container mode.
     t.put_experiment("ok-cont", None).await;
     let mut spec = run_spec("ok-cont", "p1", None);
@@ -1219,6 +1244,57 @@ async fn workbuddy_and_the_bridge_refuse_container_isolation() {
         .unwrap();
     assert_eq!(info.isolation, h2w_api::Isolation::Container);
     assert!(info.features.contains(&"container".to_owned()));
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn benchmarks_not_offered_are_marked_and_refused() {
+    let t = TestServer::start_with(|s| {
+        s.file.benchmarks.not_offered = vec![h2w_daemon::config::NotOfferedEntry {
+            bench: h2w_api::Bench::Lab,
+            note: "LAB runs on the team's main Workbench.".into(),
+            url: "https://main-workbench.example.com".into(),
+        }];
+    })
+    .await;
+    let benches: Vec<h2w_api::BenchmarkStatus> = t
+        .get("/api/v1/benchmarks", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let lab = benches
+        .iter()
+        .find(|b| b.bench == h2w_api::Bench::Lab)
+        .unwrap();
+    let u = lab.unavailable.as_ref().expect("lab is not offered");
+    assert_eq!(u.reason, h2w_api::UnavailableReason::NotOffered);
+    assert_eq!(u.message, "LAB runs on the team's main Workbench.");
+    assert_eq!(
+        u.url.as_deref(),
+        Some("https://main-workbench.example.com/")
+    );
+    // Host isolation: nothing else is marked, WorkBuddy included.
+    assert!(
+        benches
+            .iter()
+            .filter(|b| b.bench != h2w_api::Bench::Lab)
+            .all(|b| b.unavailable.is_none())
+    );
+    // Its jobs are refused with the note, setup included; other benchmarks are not.
+    let check = json!({"kind": "check", "params": {"cell": {"bench": "lab"}}});
+    let r = t.create_job(&t.operator, check).await;
+    assert_eq!(r.status(), 409);
+    assert_eq!(
+        r.json::<ErrorBody>().await.unwrap().error.message,
+        "LAB runs on the team's main Workbench."
+    );
+    let setup = json!({"kind": "setup", "params": {"bench": "lab", "dry_run": true}});
+    assert_eq!(t.create_job(&t.admin, setup).await.status(), 409);
+    let jb = json!({"kind": "check", "params": {"cell": {"bench": "jb"}}});
+    assert_eq!(t.create_job(&t.operator, jb).await.status(), 201);
     t.stop().await;
 }
 

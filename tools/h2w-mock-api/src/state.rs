@@ -3,13 +3,14 @@
 use std::collections::{BTreeMap, HashMap};
 
 use h2w_api::{
-    AuditEvent, AuditOutcome, Bench, BenchmarkStatus, Cell, CheckLevel, CheckParams, CheckResult,
-    DemoMode, DemoParams, DemoResult, DoctorCheck, DoctorReport, DomainCount, Endpoint, Experiment,
-    ExperimentKind, InstallExtra, InstallParams, InstallResult, Isolation, Job, JobEvent,
-    JobResult, JobSpec, JobStatus, JobStep, JudgeParams, JudgeResult, LogLine, LogStream, Mode,
-    ModelProfile, PipelineParams, PipelineResult, Prices, Principal, ProfileKind, ReportParams,
-    ReportResult, Role, RunOptions, RunParams, RunResult, SecretInfo, SetupParams, SetupResult,
-    SplitInfo, SplitParams, SplitResult, Substrate, TokenInfo, VertexSettings, WbSubset,
+    AuditEvent, AuditOutcome, Bench, BenchmarkStatus, BenchmarkUnavailable, Cell, CheckLevel,
+    CheckParams, CheckResult, DemoMode, DemoParams, DemoResult, DoctorCheck, DoctorReport,
+    DomainCount, Endpoint, Experiment, ExperimentKind, InstallExtra, InstallParams, InstallResult,
+    Isolation, Job, JobEvent, JobResult, JobSpec, JobStatus, JobStep, JudgeParams, JudgeResult,
+    LogLine, LogStream, Mode, ModelProfile, PipelineParams, PipelineResult, Prices, Principal,
+    ProfileKind, ReportParams, ReportResult, Role, RunOptions, RunParams, RunResult, SecretInfo,
+    SetupParams, SetupResult, SplitInfo, SplitParams, SplitResult, Substrate, TokenInfo,
+    UnavailableReason, VertexSettings, WbSubset,
 };
 use tokio::sync::broadcast;
 
@@ -50,6 +51,8 @@ pub(crate) struct Inner {
     pub(crate) isolation: Isolation,
     /// `isolation.preacknowledge_host_risks`: runs on the host need no acknowledgement.
     pub(crate) host_risks_preacknowledged: bool,
+    /// `[[benchmarks.not_offered]]`, as `--not-offered` sets it.
+    pub(crate) not_offered: Vec<Bench>,
     pub(crate) experiments: BTreeMap<String, ExpData>,
     pub(crate) jobs: Vec<JobData>,
     pub(crate) profiles: BTreeMap<String, ModelProfile>,
@@ -647,6 +650,27 @@ fn tokens() -> Vec<TokenInfo> {
     ]
 }
 
+/// Why the mock server does not set up or run `bench`, the way the real one decides: a
+/// `--not-offered` entry first (with a sample note and link), else WorkBuddy-Bench under
+/// container isolation.
+pub(crate) fn unavailable(g: &Inner, bench: Bench) -> Option<BenchmarkUnavailable> {
+    if g.not_offered.contains(&bench) {
+        return Some(BenchmarkUnavailable {
+            reason: UnavailableReason::NotOffered,
+            message: format!(
+                "{} runs on the team's other Workbench in this deployment.",
+                bench.display_name()
+            ),
+            url: Some("https://workbench.example.org/".to_owned()),
+        });
+    }
+    (g.isolation == Isolation::Container && bench == Bench::Wb).then(|| BenchmarkUnavailable {
+        reason: UnavailableReason::Isolation,
+        message: h2w_api::WB_NEEDS_HOST_ISOLATION.to_owned(),
+        url: None,
+    })
+}
+
 pub(crate) fn benchmarks(installed: bool) -> Vec<BenchmarkStatus> {
     let counts = |d: Vec<(&str, Vec<&str>)>| -> Vec<DomainCount> {
         d.into_iter()
@@ -667,6 +691,7 @@ pub(crate) fn benchmarks(installed: bool) -> Vec<BenchmarkStatus> {
             domains: if installed { counts(jb_domains()) } else { Vec::new() },
             requirements: vec!["git".to_owned(), "uv".to_owned(), "Node.js 20+".to_owned()],
             upstream_url: "https://example.org/job-bench-eval".to_owned(),
+            unavailable: None,
             license_note: "Benchmark code and task data are distributed under the upstream licences; the task dataset is downloaded from its own host during setup.".to_owned(),
             description: "Professional work tasks grouped by occupation. A rubric-based judge checks each deliverable against task-specific criteria; the score is the share of criteria met.".to_owned(),
         },
@@ -680,6 +705,7 @@ pub(crate) fn benchmarks(installed: bool) -> Vec<BenchmarkStatus> {
             domains: if installed { counts(lab_domains()) } else { Vec::new() },
             requirements: vec!["git".to_owned(), "uv".to_owned(), "Pandoc".to_owned(), "Poppler (pdftoppm)".to_owned()],
             upstream_url: "https://example.org/harvey-labs".to_owned(),
+            unavailable: None,
             license_note: "Legal task data and rubrics under the upstream licence; review it before redistributing outputs.".to_owned(),
             description: "Legal drafting and review tasks grouped by practice area. Deliverables are rendered to text (Pandoc, Poppler) and judged against expert criteria.".to_owned(),
         },
@@ -695,6 +721,7 @@ pub(crate) fn benchmarks(installed: bool) -> Vec<BenchmarkStatus> {
             domains: Vec::new(),
             requirements: vec!["Docker (with Compose)".to_owned(), "git".to_owned(), "uv".to_owned()],
             upstream_url: "https://example.org/workbuddy-bench".to_owned(),
+            unavailable: None,
             license_note: "Custom Tencent licence with a TERRITORIAL LIMITATION: it does not grant rights in some territories. Read the upstream licence and confirm it permits your use before running setup.".to_owned(),
             description: format!(
                 "Office, web and code tasks run inside Docker environments; the {} subset is graded by checkers and a model judge.",
@@ -1203,6 +1230,7 @@ impl Inner {
             installed: true,
             isolation: Isolation::Host,
             host_risks_preacknowledged: false,
+            not_offered: Vec::new(),
             experiments: experiments(),
             jobs: past_jobs(),
             profiles: profiles(),
@@ -1223,6 +1251,7 @@ impl Inner {
             installed: false,
             isolation: Isolation::Host,
             host_risks_preacknowledged: false,
+            not_offered: Vec::new(),
             experiments: BTreeMap::new(),
             jobs: Vec::new(),
             profiles: BTreeMap::new(),

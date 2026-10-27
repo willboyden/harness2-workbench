@@ -56,6 +56,17 @@ struct Args {
     /// (`isolation.preacknowledge_host_risks`): runs need no acknowledgement.
     #[arg(long)]
     preack: bool,
+    /// Pretend `[[benchmarks.not_offered]]` lists this benchmark (`jb`, `lab` or `wb`;
+    /// repeatable), with a sample note and link.
+    #[arg(long, value_name = "BENCH", value_parser = parse_bench)]
+    not_offered: Vec<h2w_api::Bench>,
+}
+
+fn parse_bench(s: &str) -> Result<h2w_api::Bench, String> {
+    h2w_api::Bench::ALL
+        .into_iter()
+        .find(|b| b.as_cli() == s)
+        .ok_or_else(|| format!("{s:?} is not jb, lab or wb"))
 }
 
 #[tokio::main]
@@ -70,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
         inner.isolation = h2w_api::Isolation::Container;
     }
     inner.host_risks_preacknowledged = args.preack;
+    inner.not_offered.clone_from(&args.not_offered);
     let st = api::AppState {
         s: Arc::new(Mutex::new(inner)),
         dist: args.dist.clone(),
