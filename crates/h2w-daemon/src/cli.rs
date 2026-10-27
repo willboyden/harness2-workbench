@@ -86,6 +86,46 @@ pub enum Command {
     Version,
     /// Run the allowlisting egress proxy for container jobs (`[egress]` section).
     EgressProxy,
+    /// Offline install bundles: the managed harness2 installation (checkout, virtual
+    /// environment, benchmark dependencies and data) as one archive, for hosts whose
+    /// Workbench and jobs must not reach the internet.
+    Bundle {
+        #[command(subcommand)]
+        command: BundleCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BundleCommand {
+    /// Write the installation to FILE (.tar.gz) and FILE.sha256; the `sha256sum` line is
+    /// the only line on stdout.
+    Export {
+        #[arg(long, value_name = "FILE")]
+        output: PathBuf,
+        /// Also store the configured runner image (`<runtime> save`), for container isolation
+        /// on a host that cannot build or pull it.
+        #[arg(long)]
+        with_runner_image: bool,
+        /// Replace FILE if it exists.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Check a bundle without installing it: its SHA-256 (compared with --sha256), every
+    /// entry, and whether this Workbench can use it.
+    Verify {
+        file: PathBuf,
+        /// The SHA-256 received with the bundle.
+        #[arg(long, value_name = "HEX")]
+        sha256: Option<String>,
+    },
+    /// Replace the managed installation with a bundle's; the previous one is kept as
+    /// `<harness2_home>.previous`. Refused while any job runs.
+    Import {
+        file: PathBuf,
+        /// The SHA-256 received with the bundle (required).
+        #[arg(long, value_name = "HEX")]
+        sha256: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -177,6 +217,22 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::EgressProxy => egress_proxy(config),
+        Command::Bundle { command } => {
+            let cfg = load(config)?;
+            match command {
+                BundleCommand::Export {
+                    output,
+                    with_runner_image,
+                    force,
+                } => crate::bundles::export(&cfg, &output, with_runner_image, force),
+                BundleCommand::Verify { file, sha256 } => {
+                    crate::bundles::verify(&cfg, &file, sha256.as_deref())
+                }
+                BundleCommand::Import { file, sha256 } => {
+                    crate::bundles::import(&cfg, &file, &sha256)
+                }
+            }
+        }
     }
 }
 
@@ -660,6 +716,30 @@ mod tests {
                 "root"
             ])
             .is_err()
+        );
+    }
+
+    #[test]
+    fn bundle_import_needs_the_sha256() {
+        let cli = Cli::try_parse_from([
+            "h2workbench",
+            "bundle",
+            "import",
+            "b.tar.gz",
+            "--sha256",
+            "00",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Bundle {
+                command: BundleCommand::Import { .. }
+            }
+        ));
+        assert!(Cli::try_parse_from(["h2workbench", "bundle", "import", "b.tar.gz"]).is_err());
+        assert!(
+            Cli::try_parse_from(["h2workbench", "bundle", "export", "--output", "b.tar.gz"])
+                .is_ok()
         );
     }
 }
