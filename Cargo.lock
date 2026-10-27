@@ -1268,7 +1268,7 @@ dependencies = [
 
 [[package]]
 name = "h2w-api"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "schemars",
  "serde",
@@ -1278,7 +1278,7 @@ dependencies = [
 
 [[package]]
 name = "h2w-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cap-std",
  "flate2",
@@ -1299,7 +1299,7 @@ dependencies = [
 
 [[package]]
 name = "h2w-daemon"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "h2w-e2e"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "fantoccini",
@@ -1370,7 +1370,7 @@ dependencies = [
 
 [[package]]
 name = "h2w-mcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "h2w-mock-api"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -1410,7 +1410,7 @@ dependencies = [
 
 [[package]]
 name = "h2w-web"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "console_error_panic_hook",
  "gloo-net 0.7.0",
@@ -4858,7 +4858,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
