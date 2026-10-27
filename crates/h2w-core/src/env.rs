@@ -7,7 +7,10 @@
 //!
 //! Upstream facts this relies on (harness2 at [`crate::TESTED_HARNESS2_COMMIT`], OpenCode
 //! 1.14.18): OpenCode merges the file named by `OPENCODE_CONFIG` and bundles
-//! `@ai-sdk/openai-compatible`, so the generated provider works offline; every OpenCode
+//! `@ai-sdk/openai-compatible`, so the generated provider needs no package download; run from
+//! source, as harness2 runs it, OpenCode has no bundled models.dev catalogue and fetches one at
+//! start-up unless `OPENCODE_DISABLE_MODELS_FETCH` is set, which the server sets for
+//! `openai_compatible` profiles; every OpenCode
 //! process harness2 starts (executor runners, improver sessions) inherits the environment;
 //! JobBench's judge reads `HARNESS2_JUDGE_BASE_URL`/`HARNESS2_JUDGE_API_KEY`; LAB's judge
 //! sends `gpt*`/`o1`/`o3`/`o4`/`o5` model ids to the official OpenAI client, which reads
@@ -452,6 +455,14 @@ fn plan(profile: &ModelProfile, ctx: &EnvContext) -> Plan {
             if let Some(ep) = &profile.endpoint {
                 plan.opencode_config = Some(opencode_config(profile, ep));
                 plan.lit("OPENCODE_CONFIG", ctx.opencode_config_path.clone());
+                // Run from source, OpenCode has no bundled models.dev snapshot: it fetches
+                // https://models.dev/api.json at start-up and parses whatever comes back. Behind
+                // an egress proxy that refuses the host, every session of the first model-backed
+                // run exited before its first turn ("JSON Parse error: Unexpected identifier
+                // "denied"", 0 turns, exit 0). The generated provider needs nothing from the
+                // catalogue, so the fetch is switched off; so are language-server downloads.
+                plan.lit("OPENCODE_DISABLE_MODELS_FETCH", "1");
+                plan.lit("OPENCODE_DISABLE_LSP_DOWNLOAD", "1");
                 if let Some(s) = &ep.api_key_secret {
                     plan.secret(PROVIDER_KEY_ENV, s);
                 }
@@ -972,6 +983,10 @@ mod tests {
             Some("/data/jobs/j1/opencode.json")
         );
         assert_eq!(var(&env, PROVIDER_KEY_ENV), Some("sk-test-0123456789"));
+        // No models.dev fetch and no language-server downloads: the provider is complete
+        // without them, and a job behind the egress proxy cannot reach them.
+        assert_eq!(var(&env, "OPENCODE_DISABLE_MODELS_FETCH"), Some("1"));
+        assert_eq!(var(&env, "OPENCODE_DISABLE_LSP_DOWNLOAD"), Some("1"));
         assert_eq!(var(&env, "HARNESS2_SOLVER_MODEL"), Some("h2w/glm-5"));
         assert_eq!(var(&env, "HARNESS2_IMPROVER_MODEL"), Some("h2w/glm-5"));
         assert_eq!(var(&env, "HARNESS2_JUDGE_MODEL"), Some("gpt-5-mini"));
@@ -1058,6 +1073,8 @@ mod tests {
         );
         assert_eq!(var(&env, "HARNESS2_EXTRA"), Some("1"));
         assert_eq!(var(&env, "OPENCODE_CONFIG"), None);
+        // Vertex profiles keep the catalogue: OpenCode learns the google-vertex models from it.
+        assert_eq!(var(&env, "OPENCODE_DISABLE_MODELS_FETCH"), None);
         assert_eq!(
             env.gcp_credentials_json.as_deref(),
             Some("{\"type\": \"service_account\"}")
