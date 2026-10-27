@@ -168,8 +168,8 @@ Two images are built from the repository root (the CI builds them too; they are 
 to a registry):
 
 ```sh
-docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.1 .
-docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.1 .
+docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.2 .
+docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.2 .
 ```
 
 - **`harness2-workbench-runner`**: Node 22, uv with a managed CPython 3.12, git, curl, unzip, Pandoc,
@@ -186,7 +186,7 @@ bumped by hand ([SUPPLY-CHAIN.md](SUPPLY-CHAIN.md#bumping-uv-by-hand)). Licence 
 `THIRD-PARTY-LICENSES.md`, the crates compiled in), `/usr/share/doc/uv/` in both, and each Debian
 package's `/usr/share/doc/<package>/copyright`. The all-in-one image
 builds on the runner image named by the `RUNNER_IMAGE` build argument (default
-`harness2-workbench-runner:0.1.1`), so `--build-arg RUNNER_IMAGE=<name:tag>` puts it on your own
+`harness2-workbench-runner:0.1.2`), so `--build-arg RUNNER_IMAGE=<name:tag>` puts it on your own
 runner image.
 
 ### 3.4 Put the binaries on `PATH`
@@ -501,7 +501,7 @@ at most 4 blocking reads of results or job logs at once, a log page or event-str
 | `isolation.mode` | string | `"host"` | `host` or `container` | `host`: jobs run as the server's user with its files and network (upstream's behaviour). `container`: each job runs in a hardened container ([section 8](#8-container-isolation-step-by-step)) |
 | `isolation.preacknowledge_host_risks` | boolean | `false` | | When `false`, `run` and `pipeline` jobs in host mode must carry `acknowledge_risks: true` or are refused (`422`). `true` accepts every such run without the flag, **including runs started by MCP agents** (their own acknowledgement guard has nothing left to refuse), and the web UI's run wizard then shows a note instead of asking: set it only on a machine where every operator has been told and no agent holds an operator token |
 | `isolation.container.runtime` | string | `"docker"` | `docker` or `podman` | The container CLI |
-| `isolation.container.image` | string | `"harness2-workbench-runner:0.1.1"` | pinned: `name:tag` with a tag other than `latest`, or `name@sha256:<64 hex>`; the repository name in lowercase | The runner image |
+| `isolation.container.image` | string | `"harness2-workbench-runner:0.1.2"` | pinned: `name:tag` with a tag other than `latest`, or `name@sha256:<64 hex>`; the repository name in lowercase | The runner image |
 | `isolation.container.network` | string | `"none"` | `none`, or a user-defined network name (`[A-Za-z0-9][A-Za-z0-9_.-]*`, at most 64 characters; never `host`, `bridge` or `default`) | `none`: no network (the demo works; model calls and installs do not). A network name puts jobs on it, normally an internal one behind an egress proxy |
 | `isolation.container.proxy` | string | `""` | empty, or `http://host:port` with an explicit port and no credentials, path or query; needs a `network` other than `none` | The egress proxy as the job containers reach it. Set in each container as `HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy`, `http_proxy`, with `NO_PROXY` and `no_proxy` = `localhost,127.0.0.1,::1`, as fixed `-e NAME=VALUE` arguments (never secrets) |
 | `isolation.container.cpus` | number | `4.0` | greater than 0, at most 1024 | `--cpus` |
@@ -923,7 +923,7 @@ on rootless Docker). The commands are from the example configuration's own comme
 
    [isolation.container]
    runtime = "docker"
-   image = "harness2-workbench-runner:0.1.1"
+   image = "harness2-workbench-runner:0.1.2"
    network = "h2w-jobs"
    proxy = "http://h2w-egress:3128"
 
@@ -938,7 +938,7 @@ on rootless Docker). The commands are from the example configuration's own comme
    ```sh
    docker run -d --name h2w-egress --network h2w-jobs \
      -v "$PWD/h2workbench.toml:/config/h2workbench.toml:ro" \
-     harness2-workbench:0.1.1 egress-proxy --config /config/h2workbench.toml
+     harness2-workbench:0.1.2 egress-proxy --config /config/h2workbench.toml
    docker network connect h2w-uplink h2w-egress
    ```
 

@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-27
+
+Running the benchmarks on two Workbenches, one with container isolation and one with host isolation
+for WorkBuddy-Bench, showed each server listing the other's benchmarks as "not set up"; this release
+says where each benchmark runs.
+
 ### Added
 
 - Benchmark availability: an entry of `GET /api/v1/benchmarks` carries `unavailable` (reason
@@ -27,6 +33,11 @@ All notable changes to this project are documented here. The format follows
   isolation in this version: …`, the bridge `The Codex bridge needs host isolation in this
   version` (one message covered both before).
 - The MCP tool `list_benchmarks` describes `unavailable`.
+- The default runner image is `harness2-workbench-runner:0.1.2` (the tag follows the Workbench
+  version), and the documentation, Dockerfiles, compose file and CI build that tag. The runner's
+  Dockerfile did not change since 0.1.1, so `docker tag harness2-workbench-runner:0.1.1
+  harness2-workbench-runner:0.1.2` is enough; or rebuild it, or keep `isolation.container.image`
+  pointing at an image you built yourself.
 
 ## [0.1.1] - 2026-10-26
 
@@ -158,6 +169,7 @@ Each change, its tests and how it was checked are in
   an environment that reads empty or denied for that moment is read again for up to about 0.25 s
   (found by a test that failed once on a CI runner).
 
-[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/willboyden/harness2-workbench/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/willboyden/harness2-workbench/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/willboyden/harness2-workbench/releases/tag/v0.1.0

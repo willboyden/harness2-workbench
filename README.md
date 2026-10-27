@@ -45,7 +45,7 @@ under the same rules as people.
 
 ## Status and how to read it
 
-This is version 0.1.1, tested against harness2 commit
+This is version 0.1.2, tested against harness2 commit
 [`1cfe254`](https://github.com/google-research/harness2/commit/1cfe254e8d25b15f37048c3730134686abe60335).
 Every feature below carries two words so you can see what is claimed and what is proven:
 
@@ -171,13 +171,13 @@ or Podman. Verified live on rootless Docker by the maintainers; the commands com
 configuration's own comments.
 
 ```sh
-docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.1 .
-docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.1 .
+docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.2 .
+docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.2 .
 docker network create --internal h2w-jobs && docker network create h2w-uplink
 # h2workbench.toml: [isolation] mode = "container"; [isolation.container] network = "h2w-jobs",
 #   proxy = "http://h2w-egress:3128"; [egress] allow = ["github.com", "pypi.org", "files.pythonhosted.org", ...]
 docker run -d --name h2w-egress --network h2w-jobs -v "$PWD/h2workbench.toml:/config/h2workbench.toml:ro" \
-  harness2-workbench:0.1.1 egress-proxy --config /config/h2workbench.toml
+  harness2-workbench:0.1.2 egress-proxy --config /config/h2workbench.toml
 docker network connect h2w-uplink h2w-egress
 h2workbench serve    # then run an install_harness2 job (admin) in this mode, then the demo
 ```
@@ -194,8 +194,8 @@ they are **not** isolated from the Workbench itself (see the note at the top). V
 maintainers on rootless Docker (2026-10-23).
 
 ```sh
-docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.1 .
-docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.1 .
+docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.2 .
+docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.2 .
 cp deploy/examples/h2workbench.compose.toml deploy/h2workbench.toml   # then edit the EDIT lines; set your domain in deploy/examples/Caddyfile
 chmod 644 deploy/h2workbench.toml     # it holds no secrets; the container user must read it
 docker compose -f deploy/compose.yaml run --rm workbench init      # prints the first admin token
