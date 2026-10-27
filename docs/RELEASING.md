@@ -64,5 +64,7 @@ packagers rely on tags being immutable.
   then run the full gate. Bump `rust-version` in `Cargo.toml` only to versions you test.
 - **wasm-bindgen:** the CLI (CI, Dockerfile, CONTRIBUTING) and the crate must be the same version.
 - **harness2:** update `TESTED_HARNESS2_COMMIT`, re-run the end-to-end suite against the new
-  commit, re-check the CLI flags and output formats the parsers rely on, and note the bump in the
-  changelog.
+  commit, re-check the CLI flags and output formats the parsers rely on, run
+  `cargo xtask runner-docs --harness2-home <home>` against a home whose LAB a container-isolated
+  Workbench set up (the runner's `podman` stand-in serves exactly the call LAB's `read_doc.py`
+  makes, and refuses a changed one), and note the bump in the changelog.

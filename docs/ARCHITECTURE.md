@@ -573,6 +573,15 @@ independent audit (findings F1–F16):
   at its first step with the message; splits are offered only for benchmarks the server runs.
   The mock API mirrors the rule (`--container`, `--not-offered BENCH`).
 
+**v1.7 (2026-10-27) — LAB documents under container isolation.**
+- The runner image's `/usr/local/bin/podman` is `deploy/docker/podman-standin.sh`. It accepts only
+  `podman run [--rm] [--network=none] [--cap-drop=ALL] [--security-opt=no-new-privileges]
+  -v <file>:/doc/<name>:ro <image> parse-doc {docx|pdf|pptx|xlsx} /doc/<name>` (the call of LAB's
+  `read_doc.py` in "sandbox" mode), with `<file>` an absolute regular file, and runs
+  `python3 -I $LAB_BENCH_ROOT/sandbox/parsers/parse_doc.py <ext> <file>`; anything else exits 125.
+- `cargo xtask runner-docs --harness2-home <home> [--image] [--runtime]` checks it against a real
+  LAB checkout: each document read through the stand-in must equal `read_doc.py --in host`.
+
 **v1.8 (2026-10-27) — comparing against the starting harness.**
 - `h2w_api::CompareSide { Mode(Mode), Base }` (`parse`: `base` or a mode token; `as_param`).
   `GET /compare` accepts `<experiment>/<sweep>/base` for either side; anything else in the third

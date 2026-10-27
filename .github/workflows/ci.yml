@@ -154,6 +154,9 @@ jobs:
             docker run --rm --user "$user" --cap-drop ALL --security-opt no-new-privileges \
               harness2-workbench-runner:0.1.2 bash -c 'touch "$HOME/probe"'
           done
+          # `podman` is the stand-in for LAB's document parser: anything else exits 125.
+          docker run --rm --entrypoint sh harness2-workbench-runner:0.1.2 -c \
+            'podman ps 2>/dev/null; test $? -eq 125'
           docker compose -f deploy/compose.yaml config --quiet
 
   supply-chain:

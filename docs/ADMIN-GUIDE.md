@@ -173,8 +173,13 @@ docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.2 .
 ```
 
 - **`harness2-workbench-runner`**: Node 22, uv with a managed CPython 3.12, git, curl, unzip, Pandoc,
-  Poppler and `tini`; no harness2 code (the checkout is mounted, so a harness2 bump never needs a
-  rebuild). It is the image of container-isolated jobs and the base of the next one.
+  Poppler, ripgrep and `tini`; no harness2 code (the checkout is mounted, so a harness2 bump never
+  needs a rebuild). It is the image of container-isolated jobs and the base of the next one. Its
+  `podman` is a stand-in (`deploy/docker/podman-standin.sh`): LAB reads .docx, .pdf, .pptx and .xlsx
+  files with `podman run --rm ... parse-doc <ext> /doc/<name>`, which a job inside a container
+  cannot start, so the stand-in runs LAB's own parser on the mounted file in the job container
+  and refuses every other call (exit status 125). There is no container runtime in the image.
+  `cargo xtask runner-docs --harness2-home <home>` checks it against a real LAB checkout.
 - **`harness2-workbench`**: the runner plus `h2workbench` and `h2workbench-mcp`, running as user `node`
   with `H2W_DATA_DIR=/data` and `H2W_CONFIG=/config/h2workbench.toml`, listening on 8722, with a
   `/healthz` health check. It is what [section 10](#10-the-compose-reference-deployment) runs.
