@@ -231,7 +231,8 @@ enforces the role written here.
 |---|---|---|---|---|---|
 | POST | `/estimate` | viewer | `EstimateRequest` | 200 CostEstimate | Size and cost of a sweep before running it. |
 | POST | `/harness/validate` | viewer | `ValidateHarnessRequest` | 200 ValidationReport | Check a harness tree against harness2's own validation rules. |
-| GET | `/splits` | viewer |  | 200 [SplitInfo] | Train/test split files created by `split` jobs. |
+| GET | `/splits` | viewer |  | 200 [SplitInfo] | Train/test split files: random ones from `split` jobs, chosen ones (`chosen: true`) from `POST /splits`. |
+| POST | `/splits` | operator | `ChooseSplitRequest` | 201 SplitInfo | Save a split of tasks chosen by id (`name`, `bench`, `subset`, `train` at least one, `test` optional; ids as harness2 names them, none twice). A run with `split: train` and `split_file` this name runs exactly the `train` tasks; harness2 checks every id against the installed benchmark when a job uses it. `409` when the name exists. |
 
 ### Jobs
 

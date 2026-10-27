@@ -125,6 +125,39 @@ pub(crate) struct CreateExperimentInput {
     pub(crate) request: CreateExperimentRequest,
 }
 
+/// `choose_split`: the fields of `ChooseSplitRequest`, spelled out (it refuses unknown
+/// fields, which serde cannot combine with `flatten`).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ChooseSplitInput {
+    /// Name for the split file (same rules as experiment names). Must not exist yet.
+    pub(crate) name: String,
+    /// The benchmark the task ids belong to.
+    pub(crate) bench: h2w_api::Bench,
+    /// WorkBuddy-Bench subset (wb only).
+    #[serde(default)]
+    pub(crate) subset: Option<h2w_api::WbSubset>,
+    /// Task ids of the train partition (`<domain>/<task>`, as preview_run and list_tasks name
+    /// them), at least one: what a run with options.split=train runs.
+    pub(crate) train: Vec<String>,
+    /// Task ids of the test partition (optional), none of them in train.
+    #[serde(default)]
+    pub(crate) test: Vec<String>,
+}
+
+impl ToolInput for ChooseSplitInput {}
+
+impl ChooseSplitInput {
+    pub(crate) fn request(self) -> h2w_api::ChooseSplitRequest {
+        h2w_api::ChooseSplitRequest {
+            name: self.name,
+            bench: self.bench,
+            subset: self.subset,
+            train: self.train,
+            test: self.test,
+        }
+    }
+}
+
 impl ToolInput for CreateExperimentInput {
     fn patch(schema: &mut Value) {
         describe(

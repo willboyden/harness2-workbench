@@ -489,6 +489,13 @@ impl Workbench {
         )
         .await;
         self.json(get_route(&api("/splits"), token), splits()).await;
+        unsafe_route("POST", &api("/splits"), token)
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                "name": "jb-chosen", "bench": "jb", "seed": 0, "train_fraction": 1.0,
+                "train": 2, "test": 0, "created_at": "2026-10-27T00:00:00Z", "chosen": true
+            })))
+            .mount(&self.server)
+            .await;
         self.json(
             get_route(&api("/experiments"), token),
             json!([experiment(EXP, false)]),

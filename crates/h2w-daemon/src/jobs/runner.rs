@@ -647,6 +647,7 @@ async fn register_split(
         train: s.train,
         test: s.test,
         created_at: now_rfc3339(),
+        chosen: false,
     };
     let now = crate::util::now_unix();
     let res = mgr

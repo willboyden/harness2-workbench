@@ -28,6 +28,14 @@ All notable changes to this project are documented here. The format follows
   difference from it, and a **base** chip in the headline. The MCP tool `compare_sweeps` accepts
   `base` as a side's mode.
 
+- Choose exactly which tasks run: `POST /api/v1/splits` saves a split of tasks chosen by id
+  (`train`, and optionally `test`), in harness2's split format, and a run with `split: train` and
+  that `split_file` runs exactly those tasks. The Benchmarks page's **New split…** offers *Chosen
+  tasks* beside *Random*; the MCP tool `choose_split` does the same. harness2 has no task-id
+  option at the tested commit, and with a seed `max_tasks` takes the first tasks of the shuffled
+  order, so this was the missing way to run specific tasks (for example JobBench's tasks that need
+  no internet).
+
 ### Fixed
 
 - LAB under container isolation: LAB's document reader (`scripts/read_doc.py`) parses .docx,
@@ -41,6 +49,11 @@ All notable changes to this project are documented here. The format follows
   the mounted file inside the job container (itself the sandbox LAB asks for: no capabilities, no
   network but the egress proxy), and refuses every other call with podman's status 125.
   **Rebuild the runner image.**
+- The run options described `max_tasks` as "the first N tasks of every domain"; it takes them in
+  stream order, which `seed` shuffles, so with a seed they are usually not the lowest-numbered
+  tasks. The API description, the New run wizard and USER-GUIDE now say so.
+- JobBench judging that rate limits turn into ungraded rows is now explained in TROUBLESHOOTING:
+  one judging step opens about 64 judge requests at once.
 
 ## [0.1.2] - 2026-10-27
 

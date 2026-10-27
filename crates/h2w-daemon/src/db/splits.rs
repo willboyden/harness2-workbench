@@ -65,6 +65,7 @@ mod tests {
             train: 3,
             test: 4,
             created_at: "2026-10-23T00:00:00Z".into(),
+            chosen: false,
         };
         insert(&c, &s, 1).unwrap();
         assert!(insert(&c, &s, 2).is_err());

@@ -24,10 +24,11 @@ use wiremock::{
 };
 
 /// Every tool, sorted (tools/list sorts by name).
-const EXPECTED_TOOLS: [&str; 42] = [
+const EXPECTED_TOOLS: [&str; 43] = [
     "cancel_job",
     "check_benchmark",
     "check_profile",
+    "choose_split",
     "compare_sweeps",
     "create_experiment",
     "create_split",
@@ -112,6 +113,11 @@ fn cases() -> Vec<(&'static str, Value)> {
             json!({"experiment": EXP, "archived": true}),
         ),
         ("list_splits", json!({})),
+        (
+            "choose_split",
+            json!({"name": "jb-chosen", "bench": "jb",
+                "train": ["producers/task1", "data_entry_keyers/task1"]}),
+        ),
         ("get_manifest", json!({"experiment": EXP})),
         (
             "estimate_cost",
@@ -218,6 +224,7 @@ fn check_payload(tool: &str, args: &Value, p: &Value) {
         "get_experiment" => p["sweeps"][0]["id"] == SWEEP,
         "update_experiment" => p["archived"] == true,
         "list_splits" => p[0]["name"] == "lab-half",
+        "choose_split" => p["name"] == "jb-chosen" && p["chosen"] == true,
         "get_manifest" => p["experiment"] == EXP,
         "estimate_cost" => p["rollouts"] == 80,
         "preview_run" => p["result"]["summary_namespace"] == "lab-oc-agg1",
@@ -565,6 +572,11 @@ async fn every_tool_happy_path_against_the_mock_server() {
             .map(|r| r.body_json::<Value>().unwrap())
             .unwrap_or(Value::Null)
     };
+    assert_eq!(
+        body("POST", api("/splits")),
+        json!({"name": "jb-chosen", "bench": "jb",
+            "train": ["producers/task1", "data_entry_keyers/task1"], "test": []})
+    );
     let created = body("POST", api("/experiments"));
     assert_eq!(created["name"], "exp1");
     assert_eq!(created["profile"], "local");
@@ -642,7 +654,7 @@ async fn every_tool_renders_the_servers_refusal() {
             "install_harness2" | "setup_benchmark" | "start_bridge" => "admin",
             "create_experiment" | "update_experiment" | "cancel_job" | "preview_run"
             | "start_run" | "start_pipeline" | "run_demo" | "start_judge" | "start_report"
-            | "create_split" | "check_benchmark" => "operator",
+            | "create_split" | "choose_split" | "check_benchmark" => "operator",
             "doctor" if args["refresh"] == true => "operator",
             _ => "viewer",
         };

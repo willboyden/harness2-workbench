@@ -309,7 +309,9 @@ modes, every task: the configuration the paper reports, and the most expensive).
 harness2 flags: the **recursion budget k** (1 to 32; per task and mode 4k executor rollouts and 3k
 improver sessions), the **modes** (parallel is width, sequential is depth), a **seed** (shuffles task
 order reproducibly; it does not control model sampling), **workers** (domains run concurrently; tasks
-within a domain stay in order), **tasks per domain**, the **task split** (all, train or test; train
+within a domain stay in order), **tasks per domain** (the first N of each domain in stream order,
+which the seed shuffles: with a seed, they are usually not the lowest-numbered tasks; the preview
+lists them), the **task split** (all, train or test; train
 and test need a split from the Benchmarks page) and **only these domains**. A running tally shows
 rough task, rollout and session counts.
 
@@ -432,9 +434,15 @@ state and no buttons:
   third-party code as the server's user: see [THREAT-MODEL.md](THREAT-MODEL.md)). The job page of a
   dry run lists the planned steps and offers to run setup for real, with a confirmation
   (*Run setup for real?*).
-- **Train/test splits** (operators): **New split…** makes a reproducible, domain-stratified
-  partition (name, seed, train fraction) so you can improve harnesses on one part and evaluate on
-  tasks the recursion never saw.
+- **Train/test splits** (operators): **New split…** makes either a **random** split, a
+  reproducible, domain-stratified partition (name, seed, train fraction) so you can improve
+  harnesses on one part and evaluate on tasks the recursion never saw, or a split of **chosen
+  tasks**: the task ids you list for train (and optionally test), one per line as the preview
+  names them (`<domain>/<task>`; a bare name for WorkBuddy-Bench). A run with split *train* and
+  that split file then runs exactly those tasks. Use it for a hand-picked subset, for example the
+  JobBench tasks that need no internet, or a held-out test set you choose. *Tasks per domain* and
+  the domain filter still apply on top, and with a seed *tasks per domain* takes the first tasks of
+  the shuffled order, which is why choosing by id is the way to get specific ones.
 
 ## 11. Settings
 

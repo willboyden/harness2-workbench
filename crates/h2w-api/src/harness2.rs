@@ -316,7 +316,9 @@ pub struct RunOptions {
     /// Restrict to these domains (`--only-domains`). Empty = all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub only_domains: Vec<String>,
-    /// Per-domain task cap (`--max-tasks`): the first N tasks of every domain.
+    /// Per-domain task cap (`--max-tasks`): the first N tasks of every domain in stream order,
+    /// which `seed` shuffles (without a seed, upstream's sorted order): with a seed, the first
+    /// task of a domain is usually not its lowest-numbered one. The preview lists the tasks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tasks: Option<u32>,
 }

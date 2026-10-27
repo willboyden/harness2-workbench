@@ -614,6 +614,7 @@ async fn run(ctx: &Ctx, spec: &JobSpec, task_ms: u64) -> Result<Outcome, Stop> {
                     train,
                     test: total - train,
                     created_at: rfc3339(now_secs()),
+                    chosen: false,
                 });
             });
             ctx.log(&format!(

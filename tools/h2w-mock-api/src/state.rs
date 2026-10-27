@@ -878,6 +878,7 @@ fn splits() -> Vec<SplitInfo> {
         train: 6,
         test: 6,
         created_at: ago(2 * DAY),
+        chosen: false,
     }]
 }
 
