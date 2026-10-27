@@ -14,6 +14,7 @@ use clap::{Parser, Subcommand};
 
 mod cooldown;
 mod docs;
+mod runner_docs;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Harness² Workbench build tasks")]
@@ -58,6 +59,20 @@ enum Cmd {
         #[arg(long)]
         filter: Option<String>,
     },
+    /// Read LAB documents (.docx, .pptx, .xlsx, and a generated .pdf) with LAB's read_doc.py inside
+    /// the runner image, through its podman stand-in, and compare each with in-process parsing.
+    RunnerDocs {
+        /// harness2 home with LAB set up by a container-isolated Workbench (its environment
+        /// lives under /h2w/harness2).
+        #[arg(long)]
+        harness2_home: String,
+        /// The runner image to check.
+        #[arg(long, default_value = concat!("harness2-workbench-runner:", env!("CARGO_PKG_VERSION")))]
+        image: String,
+        /// Container CLI: docker or podman.
+        #[arg(long, default_value = "docker")]
+        runtime: String,
+    },
 }
 
 /// The end-to-end suites (`crates/h2w-e2e/tests/<name>.rs`).
@@ -90,6 +105,11 @@ fn main() -> Result<()> {
             suite,
             filter,
         } => e2e(&root, harness2_home, suite.as_deref(), filter.as_deref()),
+        Cmd::RunnerDocs {
+            harness2_home,
+            image,
+            runtime,
+        } => runner_docs::check(&root, &harness2_home, &image, &runtime),
     }
 }
 

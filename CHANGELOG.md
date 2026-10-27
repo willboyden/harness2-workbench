@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `cargo xtask runner-docs --harness2-home <home>`: reads one .docx, .pptx and .xlsx document of
+  the LAB checkout, and a generated PDF (no LAB task has shipped a PDF yet), with LAB's
+  `read_doc.py` inside the runner image the way a container-isolated rollout does, and requires
+  each result to equal in-process parsing. [RELEASING.md](docs/RELEASING.md) runs it after a
+  harness2 bump.
+
+### Fixed
+
+- LAB under container isolation: LAB's document reader (`scripts/read_doc.py`) parses .docx,
+  .pdf, .pptx and .xlsx files with `podman run`, which a job inside a container cannot do, so every
+  such read failed (`FileNotFoundError: [Errno 2] No such file or directory: 'podman'`) until the
+  agent found `--in host` by itself. In one container-isolated experiment, 29 of 37 base rollouts
+  lost turns this way, against 22 of 108 rollouts of candidate and refined harnesses, which had
+  learned the workaround; LAB results from container isolation therefore understated the base
+  harness, so compare them with care. The runner image now ships a `podman` stand-in
+  (`deploy/docker/podman-standin.sh`) that serves exactly that call, running LAB's own parser on
+  the mounted file inside the job container (itself the sandbox LAB asks for: no capabilities, no
+  network but the egress proxy), and refuses every other call with podman's status 125.
+  **Rebuild the runner image.**
+
 ## [0.1.2] - 2026-10-27
 
 Running the benchmarks on two Workbenches, one with container isolation and one with host isolation
