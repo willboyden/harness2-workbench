@@ -803,7 +803,9 @@ WARN SECURITY: network h2w-jobs is NOT internal: container jobs can reach the in
 with the build command when not, `warn` when the runtime cannot be asked. Verified with the stand-in
 runtime: `runner image harness2-workbench-runner:0.1.0 is not present for docker (`image inspect` exit
 1); container jobs cannot start`, remedy `docker build -f deploy/docker/runner.Dockerfile -t
-harness2-workbench-runner:0.1.0 .`.
+harness2-workbench-runner:0.1.0 .`. Because jobs use the image's toolchain, the host checks for uv,
+Python 3.12, git, Node.js, npm, curl, Pandoc and Poppler are `skip` under container isolation, with
+the detail `container isolation: jobs use the runner image's <tool>, not this host's`.
 
 **Rootless and rootful runtimes** need different users. The experiment directory is bind-mounted
 and must be writable by the job:
@@ -980,8 +982,10 @@ connections.
 **The allowlist is one list for install and for evaluation.** harness2's setup needs hosts that its
 experiment guide says an evaluating executor should *not* reach, because public benchmark rubrics sit
 there: the Workbench's own catalogue records the setup hosts (`github.com`, `codeload.github.com`,
-`registry.npmjs.org`, `huggingface.co`, `cdn-lfs.huggingface.co`, `astral.sh`, `pypi.org`,
-`files.pythonhosted.org`) and the hosts upstream recommends blocking during evaluation
+`api.github.com`, `registry.npmjs.org`, `pkg.pr.new`, `huggingface.co`, `cdn-lfs.huggingface.co`,
+`astral.sh`, `pypi.org`, `files.pythonhosted.org`; `api.github.com` and `pkg.pr.new` are missing
+from upstream's list, and a LAB setup behind the proxy needed both for OpenCode's lockfile) and the
+hosts upstream recommends blocking during evaluation
 (`huggingface.co`, `hf.co`, `*.hf.co`, `github.com`, `raw.githubusercontent.com`). Allow what setup
 needs, run setup, then **remove the blocked hosts and restart the proxy** before evaluation runs
 (an experiment that reaches its own rubrics measures nothing). Record the restrictions you used

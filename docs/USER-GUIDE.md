@@ -16,8 +16,9 @@ underlines) and in its **Help** page.
 - **Mock API** (captions say *mock*): the pages that need judged scores, improver sessions or a
   running job (the report, the audit trail, a scored task, the wizard's later steps, a live job and
   the comparison) use `tools/h2w-mock-api`, a development server with **fictional data**. Its
-  numbers mean nothing; they show how a populated page looks. No model-backed sweep has been run
-  through the Workbench.
+  numbers mean nothing; they show how a populated page looks. The screenshots predate the one
+  model-backed sweep run so far (one LAB task, 2026-10-26; README "Status"), which this guide's
+  pages were not re-checked against.
 
 What the documentation author did and did not exercise is listed in [section 15](#15-what-was-verified).
 
