@@ -1,8 +1,9 @@
 //! The New-run wizard: experiment and benchmark → options → preview → estimate → confirm.
 
 use h2w_api::{
-    Bench, BenchmarkStatus, CostEstimate, DomainCount, Experiment, Job, JobResult, JobSpec,
-    JobStatus, ModelProfile, PreviewResult, Role, Split, SplitInfo, Substrate, WbSubset,
+    Bench, BenchmarkStatus, BenchmarkUnavailable, CostEstimate, DomainCount, Experiment, Job,
+    JobResult, JobSpec, JobStatus, ModelProfile, PreviewResult, Role, Split, SplitInfo, Substrate,
+    WbSubset,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -15,7 +16,8 @@ use crate::components::icons::{Icon, icon};
 use crate::components::ui::{
     Card, EmptyState, ErrorPanel, Notice, PageHeader, Skeleton, Stat, Term,
 };
-use crate::components::widgets::ProfileCheckFor;
+use crate::components::widgets::{ProfileCheckFor, UnavailableNotice};
+use crate::logic::benchmarks as bench_logic;
 use crate::logic::format;
 use crate::logic::jobs::{Tone, cell_label, modes_label};
 use crate::logic::urls::{api as paths, route};
@@ -142,10 +144,24 @@ impl Wiz {
         })
     }
 
+    /// Why the server will not run the chosen benchmark (subset), if it will not.
+    fn unavailable(self, f: &RunForm) -> Option<BenchmarkUnavailable> {
+        let sub = (f.bench == Bench::Wb).then_some(f.subset);
+        self.benchmarks.get().and_then(Result::ok).and_then(|list| {
+            bench_logic::entry(&list, f.bench, sub).and_then(|s| s.unavailable.clone())
+        })
+    }
+
     fn problems(self, step: Step) -> Vec<String> {
         let f = self.form.get();
         match step {
-            Step::Cell => describe(&f.cell_problems()),
+            Step::Cell => {
+                let mut p = describe(&f.cell_problems());
+                if let Some(u) = self.unavailable(&f) {
+                    p.push(bench_logic::problem(&u));
+                }
+                p
+            }
             Step::Options => f.options().err().map(|p| describe(&p)).unwrap_or_default(),
             Step::Preview => {
                 if self.preview_result().is_some() && self.preview_fresh() {
@@ -320,6 +336,9 @@ fn CellStep(wiz: Wiz) -> impl IntoView {
             ]
         />
         {move || {
+            if let Some(u) = wiz.unavailable(&wiz.form.get()) {
+                return Some(view! { <UnavailableNotice u=u tone=Tone::Warning /> }.into_any());
+            }
             let b = bench_of(&wiz.bench.get());
             let sub = (b == Bench::Wb).then(|| subset_of(&wiz.subset.get()));
             (bench_status(b, sub) == Some(false))
@@ -333,6 +352,7 @@ fn CellStep(wiz: Wiz) -> impl IntoView {
                             </p>
                         </Notice>
                     }
+                    .into_any()
                 })
         }}
         {move || {

@@ -2,6 +2,7 @@
 //! derivations. Nothing here touches the browser, so all of it is unit-tested natively with
 //! `cargo test -p h2w-web`; the components stay thin.
 
+pub(crate) mod benchmarks;
 pub(crate) mod diff;
 pub(crate) mod format;
 pub(crate) mod glossary;

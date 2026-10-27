@@ -15,6 +15,8 @@ use crate::components::form::{RadioCards, SelectField, TextField};
 use crate::components::icons::{Icon, icon};
 use crate::components::modal::Modal;
 use crate::components::ui::{Ago, Badge, Card, EmptyState, Notice, PageHeader, Term, loaded};
+use crate::components::widgets::UnavailableNotice;
+use crate::logic::benchmarks as bench_logic;
 use crate::logic::format;
 use crate::logic::jobs::Tone;
 use crate::logic::names;
@@ -257,29 +259,39 @@ fn BenchCard(b: BenchmarkStatus, on_setup: Callback<BenchmarkStatus>) -> impl In
         });
     };
     let wb = b.bench == Bench::Wb;
+    // A benchmark this server does not run shows why instead of its setup state, and offers
+    // no setup or check (the server would refuse both).
+    let runs_here = b.unavailable.is_none();
     let b2 = b.clone();
     view! {
         <Card class="bench-card" title=b.display_name.clone()>
             <div class="pill-row">
-                {if b.installed {
-                    view! { <Badge tone=Tone::Success text="installed" /> }.into_any()
-                } else {
-                    view! { <Badge tone=Tone::Warning text="not set up" /> }.into_any()
-                }}
-                {b.at_pinned_commit.map(|p| {
-                    if p {
-                        view! { <Badge tone=Tone::Neutral text="at pinned commit" /> }.into_any()
-                    } else {
-                        view! { <Badge tone=Tone::Warning text="not at the pinned commit" /> }.into_any()
+                {match &b.unavailable {
+                    Some(u) => view! { <Badge tone=Tone::Neutral text=bench_logic::badge(u) /> }.into_any(),
+                    None => view! {
+                        {if b.installed {
+                            view! { <Badge tone=Tone::Success text="installed" /> }.into_any()
+                        } else {
+                            view! { <Badge tone=Tone::Warning text="not set up" /> }.into_any()
+                        }}
+                        {b.at_pinned_commit.map(|p| {
+                            if p {
+                                view! { <Badge tone=Tone::Neutral text="at pinned commit" /> }.into_any()
+                            } else {
+                                view! { <Badge tone=Tone::Warning text="not at the pinned commit" /> }.into_any()
+                            }
+                        })}
+                        {if b.data_present {
+                            view! { <Badge tone=Tone::Neutral text="task data present" /> }.into_any()
+                        } else {
+                            view! { <Badge tone=Tone::Neutral text="no task data" /> }.into_any()
+                        }}
                     }
-                })}
-                {if b.data_present {
-                    view! { <Badge tone=Tone::Neutral text="task data present" /> }.into_any()
-                } else {
-                    view! { <Badge tone=Tone::Neutral text="no task data" /> }.into_any()
+                    .into_any(),
                 }}
             </div>
             <p>{b.description.clone()}</p>
+            {b.unavailable.clone().map(|u| view! { <UnavailableNotice u=u tone=Tone::Info /> })}
             {if wb {
                 view! {
                     <Notice tone=Tone::Warning title="Licence: territorial limitation">
@@ -329,7 +341,7 @@ fn BenchCard(b: BenchmarkStatus, on_setup: Callback<BenchmarkStatus>) -> impl In
             }}
             <div class="bench-actions">
                 {move || {
-                    s.can(Role::Operator)
+                    (runs_here && s.can(Role::Operator))
                         .then(|| {
                             view! {
                                 <button type="button" class="btn btn-secondary btn-sm" disabled=move || check_busy.get() on:click=check>
@@ -340,7 +352,7 @@ fn BenchCard(b: BenchmarkStatus, on_setup: Callback<BenchmarkStatus>) -> impl In
                 }}
                 {move || {
                     let b3 = b2.clone();
-                    s.can(Role::Admin)
+                    (runs_here && s.can(Role::Admin))
                         .then(|| {
                             view! {
                                 <button type="button" class="btn btn-primary btn-sm" on:click=move |_| on_setup.run(b3.clone())>
@@ -453,7 +465,7 @@ pub(crate) fn Benchmarks() -> impl IntoView {
             </Card>
             <SetupDialog open=setup_open target=setup_target />
             {move || match benches.get() {
-                Some(Ok(list)) => view! { <SplitDialog open=split_open benches=list /> }.into_any(),
+                Some(Ok(list)) => view! { <SplitDialog open=split_open benches=bench_logic::available(list) /> }.into_any(),
                 _ => ().into_any(),
             }}
         </div>
