@@ -19,12 +19,14 @@
 pub mod config;
 pub mod harness2;
 pub mod jobs;
+pub mod judge;
 pub mod results;
 pub mod system;
 
 pub use config::*;
 pub use harness2::*;
 pub use jobs::*;
+pub use judge::*;
 pub use results::*;
 pub use system::*;
 

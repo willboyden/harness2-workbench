@@ -14,7 +14,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use h2w_api::{AuthMode, Bench, Isolation};
+use h2w_api::{AuthMode, Bench, CloudJudgePolicy, Isolation};
 use h2w_core::bench::NotOffered;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
@@ -53,7 +53,24 @@ pub struct FileConfig {
     pub egress: EgressSection,
     pub telemetry: TelemetrySection,
     pub benchmarks: BenchmarksSection,
+    pub judge: JudgeSection,
 }
+
+/// `[judge]`: judges at cloud providers (`h2w_api::judge`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct JudgeSection {
+    /// How judge and pipeline jobs whose profile's judge is not local are treated:
+    /// `acknowledge` (they need `acknowledge_cloud_judge = true`, the caller's confirmation
+    /// that the data is generated or synthetic) or `refuse`.
+    pub cloud: CloudJudgePolicy,
+    /// Judge hosts on your own infrastructure that a public-looking name would otherwise
+    /// mark as cloud: a host name, or `.example.com` for a whole domain.
+    pub private_hosts: Vec<String>,
+}
+
+/// Longest `[judge] private_hosts` entry (a DNS name).
+pub const PRIVATE_HOST_MAX_CHARS: usize = 253;
 
 /// `[benchmarks]`: benchmarks this server does not offer.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -565,6 +582,8 @@ pub struct Config {
     pub otlp_traces_url: Option<String>,
     /// `[[benchmarks.not_offered]]` after validation.
     pub not_offered: Vec<NotOffered>,
+    /// `[judge] private_hosts` after validation: lower-case, without a trailing dot.
+    pub judge_private_hosts: Vec<String>,
 }
 
 /// Why a configuration could not be used.
@@ -1344,6 +1363,7 @@ fn validate(
     }
 
     let not_offered = not_offered_entries(&file.benchmarks.not_offered, problems);
+    let judge_private_hosts = private_host_entries(&file.judge.private_hosts, problems);
 
     let (listen, public_url, egress_listen, data_dir, experiments_dir, harness2_home) = (
         listen?,
@@ -1376,8 +1396,40 @@ fn validate(
         egress_allow,
         otlp_traces_url,
         not_offered,
+        judge_private_hosts,
         file,
     })
+}
+
+/// Validate `[judge] private_hosts`: host names, IP addresses, or `.domain` suffixes; no
+/// scheme, port, path or wildcard.
+fn private_host_entries(entries: &[String], problems: &mut Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for (i, raw) in entries.iter().enumerate() {
+        let h = raw.trim().trim_end_matches('.').to_ascii_lowercase();
+        let name = h.strip_prefix('.').unwrap_or(&h);
+        let ok = !name.is_empty()
+            && h.len() <= PRIVATE_HOST_MAX_CHARS
+            && (name.parse::<IpAddr>().is_ok()
+                || name.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                }));
+        if !ok {
+            problems.push(format!(
+                "judge.private_hosts[{i}]: {raw:?} must be a host name, an IP address or \
+                 .domain (at most {PRIVATE_HOST_MAX_CHARS} characters, no scheme, port or path)"
+            ));
+            continue;
+        }
+        if !out.contains(&h) {
+            out.push(h);
+        }
+    }
+    out
 }
 
 /// Validate `[[benchmarks.not_offered]]`: each benchmark at most once, a short note of plain
@@ -1602,6 +1654,37 @@ url = "https://wb-workbench.example.com"
         assert!(e.contains("benchmarks.not_offered[3].url"), "{e}");
         assert!(cfg_from("[[benchmarks.not_offered]]\nbench = \"xx\"\n").is_err());
         assert!(cfg_from("[[benchmarks.not_offered]]\nbench = \"wb\"\nextra = 1\n").is_err());
+    }
+
+    #[test]
+    fn judge_section() {
+        let c = cfg_from("").unwrap();
+        assert_eq!(c.file.judge.cloud, CloudJudgePolicy::Acknowledge);
+        assert!(c.judge_private_hosts.is_empty());
+
+        let c = cfg_from(
+            "[judge]\ncloud = \"refuse\"\n\
+             private_hosts = [\"LLM.corp.example.com.\", \".corp.example.org\", \"10.0.0.9\", \
+             \"llm.corp.example.com\"]\n",
+        )
+        .unwrap();
+        assert_eq!(c.file.judge.cloud, CloudJudgePolicy::Refuse);
+        assert_eq!(
+            c.judge_private_hosts,
+            ["llm.corp.example.com", ".corp.example.org", "10.0.0.9"]
+        );
+
+        let e = cfg_from(
+            "[judge]\nprivate_hosts = [\"https://x.example.com\", \"x.example.com:443\", \
+             \"*.example.com\", \"\", \"a..b\", \"-x.example.com\"]\n",
+        )
+        .unwrap_err()
+        .to_string();
+        for i in 0..6 {
+            assert!(e.contains(&format!("judge.private_hosts[{i}]")), "{i}: {e}");
+        }
+        assert!(cfg_from("[judge]\ncloud = \"allow\"\n").is_err());
+        assert!(cfg_from("[judge]\nextra = 1\n").is_err());
     }
 
     #[test]

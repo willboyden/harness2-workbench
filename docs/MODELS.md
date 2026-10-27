@@ -159,8 +159,12 @@ written to the server log and recorded in the **audit record** of the save (`pro
 are *not* part of the `PUT` response. To read them on demand, ask the server:
 `GET /api/v1/profiles/{name}/check` (viewer role; MCP tool `check_profile`; the web UI shows the same
 after a profile is saved and in the run wizard) returns `{"warnings": [...], "missing_secrets":
-[...]}`, where `missing_secrets` names the referenced secrets that have no value yet (a job with
-such a profile is refused with `422` until they are set). Run it after every profile change.
+[...], "judge_site": {...}}`, where `missing_secrets` names the referenced secrets that have no value
+yet (a job with such a profile is refused with `422` until they are set) and `judge_site` says where
+the judge runs. For a judge that is not local, the check's warnings begin with the cloud-judge
+warning (`This profile's judge is a cloud service (Anthropic: api.anthropic.com). ... Use a cloud
+judge only with generated or synthetic data, never with private, confidential or customer data.`);
+the server logs and audits it with the others. Run it after every profile change.
 Some warnings are capability notes rather than faults: an `openai_compatible` profile always lists
 the WorkBuddy and Codex lines below, because those need Vertex AI settings or a Responses-API
 endpoint that the profile does not have. Exact texts:
@@ -174,6 +178,11 @@ endpoint that the profile does not have. Exact texts:
   HARNESS2_JUDGE_BASE_URL or GOOGLE_CLOUD_PROJECT).`
 - `JobBench needs a judge endpoint with an API key for a non-Gemini judge
   (HARNESS2_JUDGE_BASE_URL and HARNESS2_JUDGE_API_KEY).`
+- `harness2 judges LAB's "X" on Vertex AI (it adds vertex/ to claude and gemini ids), so this
+  profile cannot judge LAB without Vertex AI settings; JobBench judging uses the judge endpoint.`
+- `JobBench's judge sends temperature 0, which Claude models from 4.7 on refuse, so JobBench
+  judging with "X" fails; use claude-sonnet-4-6, claude-opus-4-6 or claude-haiku-4-5 to judge
+  JobBench.`
 - `WorkBuddy-Bench cannot use this profile: its setup requires a google-vertex/gemini executor,
   a gemini judge and Vertex AI settings.`
 - `The Codex executor (substrate cx) needs a Responses-API endpoint: set the profile's Codex

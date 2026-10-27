@@ -157,7 +157,14 @@ pub(crate) const TERMS: &[Term] = &[
         term: "Judge",
         short: "A separate model that scores the selected run's deliverable against the task's rubric, after selection.",
         long: "Judging happens after the sweep, on the run the selector adopted (or, with --bases, on the reference runs). It never influences selection. Each graded task gets a partial-credit score (criteria passed) and an all-pass flag.",
-        see_also: &["partial-credit", "all-pass", "ungraded"],
+        see_also: &["partial-credit", "all-pass", "ungraded", "cloud-judge"],
+    },
+    Term {
+        id: "cloud-judge",
+        term: "Cloud judge",
+        short: "A judge model at a cloud provider (Anthropic, OpenAI, Google and others). It sees every task and output it grades, so use one only with generated or synthetic data.",
+        long: "The Workbench places a profile's judge by its hosts: loopback, private addresses, single-label names (containers, services) and local-only domains are your own infrastructure; anything else, or an endpoint set through a secret, counts as cloud. An administrator can declare internal gateways private ([judge] private_hosts) or refuse cloud judges altogether ([judge] cloud = \"refuse\"). Judging and pipelines with a cloud judge ask you to confirm that the experiment's data is generated or synthetic.",
+        see_also: &["judge", "profile"],
     },
     Term {
         id: "partial-credit",

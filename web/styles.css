@@ -911,7 +911,21 @@ svg {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
+  align-items: flex-start;
   gap: var(--s2);
+}
+
+/* A confirmation that comes with the actions (the cloud-judge warning) takes its own row above
+   them, left-aligned like any notice. */
+.empty-actions > [data-testid="cloud-judge-confirm"],
+.empty-actions > [data-testid="cloud-judge-refused"] {
+  flex-basis: 100%;
+  text-align: left;
+}
+.empty-actions > [data-testid="cloud-judge-confirm"] > *,
+.empty-actions > [data-testid="cloud-judge-refused"] > * {
+  max-width: 44rem;
+  margin-inline: auto;
 }
 
 .skeleton {

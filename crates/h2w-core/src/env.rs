@@ -252,6 +252,21 @@ fn lab_judge_supported(model: &str) -> bool {
     LAB_JUDGE_PREFIXES.iter().any(|p| model.starts_with(p))
 }
 
+/// A Claude model's version from its id: `claude-sonnet-4-6` is (4, 6), `claude-opus-5` is
+/// (5, 0), `claude-3-7-sonnet-20250219` is (3, 7); a `vertex/` prefix is ignored.
+fn claude_version(model: &str) -> Option<(u32, u32)> {
+    let rest = model
+        .strip_prefix("vertex/")
+        .unwrap_or(model)
+        .strip_prefix("claude-")?;
+    let tokens: Vec<&str> = rest.split('-').collect();
+    let small = |t: &str| (t.len() <= 2).then(|| t.parse::<u32>().ok()).flatten();
+    let at = tokens.iter().position(|t| small(t).is_some())?;
+    let major = small(tokens[at])?;
+    let minor = tokens.get(at + 1).and_then(|t| small(t)).unwrap_or(0);
+    Some((major, minor))
+}
+
 /// Non-fatal warnings about what a profile cannot do, for the server to show when a
 /// profile is saved and before a run. A profile with warnings is still valid
 /// ([`validate_profile`] does not fail on any of them).
@@ -316,6 +331,20 @@ pub fn profile_warnings(profile: &ModelProfile) -> Vec<String> {
                      (HARNESS2_JUDGE_BASE_URL and HARNESS2_JUDGE_API_KEY)."
                         .to_owned(),
                 );
+            }
+            if (j.starts_with("claude") || j.starts_with("gemini")) && !project {
+                w.push(format!(
+                    "harness2 judges LAB's {j:?} on Vertex AI (it adds vertex/ to claude and \
+                     gemini ids), so this profile cannot judge LAB without Vertex AI settings; \
+                     JobBench judging uses the judge endpoint."
+                ));
+            }
+            if claude_version(j).is_some_and(|v| v >= (4, 7)) && has("HARNESS2_JUDGE_BASE_URL") {
+                w.push(format!(
+                    "JobBench's judge sends temperature 0, which Claude models from 4.7 on \
+                     refuse, so JobBench judging with {j:?} fails; use claude-sonnet-4-6, \
+                     claude-opus-4-6 or claude-haiku-4-5 to judge JobBench."
+                ));
             }
         }
     }
@@ -953,6 +982,7 @@ mod tests {
             prices: None,
             egress_hosts: Vec::new(),
             secrets: Vec::new(),
+            judge_site: None,
         }
     }
 
@@ -1199,5 +1229,60 @@ mod tests {
         let w = profile_warnings(&c);
         assert!(w.iter().any(|x| x.starts_with("No executor model")));
         assert!(w.iter().any(|x| x.starts_with("No judge model")));
+    }
+
+    #[test]
+    fn claude_judges_get_the_lab_route_and_temperature_warnings() {
+        let mut p = base(ProfileKind::OpenaiCompatible);
+        p.endpoint = Some(Endpoint {
+            base_url: "http://127.0.0.1:4000/v1".into(),
+            api_key_secret: None,
+        });
+        p.judge_endpoint = Some(Endpoint {
+            base_url: "https://api.anthropic.com/v1/".into(),
+            api_key_secret: Some("ANTHROPIC_API_KEY".into()),
+        });
+        let warns =
+            |p: &ModelProfile, needle: &str| profile_warnings(p).iter().any(|x| x.contains(needle));
+        p.judge_model = Some("claude-sonnet-4-6".into());
+        assert!(warns(
+            &p,
+            "harness2 judges LAB's \"claude-sonnet-4-6\" on Vertex AI"
+        ));
+        assert!(!warns(&p, "temperature 0"));
+        assert!(!warns(&p, "non-Gemini judge"));
+        p.judge_model = Some("claude-opus-5-5".into());
+        assert!(warns(&p, "JobBench judging with \"claude-opus-5-5\" fails"));
+        // Vertex settings: LAB can judge there; JobBench still uses the endpoint.
+        p.vertex = Some(VertexSettings {
+            project: "proj".into(),
+            location: "global".into(),
+            credentials_secret: None,
+        });
+        assert!(!warns(&p, "on Vertex AI"));
+        assert!(warns(&p, "temperature 0"));
+        // Without an endpoint there is no JobBench call to warn about.
+        p.judge_endpoint = None;
+        p.kind = ProfileKind::Vertex;
+        p.endpoint = None;
+        assert!(!warns(&p, "temperature 0"));
+    }
+
+    #[test]
+    fn claude_versions_parse_both_naming_styles() {
+        for (id, v) in [
+            ("claude-sonnet-4-6", Some((4, 6))),
+            ("claude-opus-4-7", Some((4, 7))),
+            ("claude-opus-5", Some((5, 0))),
+            ("claude-opus-5-5", Some((5, 5))),
+            ("claude-fable-5-1", Some((5, 1))),
+            ("claude-haiku-4-5-20251001", Some((4, 5))),
+            ("claude-3-7-sonnet-20250219", Some((3, 7))),
+            ("vertex/claude-opus-4-8", Some((4, 8))),
+            ("claude-instant", None),
+            ("gpt-5", None),
+        ] {
+            assert_eq!(claude_version(id), v, "{id}");
+        }
     }
 }

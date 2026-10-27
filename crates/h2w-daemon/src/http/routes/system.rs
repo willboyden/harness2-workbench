@@ -79,6 +79,8 @@ pub async fn info(
             .is_admin()
             .then(|| state.cfg.paths.data_dir.display().to_string()),
         features: features(&state),
+        cloud_judges: state.cfg.file.judge.cloud,
+        private_judge_hosts: state.cfg.judge_private_hosts.clone(),
     }))
 }
 

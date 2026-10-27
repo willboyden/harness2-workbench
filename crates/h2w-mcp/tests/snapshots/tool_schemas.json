@@ -127,7 +127,7 @@
       "readOnlyHint": true,
       "title": "Check a model profile"
     },
-    "description": "Check a model profile before starting work with it: returns warnings (what the profile cannot do, e.g. no judge model, a judge LAB does not recognise, WorkBuddy without Vertex Gemini models) and missing_secrets (referenced secrets with no value; jobs with the profile are refused until an admin sets them in the web UI). Read-only; never returns secret values.",
+    "description": "Check a model profile before starting work with it: returns warnings (what the profile cannot do, e.g. no judge model, a judge LAB does not recognise, WorkBuddy without Vertex Gemini models), missing_secrets (referenced secrets with no value; jobs with the profile are refused until an admin sets them in the web UI) and judge_site: where the judge runs (local, cloud with its provider and hosts, or unknown). A cloud judge sees every task and output it grades: use one only with generated or synthetic data. Read-only; never returns secret values.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1750,7 +1750,7 @@
       "readOnlyHint": true,
       "title": "Server info and identity"
     },
-    "description": "Check the connection to the Harness² Workbench server and who you are. Returns this MCP server's version and policy (whether it accepts acknowledge_risks, waits allowed per token), the server URL, your principal (name and role: viewer < operator < admin) and the server's system info: Workbench version, whether harness2 is installed (commit vs the tested commit), the isolation new jobs use (host or container), auth mode, running/maximum jobs and features. Call it first. Roles: viewer may use the read-only tools; operator also creates experiments and starts or cancels jobs; admin also runs install_harness2, setup_benchmark and start_bridge. Agents should hold a viewer token, or operator when they must start jobs, never admin.",
+    "description": "Check the connection to the Harness² Workbench server and who you are. Returns this MCP server's version and policy (whether it accepts acknowledge_risks and acknowledge_cloud_judge, waits allowed per token), the server URL, your principal (name and role: viewer < operator < admin) and the server's system info: Workbench version, whether harness2 is installed (commit vs the tested commit), the isolation new jobs use (host or container), auth mode, running/maximum jobs and features. Call it first. Roles: viewer may use the read-only tools; operator also creates experiments and starts or cancels jobs; admin also runs install_harness2, setup_benchmark and start_bridge. Agents should hold a viewer token, or operator when they must start jobs, never admin.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {},
@@ -1912,10 +1912,15 @@
       "readOnlyHint": false,
       "title": "Judge a sweep (costs money)"
     },
-    "description": "Score a finished sweep (harness2-judge): the judge model grades the selected run of every task and mode against the benchmark's criteria into judged.json, or with bases=true the reference executions on the unmodified harness into base_judged.json. Calls the judge model: COSTS MONEY with cloud models. Use exactly the run's identity — same experiment, cell (bench, subset, substrate), k, seed and modes — and the experiment's profile, or nothing matches. Operator role. Ungraded rows (judge failures, no pick) are counted separately and are NOT zeros. Returns the queued job; follow with wait_for_job, then get_report.",
+    "description": "Score a finished sweep (harness2-judge): the judge model grades the selected run of every task and mode against the benchmark's criteria into judged.json, or with bases=true the reference executions on the unmodified harness into base_judged.json. Calls the judge model: COSTS MONEY with cloud models. Use exactly the run's identity — same experiment, cell (bench, subset, substrate), k, seed and modes — and the experiment's profile, or nothing matches. A cloud judge (check_profile: judge_site not local) receives every graded task and output, so the server needs acknowledge_cloud_judge=true: the user's confirmation that the data is generated or synthetic, which this MCP server passes on only with --allow-cloud-judge-acknowledgement. Operator role. Ungraded rows (judge failures, no pick) are counted separately and are NOT zeros. Returns the queued job; follow with wait_for_job, then get_report.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "acknowledge_cloud_judge": {
+          "default": false,
+          "description": "Confirms that this experiment's tasks and outputs are generated or synthetic data. Needed when the profile's judge is a cloud service (check_profile: judge_site kind cloud or unknown), because judging sends them there. Only the user can confirm this: this MCP server accepts true only when started with --allow-cloud-judge-acknowledgement; otherwise a human starts the judging in the web UI.",
+          "type": "boolean"
+        },
         "bases": {
           "default": false,
           "description": "Score the reference (base) executions into `base_judged.json` instead.",
@@ -2052,10 +2057,15 @@
       "readOnlyHint": false,
       "title": "Start check-run-judge-report pipeline (costs money)"
     },
-    "description": "Start the whole workflow as one job: preview, check, run, judge (and judge the base executions when judge_bases=true), report; it stops at the first step that neither succeeds nor ends partial. Same inputs, COST WARNING and acknowledge_risks rule as start_run (executor, improver and judge models are called): get the user's go-ahead after preview_run and estimate_cost, set budget_usd, and set judge_bases=true so the report can compare against the unmodified harness. Operator role. Returns the queued job; follow with wait_for_job (pipelines run for a long time), then get_report for the sweep (the run step's result.namespace is the sweep id).",
+    "description": "Start the whole workflow as one job: preview, check, run, judge (and judge the base executions when judge_bases=true), report; it stops at the first step that neither succeeds nor ends partial. Same inputs, COST WARNING and acknowledge_risks rule as start_run (executor, improver and judge models are called), and the acknowledge_cloud_judge rule as start_judge: get the user's go-ahead after preview_run and estimate_cost, set budget_usd, and set judge_bases=true so the report can compare against the unmodified harness. Operator role. Returns the queued job; follow with wait_for_job (pipelines run for a long time), then get_report for the sweep (the run step's result.namespace is the sweep id).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "acknowledge_cloud_judge": {
+          "default": false,
+          "description": "Confirms that this experiment's tasks and outputs are generated or synthetic data. Needed when the profile's judge is a cloud service (check_profile: judge_site kind cloud or unknown), because judging sends them there. Only the user can confirm this: this MCP server accepts true only when started with --allow-cloud-judge-acknowledgement; otherwise a human starts the judging in the web UI.",
+          "type": "boolean"
+        },
         "acknowledge_risks": {
           "default": false,
           "description": "Needed when the server runs jobs without container isolation (server_info shows isolation host): the executor then has the server user's files and network. This MCP server accepts true only when started with --allow-risk-acknowledgement; otherwise a human starts the run in the web UI, or the Workbench server pre-acknowledges host risks.",

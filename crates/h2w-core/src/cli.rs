@@ -521,6 +521,7 @@ mod tests {
             modes: vec![Mode::Parallel, Mode::Sequential],
             bases: true,
             profile: "p".into(),
+            acknowledge_cloud_judge: false,
         };
         assert_eq!(
             judge(&j).unwrap().args,

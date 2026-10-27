@@ -55,6 +55,15 @@ pub struct SystemInfo {
     pub data_dir: Option<String>,
     /// Feature flags compiled in or enabled (`otel`, `container`, `proxy_auth`, ...).
     pub features: Vec<String>,
+    /// `[judge] cloud`: how judge and pipeline jobs with a cloud judge are treated. Additive
+    /// after contract v1.9.
+    #[serde(default)]
+    pub cloud_judges: crate::CloudJudgePolicy,
+    /// `[judge] private_hosts`: judge hosts the administrator declared to be on their own
+    /// infrastructure (`.example.com` covers a domain), so the web UI classifies judges as
+    /// the server does. Additive after contract v1.9.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub private_judge_hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

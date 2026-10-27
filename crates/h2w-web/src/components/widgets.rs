@@ -7,12 +7,14 @@ use h2w_api::{
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
+use super::form::Checkbox;
 use super::icons::{Icon, icon};
 use super::ui::{Ago, Badge, Notice, ProgressBar, StatusBadge, Term};
 use crate::actions;
 use crate::api;
 use crate::logic::format;
 use crate::logic::jobs::{self, Tone};
+use crate::logic::judge::JudgeGate;
 use crate::logic::urls::{api as paths, route};
 use crate::state::{session, toasts};
 
@@ -344,10 +346,30 @@ pub(crate) fn ProfileCheckNotes(check: ProfileCheck) -> impl IntoView {
     let ProfileCheck {
         warnings,
         missing_secrets,
+        judge_site,
     } = check;
-    let clean = warnings.is_empty() && missing_secrets.is_empty();
+    // The server lists the cloud-judge warning first; it gets its own, louder notice.
+    let cloud = judge_site
+        .filter(h2w_api::JudgeSite::needs_acknowledgement)
+        .map(|s| h2w_api::cloud_judge_warning(&s));
+    let warnings: Vec<String> = warnings
+        .into_iter()
+        .filter(|w| Some(w) != cloud.as_ref())
+        .collect();
+    let clean = warnings.is_empty() && missing_secrets.is_empty() && cloud.is_none();
     view! {
         <div class="stack profile-check" data-testid="profile-check">
+            {cloud
+                .map(|text| {
+                    view! {
+                        <div data-testid="profile-check-cloud-judge">
+                            <Notice tone=Tone::Warning title="Cloud judge: generated or synthetic data only">
+                                <p>{text}</p>
+                                <p class="small">"Judging with this profile asks you to confirm that the experiment's data is generated or synthetic."</p>
+                            </Notice>
+                        </div>
+                    }
+                })}
             {(!missing_secrets.is_empty())
                 .then(|| {
                     view! {
@@ -388,6 +410,50 @@ pub(crate) fn ProfileCheckNotes(check: ProfileCheck) -> impl IntoView {
                     }
                 })}
         </div>
+    }
+}
+
+/// The cloud-judge warning with its synthetic-data checkbox, or the server's refusal, for the
+/// places that start judging; nothing for a local judge or none.
+#[component]
+pub(crate) fn CloudJudgeConfirm(
+    #[prop(into)] site: Signal<Option<h2w_api::JudgeSite>>,
+    confirmed: RwSignal<bool>,
+    #[prop(into)] id: String,
+) -> impl IntoView {
+    let s = session();
+    move || {
+        let id = id.clone();
+        let site = site.get();
+        match (JudgeGate::of(site.as_ref(), s.cloud_judges()), site) {
+            (JudgeGate::Confirm, Some(site)) => view! {
+                <div data-testid="cloud-judge-confirm">
+                    <Notice tone=Tone::Warning title="Cloud judge: generated or synthetic data only">
+                        <p>{h2w_api::cloud_judge_warning(&site)}</p>
+                        <Checkbox
+                            id=id
+                            label="This experiment's tasks and outputs are generated or synthetic data"
+                            checked=confirmed
+                        />
+                    </Notice>
+                </div>
+            }
+            .into_any(),
+            (JudgeGate::Refused, Some(site)) => view! {
+                <div data-testid="cloud-judge-refused">
+                    <Notice tone=Tone::Danger title="This server refuses cloud judges">
+                        <p>
+                            {format!(
+                                "This profile's judge is a cloud service ({}), and an administrator set [judge] cloud = \"refuse\". Judge with a profile whose judge runs on your own infrastructure.",
+                                site.describe()
+                            )}
+                        </p>
+                    </Notice>
+                </div>
+            }
+            .into_any(),
+            _ => ().into_any(),
+        }
     }
 }
 

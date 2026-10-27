@@ -554,6 +554,35 @@ isolation** by itself and refuses its jobs ([section 8](#8-container-isolation-s
 entry replaces that with your note and link. Two Workbenches that split the benchmarks between them
 can each list the other's, so every card says where its benchmark runs.
 
+### `[judge]`: judges at cloud providers
+
+Judging sends each task's instructions, its reference files and the agent's deliverables to the
+profile's judge model. The server works out where a profile's judge runs from its host names
+(`judge_site` on every profile): loopback, private and CGNAT addresses, single-label names
+(containers and services, such as `litellm`) and local-only domains (`.local`, `.internal`, `.lan`,
+`.home.arpa`, `localhost`) are **local**; any other host is **cloud**; an endpoint set through a
+secret, or not at all, is **unknown** and treated as cloud. Judge and pipeline jobs whose profile
+has a cloud judge need `acknowledge_cloud_judge: true`: the person starting them confirms that the
+experiment's tasks and outputs are generated or synthetic data (the web UI asks with a checkbox; the
+MCP server passes it on only with `--allow-cloud-judge-acknowledgement`). Run jobs never call the
+judge and are not affected.
+
+| Key | Type | Default | Validation | Effect |
+|---|---|---|---|---|
+| `judge.cloud` | string | `"acknowledge"` | `acknowledge` or `refuse` | `acknowledge`: judge and pipeline jobs with a cloud judge are refused with `422` (`params.acknowledge_cloud_judge`) until the caller confirms the data is synthetic. `refuse`: they are refused with `409` whatever the caller says |
+| `judge.private_hosts` | list of strings | `[]` | host names, IP addresses or `.domain` suffixes; no scheme, port, path or wildcard; at most 253 characters | Judge hosts on your own infrastructure that a public-looking name would otherwise mark as cloud, such as an internal gateway at `llm.corp.example.com`. `.corp.example.com` covers the domain and its subdomains |
+
+```toml
+[judge]
+cloud = "acknowledge"
+private_hosts = [".corp.example.com"]
+```
+
+The classification looks at host names only: a gateway on your network that forwards to a cloud
+provider counts as local, so mark such a gateway's cloud-backed models yourself. A cloud judge under
+container isolation also needs its host in `[egress] allow` ([section 9](#9-the-egress-allowlist)),
+for example `api.anthropic.com`.
+
 Two annotated examples ship with the code: `deploy/examples/h2workbench.toml` (every key, with
 comments) and `deploy/examples/h2workbench.compose.toml` (the compose deployment). `init` writes every
 key with its default.

@@ -16,10 +16,11 @@ use crate::components::icons::{Icon, icon};
 use crate::components::ui::{
     Card, EmptyState, ErrorPanel, Notice, PageHeader, Skeleton, Stat, Term,
 };
-use crate::components::widgets::{ProfileCheckFor, UnavailableNotice};
+use crate::components::widgets::{CloudJudgeConfirm, ProfileCheckFor, UnavailableNotice};
 use crate::logic::benchmarks as bench_logic;
 use crate::logic::format;
 use crate::logic::jobs::{Tone, cell_label, modes_label};
+use crate::logic::judge::JudgeGate;
 use crate::logic::urls::{api as paths, route};
 use crate::logic::wizard::{
     HostRisk, Preset, RunForm, Step, describe, expected_tasks, quick_counts,
@@ -82,6 +83,8 @@ struct Wiz {
     run_kind: RwSignal<String>,
     judge_bases: RwSignal<bool>,
     acknowledge: RwSignal<bool>,
+    /// The synthetic-data confirmation a pipeline with a cloud judge asks for.
+    cloud_judge: RwSignal<bool>,
     experiments: LocalResource<Result<Vec<Experiment>, ApiError>>,
     profiles: LocalResource<Result<Vec<ModelProfile>, ApiError>>,
     benchmarks: LocalResource<Result<Vec<BenchmarkStatus>, ApiError>>,
@@ -97,6 +100,16 @@ struct Wiz {
 }
 
 impl Wiz {
+    /// Where the chosen profile's judge runs, as the server placed it.
+    fn judge_site(self) -> Option<h2w_api::JudgeSite> {
+        let name = self.profile.get();
+        self.profiles
+            .get()
+            .and_then(Result::ok)
+            .and_then(|list| list.into_iter().find(|p| p.name == name))
+            .and_then(|p| p.judge_site)
+    }
+
     fn pinned(self) -> Option<String> {
         let name = self.experiment.get();
         self.experiments
@@ -720,9 +733,19 @@ fn ConfirmStep(wiz: Wiz) -> impl IntoView {
     let submit_error = RwSignal::new(None::<String>);
     let budget_error = Signal::derive(move || wiz.form.with(RunForm::budget_value).err());
     let risk = move || s.host_risk();
+    let site = Signal::derive(move || wiz.judge_site());
+    // Only the pipeline judges; a bare sweep never asks.
+    let gate = move || {
+        if wiz.run_kind.get() == "pipeline" {
+            JudgeGate::of(site.get().as_ref(), s.cloud_judges())
+        } else {
+            JudgeGate::Open
+        }
+    };
     let start = move |_| {
         submit_error.set(None);
-        match wiz.form.get_untracked().submit_spec(s.host_risk()) {
+        let gate = untrack(gate);
+        match wiz.form.get_untracked().submit_spec(s.host_risk(), gate) {
             Ok(spec) => actions::start_job(spec, t, Some(busy), navigate.clone()),
             Err(p) => submit_error.set(Some(describe(&p).join(" "))),
         }
@@ -798,12 +821,21 @@ fn ConfirmStep(wiz: Wiz) -> impl IntoView {
             .into_any(),
             HostRisk::Contained => ().into_any(),
         }}
+        {move || {
+            (wiz.run_kind.get() == "pipeline")
+                .then(|| view! { <CloudJudgeConfirm site=site confirmed=wiz.cloud_judge id="run-cloud-judge" /> })
+        }}
         {move || submit_error.get().map(|e| view! { <Notice tone=Tone::Danger><p>{e}</p></Notice> })}
         <button
             type="button"
             class="btn btn-primary"
             data-testid="run-start"
-            disabled=move || busy.get() || !s.can(Role::Operator) || (risk() == HostRisk::AskUser && !wiz.acknowledge.get())
+            disabled=move || {
+                busy.get()
+                    || !s.can(Role::Operator)
+                    || (risk() == HostRisk::AskUser && !wiz.acknowledge.get())
+                    || !gate().allows(wiz.cloud_judge.get())
+            }
             on:click=start
         >
             {icon(Icon::Play)}
@@ -845,6 +877,7 @@ pub(crate) fn NewRun() -> impl IntoView {
     let run_kind = RwSignal::new("pipeline".to_owned());
     let judge_bases = RwSignal::new(true);
     let acknowledge = RwSignal::new(false);
+    let cloud_judge = RwSignal::new(false);
     let form = Memo::new(move |_| RunForm {
         experiment: experiment.get(),
         profile: profile.get(),
@@ -868,6 +901,7 @@ pub(crate) fn NewRun() -> impl IntoView {
         pipeline: run_kind.get() == "pipeline",
         judge_bases: judge_bases.get(),
         acknowledge_risks: acknowledge.get(),
+        acknowledge_cloud_judge: cloud_judge.get(),
     });
     let wiz = Wiz {
         step: RwSignal::new(Step::Cell),
@@ -890,6 +924,7 @@ pub(crate) fn NewRun() -> impl IntoView {
         run_kind,
         judge_bases,
         acknowledge,
+        cloud_judge,
         experiments,
         profiles,
         benchmarks,

@@ -63,6 +63,7 @@ The MCP client starts the program. Configuration is by environment:
 | Workbench server | `H2W_SERVER_URL` / `--server-url` | `http://127.0.0.1:8722` |
 | Token | `H2W_TOKEN`, or `H2W_TOKEN_FILE` / `--token-file` (mode 0600) | none: required |
 | Let a model accept host-isolation risks | `--allow-risk-acknowledgement`, or `H2W_MCP_ALLOW_RISK_ACK=1` (both transports) | off |
+| Let a model confirm that an experiment's data is synthetic, for a cloud judge | `--allow-cloud-judge-acknowledgement`, or `H2W_MCP_ALLOW_CLOUD_JUDGE_ACK=1` (both transports) | off |
 
 ```console
 $ H2W_SERVER_URL=http://127.0.0.1:8722 H2W_TOKEN_FILE=mcp.token h2workbench-mcp
@@ -358,8 +359,18 @@ network (`setup_benchmark`, `install_harness2`, `start_run`, `start_pipeline`, `
    the server's own check, `conflict: demo is a demo experiment; benchmark jobs need a standard
    experiment`, so no job was started). The alternatives to the flag are a person starting the
    run in the web UI, or an administrator setting `isolation.preacknowledge_host_risks` (which
-   removes the requirement for everyone). `budget_usd` is likewise a parameter the model
-   chooses. So: a viewer token by default, an operator token only when the agent must start jobs,
+   removes the requirement for everyone).
+
+   **A cloud judge sees every task and output it grades.** The Workbench refuses `judge` and
+   `pipeline` jobs whose profile has a cloud judge (`check_profile` shows `judge_site`) unless
+   `acknowledge_cloud_judge` is `true`: the user's confirmation that the experiment's tasks and
+   outputs are generated or synthetic data. Only the user knows that, so `h2workbench-mcp` refuses a
+   `start_judge` or `start_pipeline` call that sets `acknowledge_cloud_judge=true` unless whoever
+   starts it passes `--allow-cloud-judge-acknowledgement` (or `H2W_MCP_ALLOW_CLOUD_JUDGE_ACK=1`; it
+   logs a warning when it is on). `server_info` reports both switches under `policy`. Without the
+   flag, the user starts such judging in the web UI, which asks them. This was tested with the MCP
+   test suite against a mock Workbench, not against a live server. `budget_usd` is likewise a
+   parameter the model chooses. So: a viewer token by default, an operator token only when the agent must start jobs,
    **never an admin token**, short token lifetimes, a separate token per agent, container isolation
    for anything untrusted, and a budget on the model account itself. See
    [THREAT-MODEL.md](THREAT-MODEL.md).

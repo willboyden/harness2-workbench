@@ -169,10 +169,10 @@ enforces the role written here.
 
 | Method | Path | Minimum role | Body | Success | What it does |
 |---|---|---|---|---|---|
-| GET | `/profiles` | viewer |  | 200 [ModelProfile] | Every model profile (with the state of the secrets each references). |
+| GET | `/profiles` | viewer |  | 200 [ModelProfile] | Every model profile (with the state of the secrets each references, and `judge_site`: where its judge runs). |
 | PUT | `/profiles/{name}` | admin | `ModelProfile` | 200 ModelProfile | Create or replace a profile. |
 | DELETE | `/profiles/{name}` | admin |  | 204 | Delete a profile (409 while an experiment is pinned to it). |
-| GET | `/profiles/{name}/check` | viewer |  | 200 ProfileCheck | What jobs with this profile would lack: its warnings and the referenced secrets that have no value (contract addendum v1.2). |
+| GET | `/profiles/{name}/check` | viewer |  | 200 ProfileCheck | What jobs with this profile would lack: its warnings, the referenced secrets that have no value (contract addendum v1.2) and `judge_site` (addendum v1.10). |
 
 ### Secrets (write-only)
 
@@ -258,7 +258,16 @@ Notes on single routes:
 - `GET /system/info` includes `isolation` (`host` or `container`), `container_runtime` (set when
   container isolation is configured and the runtime answers) and `host_risks_preacknowledged`
   (`true` when the administrator set `isolation.preacknowledge_host_risks`, so jobs need no
-  `acknowledge_risks`).
+  `acknowledge_risks`), `cloud_judges` (`acknowledge` or `refuse`, from `[judge] cloud`) and
+  `private_judge_hosts` (from `[judge] private_hosts`, omitted when empty).
+- Every profile carries `judge_site` (response only; ignored when sent, never stored), absent when
+  it has no judge model: `{"kind": "local"|"cloud"|"unknown", "provider": "Anthropic",
+  "hosts": ["api.anthropic.com"]}`. `cloud` means at least one host judging reaches is public;
+  `unknown` means the endpoint is set through a secret or not at all. For a judge that is not
+  local, the profile check's `warnings` start with the cloud-judge warning, and `judge` and
+  `pipeline` jobs need `acknowledge_cloud_judge: true`, the caller's confirmation that the
+  experiment's tasks and outputs are generated or synthetic data (see the validation order
+  below). The rules are in [ADMIN-GUIDE.md](ADMIN-GUIDE.md#judge-judges-at-cloud-providers).
 - `GET /metrics` accepts a viewer credential, or, when `telemetry.metrics_token_secret` names a
   secret, that secret's value as a bearer token. The metrics token unlocks `/metrics` and nothing
   else.
@@ -412,9 +421,9 @@ and returns `201` with the job in state `queued`.
 | `check` | `harness2-check`: offline readiness | operator | `cell`, `profile` (default: the profile named `default`, if any) |
 | `preview` | `harness2 --dry-run`: task stream, namespaces, estimate; no model calls | operator | `cell`, `options`, `profile` |
 | `run` | `harness2`: the refinement sweep (**costs money** with cloud models) | operator | `cell`, `options`, `profile`, `budget_usd`, `acknowledge_risks` |
-| `judge` | `harness2-judge` | operator | `cell`, `k`, `seed`, `modes`, `bases`, `profile` |
+| `judge` | `harness2-judge` | operator | `cell`, `k`, `seed`, `modes`, `bases`, `profile`, `acknowledge_cloud_judge` |
 | `report` | `harness2-report` | operator | `cell`, `ks`, `seed`, `modes` |
-| `pipeline` | preview, check, run, judge, optionally judge `bases`, report; stops at the first failing step | operator | like `run`, plus `judge_bases` |
+| `pipeline` | preview, check, run, judge, optionally judge `bases`, report; stops at the first failing step | operator | like `run`, plus `judge_bases` and `acknowledge_cloud_judge` |
 | `split` | a reproducible train/test partition | operator | `bench`, `subset`, `seed`, `train_fraction`, `name` |
 | `setup` | `harness2-setup`: clone and build a benchmark (network-heavy) | admin | `bench`, `subset`, `substrate`, `dry_run`, `profile` |
 | `install_harness2` | fetch harness2 at the tested commit (or the commit `rev` names) and install it | admin | `rev`, `extras`, `reinstall` |
@@ -436,7 +445,13 @@ container-isolation limits (`409`); host isolation needs `acknowledge_risks: tru
 `pipeline` unless the server pre-acknowledges (`422`); harness2 installed (`503`); the experiment
 exists (`422`; a `demo` creates its experiment), is the right kind (`409`), is not archived
 (`409`) and is pinned to the same profile (`409`); the profile exists and its secrets are set
-(`422` naming the secret); the split file exists and matches the cell; the queue has room (`503`).
+(`422` naming the secret); for `judge` and `pipeline`, a profile whose judge is not local is refused
+with `409` under `[judge] cloud = "refuse"` (`this server refuses cloud judges ([judge] cloud =
+"refuse") and profile <name>'s judge is not local (<provider>: <hosts>)`), and otherwise needs
+`acknowledge_cloud_judge: true` (`422` on `params.acknowledge_cloud_judge`, with the cloud-judge
+warning); the split file exists and matches the cell; the queue has room (`503`). A created job
+with the acknowledgement is audited with `acknowledge_cloud_judge: data is generated or
+synthetic`.
 
 **Scheduling.** First in, first out within `jobs.max_concurrent` (default 2); one job that
 writes (`demo`, `run`, `judge`, `pipeline`) per experiment at a time, later ones wait;

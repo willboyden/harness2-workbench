@@ -231,6 +231,17 @@ pub fn acknowledged(spec: &JobSpec) -> Option<bool> {
     }
 }
 
+/// `acknowledge_cloud_judge` of the jobs that judge (`judge`, `pipeline`); `None` for the
+/// others, which never call the judge.
+#[must_use]
+pub fn cloud_judge_acknowledged(spec: &JobSpec) -> Option<bool> {
+    match spec {
+        JobSpec::Judge(j) => Some(j.acknowledge_cloud_judge),
+        JobSpec::Pipeline(p) => Some(p.acknowledge_cloud_judge),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +311,7 @@ mod tests {
             modes: vec![],
             bases: false,
             profile: "p".into(),
+            acknowledge_cloud_judge: false,
         });
         assert_eq!(fields(&j), vec!["params.k", "params.modes"]);
         let r = JobSpec::Report(ReportParams {

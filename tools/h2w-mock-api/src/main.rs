@@ -60,6 +60,10 @@ struct Args {
     /// repeatable), with a sample note and link.
     #[arg(long, value_name = "BENCH", value_parser = parse_bench)]
     not_offered: Vec<h2w_api::Bench>,
+    /// Pretend `[judge] cloud = "refuse"`: judge and pipeline jobs with a cloud judge are
+    /// refused instead of needing `acknowledge_cloud_judge`.
+    #[arg(long)]
+    refuse_cloud_judges: bool,
 }
 
 fn parse_bench(s: &str) -> Result<h2w_api::Bench, String> {
@@ -82,6 +86,9 @@ async fn main() -> anyhow::Result<()> {
     }
     inner.host_risks_preacknowledged = args.preack;
     inner.not_offered.clone_from(&args.not_offered);
+    if args.refuse_cloud_judges {
+        inner.cloud_judges = h2w_api::CloudJudgePolicy::Refuse;
+    }
     let st = api::AppState {
         s: Arc::new(Mutex::new(inner)),
         dist: args.dist.clone(),

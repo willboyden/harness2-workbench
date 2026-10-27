@@ -271,6 +271,8 @@ async fn system_info(State(st): State<AppState>, headers: HeaderMap) -> R<Json<S
         jobs_max_concurrent: 2,
         data_dir: admin.then(|| "/srv/harness2-workbench".to_owned()),
         features: vec!["otel".to_owned(), "container".to_owned()],
+        cloud_judges: g.cloud_judges,
+        private_judge_hosts: Vec::new(),
     }))
 }
 
@@ -473,9 +475,17 @@ async fn check_profile(
         .into_iter()
         .filter(|n| !g.secrets.get(n).is_some_and(|s| s.set))
         .collect();
+    let judge_site = h2w_api::judge_site(p, &[]);
+    let mut warnings: Vec<String> = judge_site
+        .iter()
+        .filter(|s| s.needs_acknowledgement())
+        .map(h2w_api::cloud_judge_warning)
+        .collect();
+    warnings.extend(profile_warnings(p));
     Ok(Json(ProfileCheck {
-        warnings: profile_warnings(p),
+        warnings,
         missing_secrets,
+        judge_site,
     }))
 }
 
@@ -1685,6 +1695,39 @@ fn validate_spec(g: &Inner, spec: &JobSpec) -> R<()> {
                     format!("secret {} is not set", missing.name),
                 )]));
             }
+            // Like the server: a judge that is not local needs the synthetic-data
+            // confirmation on the jobs that judge, or is refused by policy.
+            let acknowledged = match spec {
+                JobSpec::Judge(j) => Some(j.acknowledge_cloud_judge),
+                JobSpec::Pipeline(j) => Some(j.acknowledge_cloud_judge),
+                _ => None,
+            };
+            if let Some(ack) = acknowledged
+                && let Some(site) = h2w_api::judge_site(p, &[])
+                && site.needs_acknowledgement()
+            {
+                if g.cloud_judges == h2w_api::CloudJudgePolicy::Refuse {
+                    return Err(fail(
+                        StatusCode::CONFLICT,
+                        ErrorCode::Conflict,
+                        &format!(
+                            "this server refuses cloud judges ([judge] cloud = \"refuse\") and \
+                             profile {prof}'s judge is not local ({})",
+                            site.describe()
+                        ),
+                    ));
+                }
+                if !ack {
+                    return Err(invalid(vec![(
+                        "params.acknowledge_cloud_judge".into(),
+                        format!(
+                            "{} Set acknowledge_cloud_judge to true to confirm that this \
+                             experiment's tasks and outputs are generated or synthetic data.",
+                            h2w_api::cloud_judge_warning(&site)
+                        ),
+                    )]));
+                }
+            }
         }
     }
     // Like the server: host isolation needs the acknowledgement unless pre-acknowledged.
@@ -2198,6 +2241,7 @@ mod tests {
             prices: None,
             egress_hosts: Vec::new(),
             secrets: Vec::new(),
+            judge_site: None,
         }
     }
 
@@ -2244,6 +2288,51 @@ mod tests {
         g.host_risks_preacknowledged = false;
         g.isolation = Isolation::Container;
         assert!(validate_spec(&g, &spec).is_ok());
+    }
+
+    #[test]
+    fn cloud_judges_need_the_acknowledgement_or_are_refused() {
+        let mut g = Inner::populated();
+        let judge = |profile: &str, experiment: &str, ack: bool| {
+            JobSpec::Judge(h2w_api::JudgeParams {
+                experiment: experiment.into(),
+                cell: h2w_api::Cell {
+                    bench: Bench::Lab,
+                    subset: None,
+                    substrate: h2w_api::Substrate::Oc,
+                },
+                k: 1,
+                seed: None,
+                modes: vec![h2w_api::Mode::Parallel],
+                bases: false,
+                profile: profile.into(),
+                acknowledge_cloud_judge: ack,
+            })
+        };
+        let exp = |g: &Inner, profile: &str| {
+            g.experiments
+                .iter()
+                .find(|(_, e)| e.exp.profile.as_deref() == Some(profile))
+                .map(|(n, _)| n.clone())
+                .unwrap()
+        };
+        // The Vertex profile's Gemini judge is a cloud judge.
+        let e = exp(&g, "vertex-flash");
+        assert!(validate_spec(&g, &judge("vertex-flash", &e, false)).is_err());
+        assert!(validate_spec(&g, &judge("vertex-flash", &e, true)).is_ok());
+        // The local gateway's judge needs nothing.
+        let e = exp(&g, "local-model");
+        assert!(validate_spec(&g, &judge("local-model", &e, false)).is_ok());
+        // Refused outright under the refuse policy.
+        g.cloud_judges = h2w_api::CloudJudgePolicy::Refuse;
+        let e = exp(&g, "vertex-flash");
+        assert!(validate_spec(&g, &judge("vertex-flash", &e, true)).is_err());
+        // Profiles carry their judge site.
+        let site = g
+            .profile_view(&g.profiles["claude-judge"])
+            .judge_site
+            .unwrap();
+        assert_eq!(site.provider.as_deref(), Some("Anthropic"));
     }
 
     #[test]

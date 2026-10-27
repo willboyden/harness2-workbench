@@ -144,6 +144,11 @@ pub struct ModelProfile {
     /// Secrets this profile references and whether each is set (response only).
     #[serde(default)]
     pub secrets: Vec<SecretInfo>,
+    /// Where the judge runs (response only; computed by the server with
+    /// [`crate::judge_site`]). Absent when the profile has no judge model. Additive after
+    /// contract v1.9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge_site: Option<crate::JudgeSite>,
 }
 
 /// A secret's metadata. Values are write-only: no endpoint ever returns them.
@@ -174,6 +179,11 @@ pub struct ProfileCheck {
     /// Referenced secrets with no value (neither stored nor `H2W_SECRET_<NAME>`). Jobs with
     /// this profile are refused (422) until they are set.
     pub missing_secrets: Vec<String>,
+    /// Where the judge runs. When it is not local, `warnings` carries the cloud-judge
+    /// warning, and judge and pipeline jobs need `acknowledge_cloud_judge` (or are refused
+    /// under `[judge] cloud = "refuse"`). Additive after contract v1.9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge_site: Option<crate::JudgeSite>,
 }
 
 /// Body of `PUT /api/v1/secrets/{name}`.
