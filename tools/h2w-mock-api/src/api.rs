@@ -18,13 +18,13 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use h2w_api::{
-    ApiError, AuditOutcome, AuditVerification, Bench, Census, Comparison, CostEstimate,
-    CreateExperimentRequest, CreateTokenRequest, ErrorBody, ErrorCode, EstimateRequest, Experiment,
-    ExportTarget, FieldProblem, Health, Isolation, Job, JobEvent, JobSpec, JobStatus, KeyValue,
-    LoginRequest, Manifest, ManifestJob, Mode, ModelProfile, Page, Principal, PrincipalKind,
-    ProfileCheck, ProfileKind, Readiness, Role, SESSION_COOKIE, SetSecretRequest, Surface,
-    SweepIdentity, SystemInfo, TaskDelta, TokenCreated, TokenInfo, UpdateExperimentRequest,
-    ValidateHarnessRequest, ValidationReport,
+    ApiError, AuditOutcome, AuditVerification, Bench, Census, CompareSide, Comparison,
+    CostEstimate, CreateExperimentRequest, CreateTokenRequest, ErrorBody, ErrorCode,
+    EstimateRequest, Experiment, ExportTarget, FieldProblem, Health, Isolation, Job, JobEvent,
+    JobSpec, JobStatus, KeyValue, LoginRequest, Manifest, ManifestJob, Mode, ModelProfile,
+    NoiseFloor, NoiseKind, Page, Principal, PrincipalKind, ProfileCheck, ProfileKind, Readiness,
+    Role, SESSION_COOKIE, SetSecretRequest, Surface, SweepIdentity, SystemInfo, TaskDelta,
+    TokenCreated, TokenInfo, UpdateExperimentRequest, ValidateHarnessRequest, ValidationReport,
 };
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 use tokio_stream::{Stream, StreamExt};
@@ -246,7 +246,7 @@ async fn system_info(State(st): State<AppState>, headers: HeaderMap) -> R<Json<S
         .filter(|j| j.job.status == JobStatus::Running)
         .count();
     Ok(Json(SystemInfo {
-        workbench_version: "0.1.0".to_owned(),
+        workbench_version: env!("CARGO_PKG_VERSION").to_owned(),
         build_commit: Some("0f3c9a1".to_owned()),
         harness2: h2w_api::Harness2Status {
             installed: g.installed,
@@ -883,7 +883,7 @@ async fn manifest(
     Ok(Json(Manifest {
         schema_version: 1,
         generated_at: rfc3339(now_secs()),
-        workbench_version: "0.1.0".into(),
+        workbench_version: env!("CARGO_PKG_VERSION").into(),
         experiment: exp.clone(),
         harness2_commit: Some(TESTED_COMMIT.into()),
         dependency_pins: vec![
@@ -1259,16 +1259,18 @@ async fn compare(
     Query(q): Query<HashMap<String, String>>,
 ) -> R<Json<Comparison>> {
     require(&st, &headers, Role::Viewer)?;
-    let side = |key: &str| -> R<(String, String, Mode)> {
+    let side = |key: &str| -> R<(String, String, CompareSide)> {
         let v = q
             .get(key)
             .ok_or_else(|| invalid(vec![(key.to_owned(), "pick a sweep and mode".into())]))?;
         let mut p = v.split('/');
-        match (p.next(), p.next(), p.next().and_then(Mode::from_token)) {
-            (Some(e), Some(s), Some(m)) => Ok((e.to_owned(), s.to_owned(), m)),
+        match (p.next(), p.next(), p.next().and_then(CompareSide::parse)) {
+            (Some(e), Some(s), Some(m)) if p.next().is_none() => {
+                Ok((e.to_owned(), s.to_owned(), m))
+            }
             _ => Err(invalid(vec![(
                 key.to_owned(),
-                "use experiment/sweep/mode".into(),
+                "use experiment/sweep/mode or experiment/sweep/base".into(),
             )])),
         }
     };
@@ -1284,10 +1286,20 @@ async fn compare(
     };
     let (sa, sb) = (get(&ae, &asw)?, get(&be, &bsw)?);
     let (ra, rb) = (sweeps::scores(&sa), sweeps::scores(&sb));
-    let frac = |rows: &[h2w_api::JudgedRow], m: Mode, id: &str| {
-        rows.iter()
+    let (oa, ob) = (
+        sweeps::base_outcomes(&ra.base_rows),
+        sweeps::base_outcomes(&rb.base_rows),
+    );
+    let frac = |s: &h2w_api::Scores,
+                base: &std::collections::BTreeMap<String, h2w_api::BaseOutcome>,
+                side: CompareSide,
+                id: &str| match side {
+        CompareSide::Mode(m) => s
+            .rows
+            .iter()
             .find(|r| r.mode == m && r.task_id == id && r.graded)
-            .and_then(|r| r.frac)
+            .and_then(|r| r.frac),
+        CompareSide::Base => base.get(id).map(|o| o.score),
     };
     let mut ids: Vec<(String, String)> = sa
         .tasks
@@ -1301,7 +1313,7 @@ async fn compare(
     let (mut wins, mut losses, mut ties) = (0, 0, 0);
     let (mut sum_a, mut sum_b, mut n) = (0.0, 0.0, 0_u32);
     for (id, domain) in ids {
-        let (a, b) = (frac(&ra.rows, am, &id), frac(&rb.rows, bm, &id));
+        let (a, b) = (frac(&ra, &oa, am, &id), frac(&rb, &ob, bm, &id));
         let delta = a.zip(b).map(|(a, b)| b - a);
         if let (Some(a), Some(b)) = (a, b) {
             n += 1;
@@ -1324,9 +1336,34 @@ async fn compare(
         });
     }
     let nf = f64::from(n);
+    // The server's rule: two sweeps (of one profile) measure noise against each other, else the
+    // spread between the k reference rollouts of A's (then B's) tasks.
+    let summary = |kind, d: Vec<f64>| {
+        (!d.is_empty()).then(|| NoiseFloor {
+            kind,
+            n: u32::try_from(d.len()).unwrap_or(u32::MAX),
+            mean_abs: d.iter().sum::<f64>() / d.len() as f64,
+            max_abs: d.iter().copied().fold(0.0, f64::max),
+        })
+    };
+    let across: Vec<f64> = if (ae.as_str(), asw.as_str()) == (be.as_str(), bsw.as_str()) {
+        Vec::new()
+    } else {
+        oa.iter()
+            .filter_map(|(t, x)| ob.get(t).map(|y| (x.score - y.score).abs()))
+            .collect()
+    };
+    let noise = summary(NoiseKind::AcrossSweeps, across).or_else(|| {
+        [&oa, &ob].into_iter().find_map(|o| {
+            summary(
+                NoiseKind::WithinSweep,
+                o.values().filter_map(|x| x.spread).collect(),
+            )
+        })
+    });
     Ok(Json(Comparison {
-        a: format!("{ae}/{asw}/{}", am.as_cli()),
-        b: format!("{be}/{bsw}/{}", bm.as_cli()),
+        a: format!("{ae}/{asw}/{}", am.as_param()),
+        b: format!("{be}/{bsw}/{}", bm.as_param()),
         tasks,
         n_common: n,
         mean_a: (n > 0).then(|| sum_a / nf),
@@ -1336,6 +1373,7 @@ async fn compare(
         losses,
         ties,
         sign_test_p: sign_test_p(wins, losses),
+        noise,
     }))
 }
 

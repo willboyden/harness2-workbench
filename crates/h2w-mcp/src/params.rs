@@ -394,14 +394,31 @@ pub(crate) struct SweepModeRef {
     pub(crate) experiment: String,
     /// Sweep id (summary namespace).
     pub(crate) sweep: String,
-    /// Recursion mode.
-    pub(crate) mode: Mode,
+    /// Recursion mode, or `base` for the starting harness (its reference rollouts).
+    pub(crate) mode: SideParam,
+}
+
+/// Which result of a sweep a comparison side reads.
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SideParam {
+    /// The harnesses parallel recursion adopted.
+    Parallel,
+    /// The harnesses sequential recursion adopted.
+    Sequential,
+    /// The starting harness: the mean of its graded reference rollouts.
+    Base,
 }
 
 impl SweepModeRef {
-    /// The `<experiment>/<sweep>/<mode>` form `GET /compare` takes.
+    /// The `<experiment>/<sweep>/<mode>` (or `.../base`) form `GET /compare` takes.
     pub(crate) fn query_value(&self) -> String {
-        format!("{}/{}/{}", self.experiment, self.sweep, self.mode.as_cli())
+        let side = match self.mode {
+            SideParam::Parallel => "parallel",
+            SideParam::Sequential => "sequential",
+            SideParam::Base => "base",
+        };
+        format!("{}/{}/{side}", self.experiment, self.sweep)
     }
 }
 

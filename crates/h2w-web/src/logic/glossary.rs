@@ -121,7 +121,7 @@ pub(crate) const TERMS: &[Term] = &[
         id: "base",
         term: "Base",
         short: "The unmodified starting harness; base1..basek are its reference rollouts, shared by both modes.",
-        long: "Every task first runs the unmodified harness k times. Those reference rollouts anchor the comparison: judging the bases (judge --bases) gives the score to beat.",
+        long: "Every task first runs the unmodified harness k times. Those reference rollouts anchor the comparison: judging the bases (judge --bases) gives the score to beat. Once they are judged, a sweep's Tasks table shows each task's base score and every mode's difference from it, and Compare offers the sweep's starting harness as a side, so refinement can be tested against the harness it started from, task by task.",
         see_also: &["kept-base"],
     },
     Term {
@@ -182,9 +182,9 @@ pub(crate) const TERMS: &[Term] = &[
     },
     Term {
         id: "noise-floor",
-        term: "Noise floor at k = 1",
-        short: "With k = 1 there is no selection, so differences of a few points can be run-to-run noise.",
-        long: "At k = 1 each task adopts its single final without a choice, so scores inherit the full randomness of one rollout. Small differences between sweeps are within the noise floor; repeat with other seeds or use a larger k before concluding. The report adds a NOTE when this applies.",
+        term: "Noise floor",
+        short: "How far the same harness moves between runs on the same task: a difference within it can be run-to-run noise.",
+        long: "Rollouts are random, so the same harness scores differently on the same task from run to run. Compare measures that variation when it can: between the starting harnesses of two sweeps of the same profile (the same harness, the same tasks, two runs), or between the k reference rollouts of each task (k of 2 or more). A difference within it may be noise. At k = 1 each task also adopts its single final without a choice, so scores inherit the full randomness of one rollout; repeat with other seeds or use a larger k before concluding. The report adds a NOTE when this applies.",
         see_also: &["k", "sign-test"],
     },
     Term {

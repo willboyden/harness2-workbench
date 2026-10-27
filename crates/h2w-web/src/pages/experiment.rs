@@ -271,7 +271,7 @@ pub(crate) fn ExperimentPage() -> impl IntoView {
                                                                 </td>
                                                                 <td class="num">{format::usd(sw.usd)}</td>
                                                                 <td>
-                                                                    <HeadlineScores scores=sw.headline.clone() />
+                                                                    <HeadlineScores scores=sw.headline.clone() base=sw.base_score />
                                                                     {sw.headline.is_some().then(|| view! {
                                                                         <a class="cell-sub" href=route::sweep_tab(&name, &sw.id, "report")>"Open the report"</a>
                                                                     })}

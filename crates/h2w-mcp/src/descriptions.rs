@@ -295,8 +295,12 @@ pub(crate) const COMPARE_SWEEPS: &str = "Compare two (experiment, sweep, mode) r
 task, e.g. two seeds, two k values, a harness change or train vs test: per task the scores a \
 and b and delta = b - a, all FRACTIONS 0..1 (times 100 = percentage points); means over the \
 tasks graded on both sides (n_common), wins, losses, ties, and a two-sided sign-test p-value \
-over wins vs losses (ties dropped). A small n_common or a large p-value means the difference \
-may be noise.";
+over wins vs losses (ties dropped). A side's mode may be base: the sweep's starting harness \
+(the mean of its graded reference rollouts), so a = base and b = parallel of one sweep asks \
+whether refinement beat the harness it started from. noise, when present, is how far the \
+starting harness itself moved between runs on these tasks (across_sweeps: two sweeps of the \
+same profile; within_sweep: between the k reference rollouts of a task); a difference within \
+it, a small n_common or a large p-value means the difference may be noise.";
 
 pub(crate) const GET_MANIFEST: &str = "Get an experiment's reproducibility manifest: Workbench \
 version, harness2 commit, dependency pins (benchmark checkouts, OpenCode and Codex versions), \

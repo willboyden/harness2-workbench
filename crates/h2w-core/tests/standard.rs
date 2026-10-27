@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use h2w_api::{Bench, ExperimentKind, FileKind, Mode, Substrate, WbSubset};
+use h2w_api::{Bench, CompareSide, ExperimentKind, FileKind, Mode, Substrate, WbSubset};
 use h2w_core::namespace::Namespace;
 use h2w_core::results::{DEFAULT_READ_CAP, ExperimentDir, compare};
 use h2w_core::{CoreError, parse};
@@ -49,6 +49,10 @@ fn every_benchmark_sweep_is_listed() {
         ]
     );
     let lab = sweeps.iter().find(|s| s.id == "lab-oc-agg1").unwrap();
+    // base_judged.json: 1/4, 1/4 and one ungraded row.
+    assert_eq!(lab.base_score, Some(25.0));
+    let k2 = sweeps.iter().find(|s| s.id == "lab-oc-agg2").unwrap();
+    assert_eq!(k2.base_score, None, "no base_judged.json");
     let cell = lab.cell.unwrap();
     assert_eq!(
         (cell.bench, cell.subset, cell.substrate),
@@ -395,14 +399,50 @@ fn compare_two_modes_of_one_sweep() {
         .into_iter()
         .map(|r| (r.task_id, r.domain))
         .collect();
+    let rows = e.tasks(&ns("lab-oc-agg1")).unwrap();
+    let msa = rows
+        .iter()
+        .find(|r| r.task_id == "contracts/msa-redline")
+        .unwrap();
+    let b = msa.base.as_ref().unwrap();
+    assert_eq!(
+        (b.graded, b.score, b.spread, b.all_pass),
+        (1, 0.25, None, false)
+    );
+    let motion = rows
+        .iter()
+        .find(|r| r.task_id == "litigation/motion-draft")
+        .unwrap();
+    assert!(
+        motion.base.is_none(),
+        "its only reference rollout is ungraded"
+    );
+    let vs_base = compare(
+        "std/lab-oc-agg1/base",
+        &s,
+        CompareSide::Base,
+        "std/lab-oc-agg1/parallel",
+        &s,
+        CompareSide::Mode(Mode::Parallel),
+        &domains,
+        false,
+    );
+    // Both graded tasks moved from 1/4 to 4/4.
+    assert_eq!((vs_base.n_common, vs_base.wins), (2, 2));
+    assert_eq!(vs_base.mean_delta, Some(0.75));
+    assert_eq!(
+        vs_base.noise, None,
+        "k = 1 in one sweep: nothing to measure"
+    );
     let c = compare(
         "std/lab-oc-agg1/parallel",
         &s,
-        Mode::Parallel,
+        CompareSide::Mode(Mode::Parallel),
         "std/lab-oc-agg1/sequential",
         &s,
-        Mode::Sequential,
+        CompareSide::Mode(Mode::Sequential),
         &domains,
+        false,
     );
     assert_eq!(c.tasks.len(), 2);
     assert_eq!(c.n_common, 1);

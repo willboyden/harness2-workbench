@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Compare against the starting harness: a comparison side may be a sweep's starting harness
+  (`/compare?a=<experiment>/<sweep>/base`, the mean of its graded reference rollouts per task), so
+  `a = base, b = parallel` asks whether refinement beat the harness it started from. The page
+  offers it once the reference rollouts are judged, and a sweep's **Compare…** opens on it.
+- A measured noise floor: a comparison carries `noise`, how far the starting harness moved between
+  runs on the compared tasks (between two sweeps of experiments pinned to the same profile, or
+  between the k reference rollouts of each task), and the page says whether the mean difference is
+  within it. One rerun of a ten-task sweep showed why it matters: the same starting harness moved
+  3.9 points per task on average, and the two refinements of it differed by up to 78 points on a
+  task.
+- Task rows carry `base` (the starting harness on that task: graded rollouts, mean, spread) and
+  sweep summaries `base_score`; the sweep page shows a **Base score** column, each mode's
+  difference from it, and a **base** chip in the headline. The MCP tool `compare_sweeps` accepts
+  `base` as a side's mode.
+
 ## [0.1.2] - 2026-10-27
 
 Running the benchmarks on two Workbenches, one with container isolation and one with host isolation

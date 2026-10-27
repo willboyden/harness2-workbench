@@ -1,6 +1,6 @@
 //! The task page's recursion timeline, derived from `TaskDetail`.
 
-use h2w_api::{Ledger, Mode, ModeRecord, Selection, Stage};
+use h2w_api::{BaseOutcome, Ledger, Mode, ModeRecord, Selection, Stage};
 
 use super::jobs::Tone;
 
@@ -143,6 +143,16 @@ pub(crate) fn selection_summary(sel: &Selection) -> String {
 }
 
 /// Problems with a mode's budget ledger (R = rollouts, P = improver sessions).
+/// The line under a task's base score: how many reference rollouts were graded and, from two
+/// on, how far they moved (`2 rollouts, spread 4.4 pts`).
+pub(crate) fn base_detail(b: &BaseOutcome) -> String {
+    let n = super::format::plural(u64::from(b.graded), "rollout", "rollouts");
+    match b.spread {
+        Some(s) => format!("{n}, spread {}", super::format::points(s * 100.0)),
+        None => n,
+    }
+}
+
 pub(crate) fn ledger_problems(l: &Ledger) -> Vec<String> {
     let mut v = Vec::new();
     if l.r != l.expected_r {
@@ -162,6 +172,20 @@ pub(crate) fn ledger_problems(l: &Ledger) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn base_details() {
+        let mut b = BaseOutcome {
+            graded: 1,
+            score: 0.86,
+            spread: None,
+            all_pass: false,
+        };
+        assert_eq!(base_detail(&b), "1 rollout");
+        b.graded = 2;
+        b.spread = Some(0.044);
+        assert_eq!(base_detail(&b), "2 rollouts, spread 4.4 pts");
+    }
+
     use super::*;
     use h2w_api::AnonId;
 

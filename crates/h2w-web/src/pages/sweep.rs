@@ -1,8 +1,8 @@
 //! One sweep: tasks, the score report, the experience library and the improver audit trail.
 
 use h2w_api::{
-    AuditSession, Experiment, JobSpec, JudgeParams, LibraryDomain, Mode, Page, Role, ScoreReport,
-    SweepSummary, TaskRow,
+    AuditSession, CompareSide, Experiment, JobSpec, JudgeParams, LibraryDomain, Mode, Page, Role,
+    ScoreReport, SweepSummary, TaskRow,
 };
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
@@ -22,6 +22,7 @@ use crate::components::widgets::{HeadlineScores, mode_label};
 use crate::logic::format;
 use crate::logic::jobs::Tone;
 use crate::logic::report::{NoteLevel, note_level};
+use crate::logic::tasks::base_detail;
 use crate::logic::urls::{SweepRef, api as paths, route};
 use crate::nav::{param, query_param, query_setter};
 use crate::state::{session, toasts};
@@ -183,6 +184,7 @@ fn TasksTab(exp: Memo<String>, sweep: Memo<String>, modes: Vec<Mode>) -> impl In
                 .into_any(),
                 Some(Ok(p)) => {
                     let (e, s) = (exp.get(), sweep.get());
+                    let has_base = p.items.iter().any(|r| r.base.is_some());
                     view! {
                         <div class="table-wrap">
                             <table class="table">
@@ -190,6 +192,7 @@ fn TasksTab(exp: Memo<String>, sweep: Memo<String>, modes: Vec<Mode>) -> impl In
                                     <tr>
                                         <th scope="col">"Task"</th>
                                         <th scope="col">"Status"</th>
+                                        {has_base.then(|| view! { <th scope="col" class="num"><Term id="base">"Base score"</Term></th> })}
                                         {modes
                                             .iter()
                                             .map(|m| view! { <th scope="col">{format!("{} adopted", mode_label(*m))}</th> <th scope="col" class="num">{format!("{} score", mode_label(*m))}</th> })
@@ -215,6 +218,12 @@ fn TasksTab(exp: Memo<String>, sweep: Memo<String>, modes: Vec<Mode>) -> impl In
                                                         <Badge tone=status_tone(&row.status) text=row.status.clone() />
                                                         {(row.errors > 0).then(|| view! { <span class="cell-sub">{format::plural(u64::from(row.errors), "error", "errors")}</span> })}
                                                     </td>
+                                                    {has_base.then(|| view! {
+                                                        <td class="num" data-testid="base-score">
+                                                            {row.base.as_ref().map_or_else(|| format::DASH.to_owned(), |b| format::frac_pct(b.score))}
+                                                            {row.base.as_ref().map(|b| view! { <span class="cell-sub">{base_detail(b)}</span> })}
+                                                        </td>
+                                                    })}
                                                     {modes
                                                         .iter()
                                                         .map(|m| {
@@ -229,6 +238,9 @@ fn TasksTab(exp: Memo<String>, sweep: Memo<String>, modes: Vec<Mode>) -> impl In
                                                                     <td class="num">
                                                                         {o.score.map_or_else(|| format::DASH.to_owned(), format::frac_pct)}
                                                                         {o.all_pass.map(|a| view! { <span class="cell-sub">{if a { "all pass" } else { "not all pass" }}</span> })}
+                                                                        {o.score.zip(row.base.as_ref().map(|b| b.score)).map(|(s, b)| view! {
+                                                                            <span class="cell-sub" data-testid="vs-base">{format!("{} vs base", format::signed_points((s - b) * 100.0))}</span>
+                                                                        })}
                                                                     </td>
                                                                 }
                                                                 .into_any(),
@@ -720,8 +732,19 @@ pub(crate) fn SweepPage() -> impl IntoView {
                 {move || {
                     info.get()
                         .map(|(s, _)| {
-                            let a = SweepRef { experiment: exp.get(), sweep: s.id.clone(), mode: s.modes.first().copied().unwrap_or(Mode::Parallel) };
-                            let href = format!("/compare?a={}", crate::logic::urls::enc(&a.to_param()));
+                            let first = CompareSide::Mode(s.modes.first().copied().unwrap_or(Mode::Parallel));
+                            let r = |side| SweepRef { experiment: exp.get(), sweep: s.id.clone(), side };
+                            // With judged reference rollouts, open on the question that matters most:
+                            // did refinement beat the harness it started from?
+                            let href = if s.base_score.is_some() {
+                                format!(
+                                    "/compare?a={}&b={}",
+                                    crate::logic::urls::enc(&r(CompareSide::Base).to_param()),
+                                    crate::logic::urls::enc(&r(first).to_param())
+                                )
+                            } else {
+                                format!("/compare?a={}", crate::logic::urls::enc(&r(first).to_param()))
+                            };
                             view! {
                                 <a class="btn btn-secondary" href=href>
                                     {icon(Icon::Compare)}
@@ -757,7 +780,7 @@ pub(crate) fn SweepPage() -> impl IntoView {
                                 </div>
                                 <div class="stat stat-wide">
                                     <span class="stat-label">"Headline"</span>
-                                    <HeadlineScores scores=s.headline.clone() />
+                                    <HeadlineScores scores=s.headline.clone() base=s.base_score />
                                 </div>
                             </div>
                             <SweepTabs active=active />

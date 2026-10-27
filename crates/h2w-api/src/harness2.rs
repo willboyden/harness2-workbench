@@ -168,6 +168,36 @@ impl Mode {
     }
 }
 
+/// One side of a comparison (`GET /compare?a=<experiment>/<sweep>/<side>`): the harnesses a
+/// recursion mode adopted, or the starting harness, through its reference rollouts as
+/// `harness2-judge --bases` graded them (`base`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CompareSide {
+    Mode(Mode),
+    Base,
+}
+
+impl CompareSide {
+    /// Parse `base` or a mode (`parallel`/`agg`, `sequential`/`seq`).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<CompareSide> {
+        if s == "base" {
+            Some(CompareSide::Base)
+        } else {
+            Mode::from_token(s).map(CompareSide::Mode)
+        }
+    }
+
+    /// The canonical spelling: `base`, `parallel` or `sequential`.
+    #[must_use]
+    pub fn as_param(self) -> &'static str {
+        match self {
+            CompareSide::Mode(m) => m.as_cli(),
+            CompareSide::Base => "base",
+        }
+    }
+}
+
 /// Which part of the task stream to run (`--split`). `train`/`test` need a split file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

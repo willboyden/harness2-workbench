@@ -50,7 +50,26 @@ pub(crate) fn UnavailableNotice(u: BenchmarkUnavailable, tone: Tone) -> impl Int
 
 /// `parallel k=1: 62.5% · all-pass 20.0% (12 graded)` chips, one per mode.
 #[component]
-pub(crate) fn HeadlineScores(scores: Option<Vec<ModeScore>>) -> impl IntoView {
+pub(crate) fn HeadlineScores(
+    scores: Option<Vec<ModeScore>>,
+    /// The starting harness's mean score in percent (`SweepSummary::base_score`), shown as a
+    /// last chip when its reference rollouts were judged.
+    #[prop(default = None)]
+    base: Option<f64>,
+) -> impl IntoView {
+    let base_chip = move || {
+        base.map(|b| {
+            view! {
+                <span
+                    class="score-chip"
+                    title="The starting harness: mean partial credit of its graded reference rollouts"
+                >
+                    <span class="score-chip-mode">"base"</span>
+                    <strong>{format::pct(b)}</strong>
+                </span>
+            }
+        })
+    };
     match scores {
         None => view! { <span class="muted small">"not judged yet"</span> }.into_any(),
         Some(list) if list.is_empty() => {
@@ -78,6 +97,7 @@ pub(crate) fn HeadlineScores(scores: Option<Vec<ModeScore>>) -> impl IntoView {
                         }
                     })
                     .collect_view()}
+                {base_chip()}
             </span>
         }
         .into_any(),

@@ -112,6 +112,15 @@ pub(crate) fn signed_points(points: f64) -> String {
     }
 }
 
+/// An unsigned size in percentage points: `4.2 pts`.
+pub(crate) fn points(points: f64) -> String {
+    if points.is_finite() {
+        format!("{:.1} pts", (points.abs() * 10.0).round() / 10.0)
+    } else {
+        DASH.to_owned()
+    }
+}
+
 /// A byte count in binary units: `512 B`, `1.5 KiB`, `12.0 MiB`.
 pub(crate) fn bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["KiB", "MiB", "GiB", "TiB", "PiB"];

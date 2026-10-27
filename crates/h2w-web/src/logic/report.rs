@@ -1,6 +1,6 @@
 //! Score reports and sweep comparisons: what to draw and how to explain it.
 
-use h2w_api::{Comparison, ModeSummary, TaskDelta};
+use h2w_api::{Comparison, ModeSummary, NoiseKind, TaskDelta};
 
 use super::format;
 
@@ -121,6 +121,30 @@ pub(crate) fn sign_test_reading(c: &Comparison) -> String {
     )
 }
 
+/// What the starting harness's measured run-to-run variation says about a comparison: how
+/// far it moved per task, and whether the mean difference is within that. `None` when the
+/// comparison carries no measurement.
+pub(crate) fn noise_reading(c: &Comparison) -> Option<String> {
+    let n = c.noise.as_ref()?;
+    let place = match n.kind {
+        NoiseKind::AcrossSweeps => "between these two sweeps",
+        NoiseKind::WithinSweep => "between its reference rollouts of the same task",
+    };
+    let verdict = match c.mean_delta {
+        Some(d) if d.abs() <= n.mean_abs => {
+            " The mean difference here is within that, so it may be run-to-run variation."
+        }
+        Some(_) => " The mean difference here is larger than that.",
+        None => "",
+    };
+    Some(format!(
+        "The starting harness itself moved {} per task on average {place} (at most {}, over {}).{verdict}",
+        format::points(n.mean_abs * 100.0),
+        format::points(n.max_abs * 100.0),
+        format::plural(u64::from(n.n), "task", "tasks"),
+    ))
+}
+
 /// One bar of the per-task delta chart.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DeltaBar {
@@ -175,7 +199,45 @@ mod tests {
             losses,
             ties,
             sign_test_p: p,
+            noise: None,
         }
+    }
+
+    #[test]
+    fn noise_readings() {
+        use h2w_api::NoiseFloor;
+        let mut c = cmp(2, 6, 2, Some(0.29));
+        assert_eq!(noise_reading(&c), None);
+        c.noise = Some(NoiseFloor {
+            kind: NoiseKind::AcrossSweeps,
+            n: 10,
+            mean_abs: 0.039,
+            max_abs: 0.13,
+        });
+        c.mean_delta = Some(-0.093);
+        assert_eq!(
+            noise_reading(&c).unwrap(),
+            "The starting harness itself moved 3.9 pts per task on average between these two \
+             sweeps (at most 13.0 pts, over 10 tasks). The mean difference here is larger than that."
+        );
+        c.mean_delta = Some(0.02);
+        assert!(
+            noise_reading(&c)
+                .unwrap()
+                .ends_with("so it may be run-to-run variation.")
+        );
+        c.noise = Some(NoiseFloor {
+            kind: NoiseKind::WithinSweep,
+            n: 1,
+            mean_abs: 0.013,
+            max_abs: 0.013,
+        });
+        c.mean_delta = None;
+        assert_eq!(
+            noise_reading(&c).unwrap(),
+            "The starting harness itself moved 1.3 pts per task on average between its reference \
+             rollouts of the same task (at most 1.3 pts, over 1 task)."
+        );
     }
 
     #[test]
