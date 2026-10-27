@@ -301,7 +301,7 @@ pub struct AuditVerification {
     pub first_bad_seq: Option<u64>,
 }
 
-/// A train/test partition file created by a `split` job.
+/// A train/test partition file: random, from a `split` job, or of chosen tasks (`POST /splits`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -322,6 +322,34 @@ pub struct SplitInfo {
     pub test: u32,
     /// Creation time (RFC 3339, UTC).
     pub created_at: String,
+    /// The tasks were chosen by id (`POST /splits`), not shuffled: `seed` is 0 and
+    /// `train_fraction` is the share of train tasks (additive after v1.8).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub chosen: bool,
+}
+
+/// Most task ids one chosen split may hold (train and test together).
+pub const SPLIT_TASKS_MAX: usize = 10_000;
+
+/// Body of `POST /api/v1/splits`: a split of tasks chosen by id. A run with `split: train`
+/// (and `split_file` this name) runs exactly the `train` tasks, in stream order; `test` may be
+/// empty. harness2 checks every id against the installed benchmark when a job uses the split.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ChooseSplitRequest {
+    /// Name for the split file (same rules as experiment names). Must not exist yet.
+    pub name: String,
+    pub bench: Bench,
+    /// WorkBuddy-Bench subset (wb only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subset: Option<WbSubset>,
+    /// Task ids of the train partition, as harness2 names them (`<domain>/<task>`), at least one.
+    pub train: Vec<String>,
+    /// Task ids of the test partition; none of them in `train`.
+    #[serde(default)]
+    pub test: Vec<String>,
 }
 
 #[cfg(test)]

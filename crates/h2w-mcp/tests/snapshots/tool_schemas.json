@@ -147,6 +147,82 @@
   {
     "annotations": {
       "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "title": "Save a split of chosen tasks"
+    },
+    "description": "Save a split of tasks you choose by id, for running exactly those tasks: train (at least one) and optionally test, task ids as preview_run and list_tasks name them (<domain>/<task>; a bare name for WorkBuddy-Bench). Then pass options.split=train (or test) and options.split_file=<name> to preview_run, start_run or start_pipeline: the run takes those tasks in stream order, and max_tasks and only_domains still apply on top. Use it for a held-out test set, or to run a hand-picked subset (with a seed, max_tasks takes the first N tasks of each domain in the shuffled order, not the lowest-numbered ones). The name must not exist yet. harness2 checks every id against the installed benchmark when a job uses the split; run preview_run first. Operator role, no job, no model calls.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "bench": {
+          "description": "The benchmark the task ids belong to.",
+          "oneOf": [
+            {
+              "const": "jb",
+              "description": "JobBench: professional work tasks, grouped by occupation.",
+              "type": "string"
+            },
+            {
+              "const": "lab",
+              "description": "LAB (Harvey Labs): legal work, grouped by practice area. Needs Pandoc + Poppler.",
+              "type": "string"
+            },
+            {
+              "const": "wb",
+              "description": "WorkBuddy-Bench: office, web and code subsets. Needs Docker. Custom Tencent license.",
+              "type": "string"
+            }
+          ]
+        },
+        "name": {
+          "description": "Name for the split file (same rules as experiment names). Must not exist yet.",
+          "type": "string"
+        },
+        "subset": {
+          "default": null,
+          "description": "WorkBuddy-Bench subset (wb only).",
+          "enum": [
+            "office",
+            "web",
+            "code",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "test": {
+          "default": [],
+          "description": "Task ids of the test partition (optional), none of them in train.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "train": {
+          "description": "Task ids of the train partition (`<domain>/<task>`, as preview_run and list_tasks name\nthem), at least one: what a run with options.split=train runs.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "bench",
+        "train"
+      ],
+      "type": "object"
+    },
+    "name": "choose_split",
+    "title": "Save a split of chosen tasks"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
       "idempotentHint": true,
       "openWorldHint": false,
       "readOnlyHint": true,
@@ -1396,7 +1472,7 @@
               "type": "integer"
             },
             "max_tasks": {
-              "description": "Per-domain task cap (`--max-tasks`): the first N tasks of every domain.",
+              "description": "Per-domain task cap (`--max-tasks`): the first N tasks of every domain in stream order,\nwhich `seed` shuffles (without a seed, upstream's sorted order): with a seed, the first\ntask of a domain is usually not its lowest-numbered one. The preview lists the tasks.",
               "format": "uint32",
               "maximum": 100000,
               "minimum": 1,
@@ -2073,7 +2149,7 @@
               "type": "integer"
             },
             "max_tasks": {
-              "description": "Per-domain task cap (`--max-tasks`): the first N tasks of every domain.",
+              "description": "Per-domain task cap (`--max-tasks`): the first N tasks of every domain in stream order,\nwhich `seed` shuffles (without a seed, upstream's sorted order): with a seed, the first\ntask of a domain is usually not its lowest-numbered one. The preview lists the tasks.",
               "format": "uint32",
               "maximum": 100000,
               "minimum": 1,
@@ -2406,7 +2482,7 @@
               "type": "integer"
             },
             "max_tasks": {
-              "description": "Per-domain task cap (`--max-tasks`): the first N tasks of every domain.",
+              "description": "Per-domain task cap (`--max-tasks`): the first N tasks of every domain in stream order,\nwhich `seed` shuffles (without a seed, upstream's sorted order): with a seed, the first\ntask of a domain is usually not its lowest-numbered one. The preview lists the tasks.",
               "format": "uint32",
               "maximum": 100000,
               "minimum": 1,

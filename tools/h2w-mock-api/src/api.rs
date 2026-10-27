@@ -314,6 +314,79 @@ async fn splits(
     Ok(Json(lock(&st.s).splits.clone()))
 }
 
+/// `POST /splits`: a split of chosen tasks, with the server's checks (name, subset, at least one
+/// train task, ids well formed, none twice); the mock keeps only the record.
+async fn choose_split(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<h2w_api::ChooseSplitRequest>,
+) -> R<(StatusCode, Json<h2w_api::SplitInfo>)> {
+    require(&st, &headers, Role::Operator)?;
+    let mut problems: Vec<(String, String)> = Vec::new();
+    if !valid_slug(&req.name) {
+        problems.push((
+            "name".into(),
+            "lowercase letters, digits, '-' and '_'".into(),
+        ));
+    }
+    match (req.bench, req.subset) {
+        (Bench::Wb, None) => {
+            problems.push(("subset".into(), "WorkBuddy-Bench needs a subset".into()));
+        }
+        (b, Some(_)) if b != Bench::Wb => {
+            problems.push((
+                "subset".into(),
+                "applies to WorkBuddy-Bench (wb) only".into(),
+            ));
+        }
+        _ => {}
+    }
+    if req.train.is_empty() {
+        problems.push(("train".into(), "choose at least one task".into()));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for (side, ids) in [("train", &req.train), ("test", &req.test)] {
+        for (i, id) in ids.iter().enumerate() {
+            let bad = id.is_empty()
+                || id.len() > 255
+                || id.trim() != id
+                || id.chars().any(char::is_control)
+                || id.split('/').any(|s| s.is_empty() || s == "." || s == "..");
+            if bad || !seen.insert(id.clone()) {
+                problems.push((
+                    format!("{side}[{i}]"),
+                    "not a task id, or listed twice".into(),
+                ));
+            }
+        }
+    }
+    if !problems.is_empty() {
+        return Err(invalid(problems));
+    }
+    let mut g = lock(&st.s);
+    if g.splits.iter().any(|s| s.name == req.name) {
+        return Err(fail(
+            StatusCode::CONFLICT,
+            ErrorCode::Conflict,
+            &format!("a split named {} already exists", req.name),
+        ));
+    }
+    let (train, test) = (req.train.len(), req.test.len());
+    let info = h2w_api::SplitInfo {
+        name: req.name,
+        bench: req.bench,
+        subset: req.subset,
+        seed: 0,
+        train_fraction: train as f64 / (train + test) as f64,
+        train: u32::try_from(train).unwrap_or(u32::MAX),
+        test: u32::try_from(test).unwrap_or(u32::MAX),
+        created_at: crate::util::ago(0),
+        chosen: true,
+    };
+    g.splits.insert(0, info.clone());
+    Ok((StatusCode::CREATED, Json(info)))
+}
+
 // ---------------------------------------------------------------------------------------
 // Profiles, secrets, tokens, audit
 
@@ -1973,7 +2046,7 @@ pub(crate) fn router(st: AppState) -> Router {
         .route("/system/info", get(system_info))
         .route("/system/doctor", get(doctor))
         .route("/benchmarks", get(benchmarks))
-        .route("/splits", get(splits))
+        .route("/splits", get(splits).post(choose_split))
         .route("/profiles", get(profiles))
         .route("/profiles/{name}", put(put_profile).delete(delete_profile))
         .route("/profiles/{name}/check", get(check_profile))

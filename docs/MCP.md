@@ -25,7 +25,7 @@ flowchart LR
 
 *This Mermaid diagram was syntax-checked with the Mermaid 12.1.0 parser (`mermaid.parse`). It has not been rendered to an image, so its layout is unseen.*
 
-**Status.** Implemented: 42 tools, 3 resource URI forms, 3 prompts, both transports. Verified
+**Status.** Implemented: 43 tools, 3 resource URI forms, 3 prompts, both transports. Verified
 live on 2026-10-23 and 2026-10-24 against a running `h2workbench` 0.1.0 and a real harness2 checkout
 (`1cfe254`): a stdio session (initialize, `tools/list`, `server_info`, role refusals, a real demo
 run through `run_demo`) and the HTTP guard. Also covered by tests with a mock server and by an
@@ -227,7 +227,7 @@ For HTTP, declare an `inputs` entry of type `promptString` with `"password": tru
 
 ## 2. What an agent gets
 
-42 tools, grouped by purpose. "Role" is the minimum role the Workbench server demands; the MCP server
+43 tools, grouped by purpose. "Role" is the minimum role the Workbench server demands; the MCP server
 does not decide it. \* marks tools that **call model endpoints and can cost money** with cloud
 models.
 
@@ -237,7 +237,7 @@ models.
 | Experiments | `list_experiments`, `get_experiment`, `get_manifest`, `list_splits` | viewer |
 | | `create_experiment`, `update_experiment` | operator |
 | Plan (no model calls) | `estimate_cost`, `validate_harness` | viewer |
-| | `preview_run` (a dry-run job), `check_benchmark` (offline readiness), `run_demo` (free local workflow), `create_split` | operator |
+| | `preview_run` (a dry-run job), `check_benchmark` (offline readiness), `run_demo` (free local workflow), `create_split` (a random train/test split), `choose_split` (a split of tasks chosen by id: run exactly those) | operator |
 | Run | `start_run`\*, `start_pipeline`\*, `start_judge`\*, `start_report` | operator |
 | Install (admin) | `setup_benchmark`, `install_harness2`, `start_bridge`\* | admin |
 | Follow | `list_jobs`, `get_job`, `wait_for_job`, `get_job_log` | viewer |
@@ -270,8 +270,8 @@ Observed on a live server (the list is the same for a viewer, an operator and an
 server decides at call time):
 
 ```text
-tools: 42
-cancel_job, check_benchmark, check_profile, compare_sweeps, create_experiment, create_split,
+tools: 43
+cancel_job, check_benchmark, check_profile, choose_split, compare_sweeps, create_experiment, create_split,
 diff_harnesses, doctor, estimate_cost, export_harness, get_experiment, get_harness, get_job,
 get_job_log, get_library, get_manifest, get_report, get_scores, get_task, install_harness2,
 list_audit_sessions, list_benchmarks, list_experiments, list_jobs, list_profiles,

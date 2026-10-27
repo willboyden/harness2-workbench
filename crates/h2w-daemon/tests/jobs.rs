@@ -1360,3 +1360,89 @@ async fn a_panicking_runner_fails_its_job_and_frees_the_slot() {
     assert_terminal(&t.wait_terminal(&after.id, 30).await, JobStatus::Succeeded);
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn chosen_splits_are_validated_saved_listed_and_usable() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = TestServer::start().await;
+    let body = json!({"name": "lab-chosen", "bench": "lab",
+        "train": ["contracts/nda-review", "contracts/msa-redline"], "test": ["litigation/motion-draft"]});
+    let post = |token: String, b: serde_json::Value| {
+        t.post("/api/v1/splits", Some(&token)).json(&b).send()
+    };
+    // Viewers cannot save one.
+    assert_eq!(
+        post(t.viewer.clone(), body.clone()).await.unwrap().status(),
+        403
+    );
+    let r = post(t.operator.clone(), body.clone()).await.unwrap();
+    assert_eq!(r.status(), 201);
+    let info: h2w_api::SplitInfo = r.json().await.unwrap();
+    assert!(info.chosen);
+    assert_eq!((info.train, info.test, info.seed), (2, 1, 0));
+    // The file is harness2's split format, sorted, and private.
+    let path = t.root.path().join("data/splits/lab-chosen.json");
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(v["benchmark"], "lab");
+    assert_eq!(
+        v["train"],
+        json!(["contracts/msa-redline", "contracts/nda-review"])
+    );
+    assert_eq!(v["test"], json!(["litigation/motion-draft"]));
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    // Listed; the name is taken; bad ids are refused field by field.
+    let list: Vec<h2w_api::SplitInfo> = t
+        .get("/api/v1/splits", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(list.iter().any(|s| s.name == "lab-chosen" && s.chosen));
+    assert_eq!(
+        post(t.operator.clone(), body.clone())
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    let r = post(
+        t.operator.clone(),
+        json!({"name": "bad", "bench": "lab", "train": ["contracts/x", "../y"]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 422);
+    let e: ErrorBody = r.json().await.unwrap();
+    assert_eq!(e.error.details[0].field, "train[1]");
+    // A run may use it for its own benchmark, not for another.
+    t.put_profile(json!({"name": "p1", "kind": "custom", "solver_model": "m/x"}))
+        .await;
+    t.put_experiment("chosen-run", None).await;
+    let mut spec = run_spec("chosen-run", "p1", None);
+    spec["params"]["options"]["split"] = json!("train");
+    spec["params"]["options"]["split_file"] = json!("lab-chosen");
+    let r = t.create_job(&t.operator, spec.clone()).await;
+    assert!(r.status().is_success(), "{}", r.text().await.unwrap());
+    let r = post(
+        t.operator.clone(),
+        json!({"name": "jb-chosen", "bench": "jb", "train": ["producers/task1"]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 201);
+    spec["params"]["options"]["split_file"] = json!("jb-chosen");
+    let r = t.create_job(&t.operator, spec).await;
+    assert_eq!(r.status(), 422);
+    let e: ErrorBody = r.json().await.unwrap();
+    assert!(
+        e.error.message.contains("another benchmark"),
+        "{}",
+        e.error.message
+    );
+    t.stop().await;
+}

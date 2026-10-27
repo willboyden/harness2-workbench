@@ -443,6 +443,12 @@ pub static ROUTES: &[RouteDef] = &[
         handler: || get(tools::splits),
     },
     RouteDef {
+        method: Method::POST,
+        path: "/api/v1/splits",
+        access: O,
+        handler: || post(tools::choose_split),
+    },
+    RouteDef {
         method: Method::GET,
         path: "/api/v1/jobs",
         access: V,

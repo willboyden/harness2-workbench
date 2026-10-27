@@ -100,7 +100,7 @@ and review; the `Co-Authored-By` trailers of the commits record which.
 | Egress allowlist proxy (hostnames, ports, address checks) | Implemented | verified live | listens on loopback unless configured; no client authentication; hostname-level only |
 | Compose reference deployment (internal network, egress proxy, TLS ingress) | Implemented | verified live by the maintainers, 2026-10-23; not re-run by the author | [ADMIN-GUIDE §10](docs/ADMIN-GUIDE.md#10-the-compose-reference-deployment) |
 | OpenTelemetry traces (OTLP/HTTP) and Prometheus metrics | Implemented | verified live (local collector; scrape with a bearer secret) | |
-| MCP server: 42 tools, resources, prompts; stdio and streamable HTTP | Implemented | verified live (stdio session including a real demo run, HTTP guard); client configuration snippets unverified | [MCP.md](docs/MCP.md) |
+| MCP server: 43 tools, resources, prompts; stdio and streamable HTTP | Implemented | verified live (stdio session including a real demo run, HTTP guard); client configuration snippets unverified | [MCP.md](docs/MCP.md) |
 | Web UI (Leptos, WebAssembly) | Implemented | verified live in headless Firefox on 2026-10-24 against a real server and the free demo (most pages), and against a fictional mock API (scored pages); not other browsers, not a model-backed run | build it with `cargo xtask web`; without it the server serves a placeholder page; [USER-GUIDE](docs/USER-GUIDE.md) says what was and was not exercised |
 | systemd user unit | Implemented | syntax checked with `systemd-analyze verify`; service not started | |
 | Native TLS, multi-node scheduling, hosting models, Postgres, per-experiment permissions, Windows or macOS job hosts | Not planned | n/a | use a reverse proxy; harness2's setup guide specifies Linux |
@@ -235,7 +235,7 @@ privately as described in [SECURITY.md](SECURITY.md).
 
 ## MCP in two lines
 
-`h2workbench-mcp` gives Claude Code, opencode, Codex, Cursor, VS Code and other MCP clients 42 tools, 3
+`h2workbench-mcp` gives Claude Code, opencode, Codex, Cursor, VS Code and other MCP clients 43 tools, 3
 resources and 3 prompts for harness2, as a thin client that uses your API token, so server-side roles
 and the audit log apply to every agent. **Use a viewer token by default, an operator token only when the
 agent must start jobs, never an admin token**, and treat everything a tool returns (rollouts, logs,

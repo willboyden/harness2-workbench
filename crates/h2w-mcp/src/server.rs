@@ -1,4 +1,4 @@
-//! The MCP server: 42 tools, 3 resource templates and 3 prompts over the Workbench REST API.
+//! The MCP server: 43 tools, 3 resource templates and 3 prompts over the Workbench REST API.
 //!
 //! Each tool is one REST capability (`docs/ARCHITECTURE.md` §8, §13 and §16) called with the
 //! caller's token. The server enforces roles and audits; this handler only translates.
@@ -33,12 +33,13 @@ use crate::{
     limits::WaitLimiter,
     output,
     params::{
-        AuditSessionInput, BridgeInput, CheckInput, CompareInput, CreateExperimentInput, DemoInput,
-        DiffInput, DoctorInput, EstimateInput, ExperimentInput, ExportInput, HarnessInput,
-        InstallInput, JobInput, JobLogInput, JudgeInput, ListExperimentsInput, ListJobsInput,
-        ListTasksInput, MAX_WAIT_SECS, NoArgs, PipelineInput, PreviewInput, ProfileInput,
-        ReportInput, RolloutFileInput, RolloutFilesInput, RunInput, SetupInput, SplitInput,
-        SweepInput, TaskInput, UpdateExperimentInput, ValidateInput, WaitInput,
+        AuditSessionInput, BridgeInput, CheckInput, ChooseSplitInput, CompareInput,
+        CreateExperimentInput, DemoInput, DiffInput, DoctorInput, EstimateInput, ExperimentInput,
+        ExportInput, HarnessInput, InstallInput, JobInput, JobLogInput, JudgeInput,
+        ListExperimentsInput, ListJobsInput, ListTasksInput, MAX_WAIT_SECS, NoArgs, PipelineInput,
+        PreviewInput, ProfileInput, ReportInput, RolloutFileInput, RolloutFilesInput, RunInput,
+        SetupInput, SplitInput, SweepInput, TaskInput, UpdateExperimentInput, ValidateInput,
+        WaitInput,
     },
     prompts, resources,
     schema::{Args, input_schema},
@@ -962,6 +963,34 @@ impl H2sMcp {
     ) -> rmcp::model::CallToolResult {
         self.start_job(&ctx, JobSpec::Split(input.params), input.wait_secs)
             .await
+    }
+
+    #[tool(
+        name = "choose_split",
+        title = "Save a split of chosen tasks",
+        description = d::CHOOSE_SPLIT,
+        input_schema = input_schema::<ChooseSplitInput>(),
+        annotations(
+            title = "Save a split of chosen tasks",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn choose_split(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Args(input): Args<ChooseSplitInput>,
+    ) -> rmcp::model::CallToolResult {
+        self.post_json::<_, SplitInfo>(
+            &ctx,
+            &["splits"],
+            Some(&input.request()),
+            Role::Operator,
+            "",
+        )
+        .await
     }
 
     #[tool(

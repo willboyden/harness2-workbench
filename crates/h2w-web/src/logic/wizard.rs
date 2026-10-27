@@ -454,8 +454,26 @@ pub(crate) fn describe(problems: &Problems) -> Vec<String> {
         .collect()
 }
 
+/// Task ids typed one per line (blank lines and `#` comments ignored, spaces trimmed), in order.
+pub(crate) fn task_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_owned)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn task_lines_skip_blanks_and_comments() {
+        assert_eq!(
+            task_lines("  producers/task1 \n\n# self-contained\ndata_entry_keyers/task1\n"),
+            ["producers/task1", "data_entry_keyers/task1"]
+        );
+        assert!(task_lines(" \n#\n").is_empty());
+    }
+
     use super::*;
 
     fn domains() -> Vec<DomainCount> {

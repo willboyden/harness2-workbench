@@ -2,8 +2,8 @@
 //! checks and train/test splits.
 
 use h2w_api::{
-    Bench, BenchmarkStatus, Cell, CheckParams, JobResult, JobSpec, ModelProfile, Role, SetupParams,
-    SplitInfo, SplitParams, Substrate,
+    Bench, BenchmarkStatus, Cell, CheckParams, ChooseSplitRequest, JobResult, JobSpec,
+    ModelProfile, Role, SetupParams, SplitInfo, SplitParams, Substrate,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -11,7 +11,7 @@ use leptos_router::hooks::use_navigate;
 
 use crate::actions;
 use crate::api;
-use crate::components::form::{RadioCards, SelectField, TextField};
+use crate::components::form::{RadioCards, SelectField, TextArea, TextField};
 use crate::components::icons::{Icon, icon};
 use crate::components::modal::Modal;
 use crate::components::ui::{Ago, Badge, Card, EmptyState, Notice, PageHeader, Term, loaded};
@@ -21,6 +21,7 @@ use crate::logic::format;
 use crate::logic::jobs::Tone;
 use crate::logic::names;
 use crate::logic::urls::{api as paths, route};
+use crate::logic::wizard::task_lines;
 use crate::state::{ConfirmRequest, session, toasts, ui};
 
 fn key(b: &BenchmarkStatus) -> String {
@@ -145,13 +146,27 @@ fn SetupDialog(open: RwSignal<bool>, target: RwSignal<Option<BenchmarkStatus>>) 
 }
 
 #[component]
-fn SplitDialog(open: RwSignal<bool>, benches: Vec<BenchmarkStatus>) -> impl IntoView {
+fn SplitDialog(
+    open: RwSignal<bool>,
+    benches: Vec<BenchmarkStatus>,
+    /// Called after a chosen split was saved (the list reloads).
+    on_saved: Callback<()>,
+) -> impl IntoView {
     let t = toasts();
     let navigate = use_navigate();
     let target = RwSignal::new(benches.first().map(key).unwrap_or_default());
     let name = RwSignal::new(String::new());
     let seed = RwSignal::new("42".to_owned());
     let fraction = RwSignal::new("0.5".to_owned());
+    // "random": a split job shuffles each domain; "chosen": the tasks typed below, by id.
+    let how = RwSignal::new("random".to_owned());
+    let train_ids = RwSignal::new(String::new());
+    let test_ids = RwSignal::new(String::new());
+    let server_error = RwSignal::new(None::<String>);
+    let train_error = Signal::derive(move || {
+        (how.get() == "chosen" && task_lines(&train_ids.get()).is_empty())
+            .then(|| "at least one task id".to_owned())
+    });
     let options = Signal::stored(
         benches
             .iter()
@@ -188,6 +203,46 @@ fn SplitDialog(open: RwSignal<bool>, benches: Vec<BenchmarkStatus>) -> impl Into
             return;
         };
         let n = name.get_untracked();
+        if how.get_untracked() == "chosen" {
+            let train = task_lines(&train_ids.get_untracked());
+            if names::experiment_name(&n).is_err() || train.is_empty() {
+                return;
+            }
+            let req = ChooseSplitRequest {
+                name: n,
+                bench: b.bench,
+                subset: b.subset,
+                train,
+                test: task_lines(&test_ids.get_untracked()),
+            };
+            spawn_local(async move {
+                match api::post::<_, SplitInfo>(&paths::splits(), &req).await {
+                    Ok(s) => {
+                        open.set(false);
+                        server_error.set(None);
+                        name.set(String::new());
+                        train_ids.set(String::new());
+                        test_ids.set(String::new());
+                        t.success(&format!(
+                            "Split {} saved: {} train, {} test",
+                            s.name, s.train, s.test
+                        ));
+                        on_saved.run(());
+                    }
+                    // A validation message repeats its first detail: show the details once.
+                    Err(e) => server_error.set(Some(if e.details.is_empty() {
+                        e.message
+                    } else {
+                        e.details
+                            .iter()
+                            .map(|d| format!("{}: {}", d.field, d.problem))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    })),
+                }
+            });
+            return;
+        }
         if names::experiment_name(&n).is_err() || !(fr > 0.0 && fr < 1.0) {
             return;
         }
@@ -209,17 +264,48 @@ fn SplitDialog(open: RwSignal<bool>, benches: Vec<BenchmarkStatus>) -> impl Into
         <Modal open=open on_close=close title="New train/test split">
             <form on:submit=create.clone() novalidate=true>
                 <p class="muted">
-                    "A reproducible, domain-stratified partition: run the recursion on the train part and evaluate on the test part."
+                    "Run the recursion on the train part and evaluate on the test part, or run exactly the tasks you list."
                 </p>
                 <SelectField id="split-bench" label="Benchmark" value=target options=options />
                 <TextField id="split-name" label="Name" value=name required=true error=name_error placeholder="lab-half" help="Same rules as experiment names; must be new." />
-                <div class="form-grid">
-                    <TextField id="split-seed" label="Seed" value=seed kind="number" error=seed_error />
-                    <TextField id="split-fraction" label="Train fraction" value=fraction inputmode="decimal" error=fraction_error help="Share of each domain's tasks that go to train." />
-                </div>
+                <RadioCards
+                    name="split-how"
+                    legend="Tasks"
+                    value=how
+                    compact=true
+                    options=vec![
+                        ("random".to_owned(), "Random".to_owned(), "A reproducible, domain-stratified shuffle (a split job).".to_owned()),
+                        ("chosen".to_owned(), "Chosen tasks".to_owned(), "The task ids you list: a run with split train takes exactly those.".to_owned()),
+                    ]
+                />
+                {move || if how.get() == "chosen" {
+                    view! {
+                        <TextArea
+                            id="split-train"
+                            label="Train tasks"
+                            value=train_ids
+                            rows=6
+                            monospace=true
+                            error=train_error
+                            placeholder="contracts/nda-review"
+                            help="One task id per line, as the preview lists them (<domain>/<task>; a bare name for WorkBuddy-Bench). Blank lines and # comments are ignored."
+                        />
+                        <TextArea id="split-test" label="Test tasks (optional)" value=test_ids rows=3 monospace=true help="None of them in train." />
+                    }
+                    .into_any()
+                } else {
+                    view! {
+                        <div class="form-grid">
+                            <TextField id="split-seed" label="Seed" value=seed kind="number" error=seed_error />
+                            <TextField id="split-fraction" label="Train fraction" value=fraction inputmode="decimal" error=fraction_error help="Share of each domain's tasks that go to train." />
+                        </div>
+                    }
+                    .into_any()
+                }}
+                {move || server_error.get().map(|e| view! { <p class="field-error" role="alert">{e}</p> })}
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" on:click=move |_| close.run(())>"Cancel"</button>
-                    <button type="submit" class="btn btn-primary">"Create split"</button>
+                    <button type="submit" class="btn btn-primary">{move || if how.get() == "chosen" { "Save split" } else { "Create split" }}</button>
                 </div>
             </form>
         </Modal>
@@ -442,8 +528,8 @@ pub(crate) fn Benchmarks() -> impl IntoView {
                                                         <tr>
                                                             <td class="mono">{sp.name.clone()}</td>
                                                             <td>{sp.bench.display_name()}{sp.subset.map(|s| format!(" {}", s.as_cli()))}</td>
-                                                            <td class="num">{sp.seed}</td>
-                                                            <td class="num">{format!("{} ({:.0}%)", sp.train, sp.train_fraction * 100.0)}</td>
+                                                            <td class="num">{if sp.chosen { "chosen".to_owned() } else { sp.seed.to_string() }}</td>
+                                                            <td class="num">{if sp.chosen { sp.train.to_string() } else { format!("{} ({:.0}%)", sp.train, sp.train_fraction * 100.0) }}</td>
                                                             <td class="num">{sp.test}</td>
                                                             <td class="nowrap"><Ago ts=sp.created_at /></td>
                                                         </tr>
@@ -465,7 +551,7 @@ pub(crate) fn Benchmarks() -> impl IntoView {
             </Card>
             <SetupDialog open=setup_open target=setup_target />
             {move || match benches.get() {
-                Some(Ok(list)) => view! { <SplitDialog open=split_open benches=bench_logic::available(list) /> }.into_any(),
+                Some(Ok(list)) => view! { <SplitDialog open=split_open benches=bench_logic::available(list) on_saved=Callback::new(move |()| splits.refetch()) /> }.into_any(),
                 _ => ().into_any(),
             }}
         </div>

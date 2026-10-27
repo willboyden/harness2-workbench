@@ -58,7 +58,7 @@ impl Modify for Security {
         results::tasks, results::task, results::harness, results::diff, results::export,
         results::rollout_files, results::rollout_file, results::scores, results::report,
         results::library, results::audit_sessions, results::audit_text, results::compare,
-        tools::estimate, tools::validate_harness, tools::splits,
+        tools::estimate, tools::validate_harness, tools::splits, tools::choose_split,
         jobs::list, jobs::create, jobs::get_one, jobs::cancel, jobs::log, jobs::events,
     ),
     components(schemas(

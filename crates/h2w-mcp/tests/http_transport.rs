@@ -240,7 +240,7 @@ async fn each_caller_s_token_is_forwarded() {
     let alice = mcp.client(TOKEN).await;
     let bob = mcp.client(OTHER_TOKEN).await;
     let tools = alice.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 42);
+    assert_eq!(tools.len(), 43);
 
     let who = |result: &rmcp::model::CallToolResult| payload(result)["principal"]["name"].clone();
     assert_eq!(who(&call(&alice, "server_info", json!({})).await), "alice");

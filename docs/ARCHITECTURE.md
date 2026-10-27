@@ -594,3 +594,15 @@ independent audit (findings F1–F16):
   `SweepSummary.base_score: Option<f64>` (percent), both additive; a reference rollout's score is
   `points_passed / points_max` of its `base_judged.json` row.
 - MCP `compare_sweeps`: a side's `mode` may be `base`. The web UI and the mock API follow.
+
+**v1.9 (2026-10-27) — chosen splits.**
+- `POST /splits` (operator) with `ChooseSplitRequest { name, bench, subset?, train, test }`
+  (`deny_unknown_fields`) writes `<data_dir>/splits/<name>.json` (0600, created new) in harness2's
+  split format (`benchmark` = the cell's bench name, `train`, `test` sorted, `seed` 0,
+  `train_fraction` the train share, plus `chosen_by`) and records `SplitInfo` with the additive
+  `chosen: true`. Checks: the name as experiment names; WorkBuddy needs a subset and nothing else
+  takes one; at least one train id; at most `SPLIT_TASKS_MAX` (10,000) ids; each id 1..=255 bytes,
+  no control characters or `\`, no surrounding whitespace, no empty, `.` or `..` part; no id twice
+  across both sides. The file is data harness2 reads, never a path the server uses. Audit
+  `split.choose`. Existence of the ids is harness2's check when a job uses the split.
+- MCP `choose_split` (operator, 43 tools). The web UI's split dialog offers *Chosen tasks*.

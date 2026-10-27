@@ -160,6 +160,16 @@ start_pipeline. train_fraction is each domain's share in train (between 0 and 1,
 0.5); seed defaults to 42. Operator role, no model calls. Waits up to wait_secs (default 45); \
 the result has the train and test counts.";
 
+pub(crate) const CHOOSE_SPLIT: &str = "Save a split of tasks you choose by id, for running exactly \
+those tasks: train (at least one) and optionally test, task ids as preview_run and list_tasks \
+name them (<domain>/<task>; a bare name for WorkBuddy-Bench). Then pass options.split=train (or \
+test) and options.split_file=<name> to preview_run, start_run or start_pipeline: the run takes \
+those tasks in stream order, and max_tasks and only_domains still apply on top. Use it for a \
+held-out test set, or to run a hand-picked subset (with a seed, max_tasks takes the first N tasks \
+of each domain in the shuffled order, not the lowest-numbered ones). The name must not exist \
+yet. harness2 checks every id against the installed benchmark when a job uses the split; run \
+preview_run first. Operator role, no job, no model calls.";
+
 pub(crate) const LIST_JOBS: &str = "List jobs, newest first: install_harness2, demo, setup, \
 check, preview, run, judge, report, split, bridge and pipeline jobs with status (queued, \
 running, succeeded, partial, failed, cancelled), progress, spend so far and errors. Filter by \

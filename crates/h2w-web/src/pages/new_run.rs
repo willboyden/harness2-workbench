@@ -397,10 +397,12 @@ fn OptionsStep(wiz: Wiz) -> impl IntoView {
         let mut v = vec![(String::new(), "Choose a split file…".to_owned())];
         if let Some(Ok(list)) = wiz.splits.get() {
             v.extend(list.into_iter().filter(|s| s.bench == b).map(|s| {
-                let label = format!(
-                    "{} ({} train / {} test, seed {})",
-                    s.name, s.train, s.test, s.seed
-                );
+                let how = if s.chosen {
+                    "chosen tasks".to_owned()
+                } else {
+                    format!("seed {}", s.seed)
+                };
+                let label = format!("{} ({} train / {} test, {how})", s.name, s.train, s.test);
                 (s.name, label)
             }));
         }
@@ -480,7 +482,7 @@ fn OptionsStep(wiz: Wiz) -> impl IntoView {
                 kind="number"
                 inputmode="numeric"
                 error=field_error("max_tasks")
-                help="Run only the first N tasks of every domain. Empty = all."
+                help="Run only the first N tasks of every domain, in stream order: the seed shuffles it (empty seed = sorted order). The preview shows exactly which tasks run. Empty = all."
             />
             <div>
                 <RadioCards
