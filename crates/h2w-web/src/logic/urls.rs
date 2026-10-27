@@ -3,7 +3,7 @@
 
 use std::fmt::Write as _;
 
-use h2w_api::{ExportTarget, Mode};
+use h2w_api::{CompareSide, ExportTarget, Mode};
 
 /// Percent-encode a path segment or query value, keeping only RFC 3986 unreserved bytes.
 pub(crate) fn enc(s: &str) -> String {
@@ -30,17 +30,23 @@ pub(crate) fn query(pairs: &[(&str, &str)]) -> String {
     out
 }
 
-/// The `<experiment>/<sweep>/<mode>` reference `GET /compare` takes for each side.
+/// The `<experiment>/<sweep>/<mode>` (or `<experiment>/<sweep>/base`) reference
+/// `GET /compare` takes for each side.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SweepRef {
     pub(crate) experiment: String,
     pub(crate) sweep: String,
-    pub(crate) mode: Mode,
+    pub(crate) side: CompareSide,
 }
 
 impl SweepRef {
     pub(crate) fn to_param(&self) -> String {
-        format!("{}/{}/{}", self.experiment, self.sweep, self.mode.as_cli())
+        format!(
+            "{}/{}/{}",
+            self.experiment,
+            self.sweep,
+            self.side.as_param()
+        )
     }
 
     /// A `?a=`/`?b=` value in canonical form (`agg` -> `parallel`, `seq` -> `sequential`, as
@@ -50,17 +56,18 @@ impl SweepRef {
         SweepRef::parse(s).map_or_else(|| s.to_owned(), |r| r.to_param())
     }
 
-    /// Parse `exp/sweep/mode` (mode as `parallel`/`sequential` or `agg`/`seq`).
+    /// Parse `exp/sweep/mode` (mode as `parallel`/`sequential` or `agg`/`seq`) or
+    /// `exp/sweep/base`.
     pub(crate) fn parse(s: &str) -> Option<SweepRef> {
         let mut parts = s.split('/');
-        let (experiment, sweep, mode) = (parts.next()?, parts.next()?, parts.next()?);
+        let (experiment, sweep, side) = (parts.next()?, parts.next()?, parts.next()?);
         if parts.next().is_some() || experiment.is_empty() || sweep.is_empty() {
             return None;
         }
         Some(SweepRef {
             experiment: experiment.to_owned(),
             sweep: sweep.to_owned(),
-            mode: Mode::from_token(mode)?,
+            side: CompareSide::parse(side)?,
         })
     }
 }
@@ -438,7 +445,11 @@ mod tests {
     #[test]
     fn compare_refs() {
         let r = SweepRef::parse("exp/lab-oc-agg1/agg").unwrap();
-        assert_eq!(r.mode, Mode::Parallel);
+        assert_eq!(r.side, CompareSide::Mode(Mode::Parallel));
+        let base = SweepRef::parse("exp/lab-oc-agg1/base").unwrap();
+        assert_eq!(base.side, CompareSide::Base);
+        assert_eq!(base.to_param(), "exp/lab-oc-agg1/base");
+        assert!(SweepRef::parse("exp/sweep/bases").is_none());
         assert_eq!(r.to_param(), "exp/lab-oc-agg1/parallel");
         assert!(SweepRef::parse("exp/sweep").is_none());
         assert!(SweepRef::parse("exp/sweep/both").is_none());

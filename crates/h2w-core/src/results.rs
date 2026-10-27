@@ -13,11 +13,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use h2w_api::{
-    AnonId, AuditSession, BaseJudgedRow, BaseRun, Comparison, Experience, ExperimentKind,
-    FileContent, FileEntry, FileKind, HarnessDiff, HarnessFile, HarnessRef, HarnessRole,
-    HarnessTree, JudgedRow, Ledger, LibraryDomain, LibraryEntry, Mode, ModeRecord, ModeScore,
-    ScoreReport, Scores, Selection, Similarity, Stage, Substrate, Surface, SweepIdentity,
-    SweepSummary, TaskDelta, TaskDetail, TaskModeOutcome, TaskRow,
+    AnonId, AuditSession, BaseJudgedRow, BaseOutcome, BaseRun, CompareSide, Comparison, Experience,
+    ExperimentKind, FileContent, FileEntry, FileKind, HarnessDiff, HarnessFile, HarnessRef,
+    HarnessRole, HarnessTree, JudgedRow, Ledger, LibraryDomain, LibraryEntry, Mode, ModeRecord,
+    ModeScore, NoiseFloor, NoiseKind, ScoreReport, Scores, Selection, Similarity, Stage, Substrate,
+    Surface, SweepIdentity, SweepSummary, TaskDelta, TaskDetail, TaskModeOutcome, TaskRow,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -307,6 +307,42 @@ fn list(v: &Value) -> &[Value] {
 
 fn usize_u32(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// A graded reference rollout's partial credit 0..1 (`None`: not graded).
+fn base_frac(r: &BaseJudgedRow) -> Option<f64> {
+    match (r.points_passed, r.points_max) {
+        (Some(p), Some(c)) if c > 0.0 => Some(p / c),
+        _ => None,
+    }
+}
+
+/// The starting harness on each task that has rows in `base_judged.json`: `None` for a task
+/// none of whose rollouts was graded.
+fn base_outcomes(rows: &[BaseJudgedRow]) -> BTreeMap<&str, Option<BaseOutcome>> {
+    let mut per: BTreeMap<&str, Vec<(f64, bool)>> = BTreeMap::new();
+    for r in rows {
+        let graded = per.entry(r.task_id.as_str()).or_default();
+        if let Some(f) = base_frac(r) {
+            graded.push((f, r.all_pass == Some(true)));
+        }
+    }
+    per.into_iter()
+        .map(|(task, graded)| {
+            let fracs: Vec<f64> = graded.iter().map(|x| x.0).collect();
+            let outcome = pyfmt::mean(&fracs).map(|score| {
+                let lo = fracs.iter().copied().fold(f64::INFINITY, f64::min);
+                let hi = fracs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                BaseOutcome {
+                    graded: usize_u32(fracs.len()),
+                    score,
+                    spread: (fracs.len() >= 2).then_some(hi - lo),
+                    all_pass: graded.iter().all(|x| x.1),
+                }
+            });
+            (task, outcome)
+        })
+        .collect()
 }
 
 /// Upstream `_modes_of`: the per-mode records (`modes`, or the legacy `arms`).
@@ -997,6 +1033,12 @@ impl ExperimentDir {
             } else {
                 None
             };
+        let base_fracs: Vec<f64> = self
+            .base_rows(sweep, budget)?
+            .into_iter()
+            .filter_map(|(_, f)| f)
+            .collect();
+        let base_score = pyfmt::mean(&base_fracs).map(|m| pyfmt::round(100.0 * m, 2));
         Ok(SweepSummary {
             id: sweep.summary().to_string(),
             bench_name: sweep.bench_name.clone(),
@@ -1012,6 +1054,7 @@ impl ExperimentDir {
             failed,
             usd,
             headline,
+            base_score,
             updated_at: newest.and_then(rfc3339),
         })
     }
@@ -1110,6 +1153,12 @@ impl ExperimentDir {
     pub fn tasks_with(&self, sweep: &Namespace, budget: &mut ReadBudget) -> Result<Vec<TaskRow>> {
         budget.take_sweep()?;
         let judged = self.judged_rows(sweep, budget)?;
+        let base_rows: Vec<BaseJudgedRow> = self
+            .base_rows(sweep, budget)?
+            .into_iter()
+            .map(|(r, _)| r)
+            .collect();
+        let base = base_outcomes(&base_rows);
         let mut scores: HashMap<(&str, Mode), &JudgedRow> = HashMap::new();
         for r in judged.iter().filter(|r| r.k == sweep.k) {
             scores.insert((r.task_id.as_str(), r.mode), r);
@@ -1124,8 +1173,10 @@ impl ExperimentDir {
                     } else {
                         "unreadable"
                     };
+                    let task_id = slug.replace("__", "/");
                     rows.push(TaskRow {
-                        task_id: slug.replace("__", "/"),
+                        base: base.get(task_id.as_str()).cloned().flatten(),
+                        task_id,
                         slug,
                         domain: String::new(),
                         status: status.into(),
@@ -1171,6 +1222,7 @@ impl ExperimentDir {
                 status: s.status.text(),
                 errors: s.errors.len(),
                 modes,
+                base: base.get(task_id.as_str()).cloned().flatten(),
                 slug,
                 task_id,
             });
@@ -2115,35 +2167,49 @@ fn sign_test(wins: u32, losses: u32) -> Option<f64> {
     Some((2.0 * tail).min(1.0))
 }
 
-/// Per-task deltas between two score sets. `a_mode`/`b_mode` pick the rows of each side;
-/// `domains` maps task id to domain for display.
+/// Per-task deltas between two score sets. `a_side`/`b_side` pick a mode's rows or the
+/// starting harness (the mean of its graded reference rollouts) of each side; `domains` maps
+/// task id to domain for display. `across` says the two sides are different sweeps whose
+/// executor is the same (same profile), so their reference rollouts measure run-to-run
+/// variation against each other; see [`noise_floor`].
 ///
 /// Scores are fractions 0..1 (partial credit, as `JudgedRow::frac`); `delta = b - a`. Means
 /// are over the tasks graded on both sides. Wins count tasks where `b` scored higher. Tasks
-/// are listed by task id, every task that has a row of the chosen mode on either side.
+/// are listed by task id, every task that has a row of the chosen side on either side.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn compare(
     a_label: &str,
     a: &Scores,
-    a_mode: Mode,
+    a_side: CompareSide,
     b_label: &str,
     b: &Scores,
-    b_mode: Mode,
+    b_side: CompareSide,
     domains: &BTreeMap<String, String>,
+    across: bool,
 ) -> Comparison {
-    let side = |s: &Scores, mode: Mode| -> BTreeMap<String, Option<f64>> {
+    let side = |s: &Scores, which: CompareSide| -> BTreeMap<String, Option<f64>> {
         let mut m: BTreeMap<String, Option<f64>> = BTreeMap::new();
-        for r in s.rows.iter().filter(|r| r.mode == mode) {
-            let v = if r.graded { r.frac } else { None };
-            let slot = m.entry(r.task_id.clone()).or_insert(None);
-            if slot.is_none() {
-                *slot = v;
+        match which {
+            CompareSide::Mode(mode) => {
+                for r in s.rows.iter().filter(|r| r.mode == mode) {
+                    let v = if r.graded { r.frac } else { None };
+                    let slot = m.entry(r.task_id.clone()).or_insert(None);
+                    if slot.is_none() {
+                        *slot = v;
+                    }
+                }
+            }
+            CompareSide::Base => {
+                for (task, outcome) in base_outcomes(&s.base_rows) {
+                    m.insert(task.to_owned(), outcome.map(|o| o.score));
+                }
             }
         }
         m
     };
-    let sa = side(a, a_mode);
-    let sb = side(b, b_mode);
+    let sa = side(a, a_side);
+    let sb = side(b, b_side);
     let mut ids: Vec<&String> = sa.keys().chain(sb.keys()).collect();
     ids.sort();
     ids.dedup();
@@ -2191,7 +2257,45 @@ pub fn compare(
         losses,
         ties,
         sign_test_p: sign_test(wins, losses),
+        noise: noise_floor(a, b, across),
     }
+}
+
+/// How far the starting harness moved between runs, as the yardstick for a comparison:
+/// with `across` (two sweeps, same executor), the per-task difference between the two sweeps'
+/// mean reference scores; otherwise, or when no task has graded reference rollouts on both
+/// sides, the spread between the k reference rollouts of each task of A, else of B (k >= 2).
+/// `None` when neither can be measured.
+#[must_use]
+pub fn noise_floor(a: &Scores, b: &Scores, across: bool) -> Option<NoiseFloor> {
+    let summary = |kind: NoiseKind, diffs: &[f64]| {
+        (!diffs.is_empty()).then(|| NoiseFloor {
+            kind,
+            n: usize_u32(diffs.len()),
+            mean_abs: diffs.iter().sum::<f64>() / diffs.len() as f64,
+            max_abs: diffs.iter().copied().fold(0.0, f64::max),
+        })
+    };
+    if across {
+        let (oa, ob) = (base_outcomes(&a.base_rows), base_outcomes(&b.base_rows));
+        let diffs: Vec<f64> = oa
+            .iter()
+            .filter_map(|(task, x)| {
+                let y = ob.get(task)?.as_ref()?;
+                Some((x.as_ref()?.score - y.score).abs())
+            })
+            .collect();
+        if let Some(n) = summary(NoiseKind::AcrossSweeps, &diffs) {
+            return Some(n);
+        }
+    }
+    [a, b].into_iter().find_map(|s| {
+        let spreads: Vec<f64> = base_outcomes(&s.base_rows)
+            .into_values()
+            .filter_map(|o| o?.spread)
+            .collect();
+        summary(NoiseKind::WithinSweep, &spreads)
+    })
 }
 
 #[cfg(test)]
@@ -2328,11 +2432,12 @@ mod tests {
         let c = compare(
             "e/s/parallel",
             &a,
-            Mode::Parallel,
+            CompareSide::Mode(Mode::Parallel),
             "e/s/sequential",
             &b,
-            Mode::Sequential,
+            CompareSide::Mode(Mode::Sequential),
             &domains,
+            false,
         );
         assert_eq!(c.n_common, 3);
         assert_eq!((c.wins, c.losses, c.ties), (1, 1, 1));
@@ -2343,6 +2448,111 @@ mod tests {
         assert_eq!(c.mean_a, Some(2.0 / 3.0));
         assert_eq!(c.mean_b, Some(0.5));
         assert_eq!(c.sign_test_p, Some(1.0));
+    }
+
+    fn br(task: &str, label: &str, passed: Option<f64>, max: f64) -> BaseJudgedRow {
+        BaseJudgedRow {
+            task_id: task.into(),
+            label: label.into(),
+            run_id: String::new(),
+            n_passed: None,
+            n_criteria: None,
+            all_pass: passed.map(|p| (p - max).abs() < f64::EPSILON),
+            points_passed: passed,
+            points_max: passed.map(|_| max),
+        }
+    }
+
+    #[test]
+    fn base_outcomes_average_the_graded_rollouts() {
+        let rows = vec![
+            br("t1", "base1", Some(3.0), 4.0),
+            br("t1", "base2", Some(4.0), 4.0),
+            br("t2", "base1", Some(4.0), 4.0),
+            br("t3", "base1", None, 4.0),
+        ];
+        let o = base_outcomes(&rows);
+        let t1 = o["t1"].as_ref().unwrap();
+        assert_eq!(
+            (t1.graded, t1.score, t1.spread, t1.all_pass),
+            (2, 0.875, Some(0.25), false)
+        );
+        let t2 = o["t2"].as_ref().unwrap();
+        assert_eq!(
+            (t2.graded, t2.score, t2.spread, t2.all_pass),
+            (1, 1.0, None, true)
+        );
+        assert!(
+            o["t3"].is_none(),
+            "a task whose rollouts are all ungraded has no outcome"
+        );
+    }
+
+    #[test]
+    fn compare_against_the_starting_harness() {
+        let s = Scores {
+            rows: vec![
+                jr("t1", Mode::Parallel, Some(0.5)),
+                jr("t2", Mode::Parallel, Some(1.0)),
+            ],
+            base_rows: vec![
+                br("t1", "base1", Some(3.0), 4.0),
+                br("t1", "base2", Some(2.0), 4.0),
+                br("t2", "base1", Some(2.0), 4.0),
+                br("t2", "base2", Some(2.0), 4.0),
+            ],
+        };
+        let c = compare(
+            "e/s/base",
+            &s,
+            CompareSide::Base,
+            "e/s/parallel",
+            &s,
+            CompareSide::Mode(Mode::Parallel),
+            &BTreeMap::new(),
+            false,
+        );
+        assert_eq!(c.n_common, 2);
+        assert_eq!(c.tasks[0].a, Some(0.625));
+        assert_eq!(c.tasks[0].delta, Some(-0.125));
+        assert_eq!(c.tasks[1].delta, Some(0.5));
+        assert_eq!((c.wins, c.losses, c.ties), (1, 1, 0));
+        // One sweep: the yardstick is the spread between each task's two reference rollouts.
+        let n = c.noise.unwrap();
+        assert_eq!(
+            (n.kind, n.n, n.mean_abs, n.max_abs),
+            (NoiseKind::WithinSweep, 2, 0.125, 0.25)
+        );
+    }
+
+    #[test]
+    fn noise_across_two_sweeps_of_one_executor() {
+        let a = Scores {
+            rows: vec![],
+            base_rows: vec![
+                br("t1", "base1", Some(3.0), 4.0),
+                br("t2", "base1", Some(1.0), 4.0),
+            ],
+        };
+        let b = Scores {
+            rows: vec![],
+            base_rows: vec![
+                br("t1", "base1", Some(2.0), 4.0),
+                br("t3", "base1", Some(4.0), 4.0),
+            ],
+        };
+        let n = noise_floor(&a, &b, true).unwrap();
+        assert_eq!(
+            (n.kind, n.n, n.mean_abs, n.max_abs),
+            (NoiseKind::AcrossSweeps, 1, 0.25, 0.25)
+        );
+        // Another executor's runs measure the model, not noise; k = 1 has no spread either.
+        assert_eq!(noise_floor(&a, &b, false), None);
+        let empty = Scores {
+            rows: vec![],
+            base_rows: vec![],
+        };
+        assert_eq!(noise_floor(&empty, &empty, true), None);
     }
 
     #[test]

@@ -131,6 +131,10 @@ pub struct SweepSummary {
     /// Present once `judged.json` exists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headline: Option<Vec<ModeScore>>,
+    /// Mean partial credit of the starting harness's graded reference rollouts, in percent,
+    /// once `harness2-judge --bases` has run (additive after v1.7; the Report's `base_score`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_score: Option<f64>,
     /// Newest summary modification time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
@@ -172,6 +176,27 @@ pub struct TaskRow {
     pub modes: Vec<TaskModeOutcome>,
     /// Number of errors recorded for the task.
     pub errors: u32,
+    /// The starting harness on this task, once `harness2-judge --bases` graded at least one of
+    /// its reference rollouts (additive after v1.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<BaseOutcome>,
+}
+
+/// The starting (base) harness on one task: its graded reference rollouts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct BaseOutcome {
+    /// Reference rollouts graded (k once judging is complete).
+    pub graded: u32,
+    /// Mean partial credit 0..1 over the graded rollouts.
+    pub score: f64,
+    /// Highest minus lowest partial credit when two or more rollouts were graded: how far the
+    /// same harness moved on the same task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spread: Option<f64>,
+    /// Every graded rollout passed every criterion.
+    pub all_pass: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -874,6 +899,38 @@ pub struct Comparison {
     /// Sign-test two-sided p-value over wins vs losses (ties dropped), when n >= 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sign_test_p: Option<f64>,
+    /// How far the starting harness moved between runs on these tasks, when the sweeps hold
+    /// graded reference rollouts to measure it: a difference within it is run-to-run variation
+    /// (additive after v1.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise: Option<NoiseFloor>,
+}
+
+/// Run-to-run variation of the starting harness, measured on the compared tasks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct NoiseFloor {
+    /// What was measured.
+    pub kind: NoiseKind,
+    /// Tasks measured.
+    pub n: u32,
+    /// Mean absolute difference, 0..1.
+    pub mean_abs: f64,
+    /// Largest absolute difference, 0..1.
+    pub max_abs: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum NoiseKind {
+    /// The starting harness of sweep A against that of sweep B, task by task (two sweeps that
+    /// ran the same tasks from the same harness).
+    AcrossSweeps,
+    /// The spread between the k reference rollouts of each task, within one sweep (k >= 2).
+    WithinSweep,
 }
 
 /// Reproducibility manifest for an experiment (`GET .../manifest`).

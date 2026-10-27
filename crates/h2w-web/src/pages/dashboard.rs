@@ -305,7 +305,7 @@ pub(crate) fn Dashboard() -> impl IntoView {
                                                                     <a class="small" href=route::sweep(&e.name, &sw.id)>
                                                                         {sw.id.clone()}
                                                                     </a>
-                                                                    <HeadlineScores scores=sw.headline.clone() />
+                                                                    <HeadlineScores scores=sw.headline.clone() base=sw.base_score />
                                                                 </div>
                                                             }
                                                                 .into_any()

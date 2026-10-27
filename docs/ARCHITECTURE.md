@@ -581,3 +581,16 @@ independent audit (findings F1–F16):
   `python3 -I $LAB_BENCH_ROOT/sandbox/parsers/parse_doc.py <ext> <file>`; anything else exits 125.
 - `cargo xtask runner-docs --harness2-home <home> [--image] [--runtime]` checks it against a real
   LAB checkout: each document read through the stand-in must equal `read_doc.py --in host`.
+
+**v1.8 (2026-10-27) — comparing against the starting harness.**
+- `h2w_api::CompareSide { Mode(Mode), Base }` (`parse`: `base` or a mode token; `as_param`).
+  `GET /compare` accepts `<experiment>/<sweep>/base` for either side; anything else in the third
+  segment is `422`.
+- `Comparison.noise: Option<NoiseFloor { kind, n, mean_abs, max_abs }>` (additive; fractions),
+  `NoiseKind` `across_sweeps` | `within_sweep`: across two sweeps of experiments pinned to the
+  same profile when some task has graded reference rollouts in both, else the spread between the
+  k reference rollouts of each task of A, then of B. `h2w_core::results::noise_floor`.
+- `TaskRow.base: Option<BaseOutcome { graded, score, spread?, all_pass }>` and
+  `SweepSummary.base_score: Option<f64>` (percent), both additive; a reference rollout's score is
+  `points_passed / points_max` of its `base_judged.json` row.
+- MCP `compare_sweeps`: a side's `mode` may be `base`. The web UI and the mock API follow.

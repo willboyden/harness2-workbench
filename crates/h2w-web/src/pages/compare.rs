@@ -1,9 +1,11 @@
-//! Compare two (experiment, sweep, mode) results task by task, with a sign test.
+//! Compare two results task by task, with a sign test: two (experiment, sweep, mode) results,
+//! or a mode against the sweep's starting harness (`base`), with the starting harness's measured
+//! run-to-run variation when the sweeps hold it.
 //!
 //! `Comparison` values are fractions 0..1 (contract addendum v1.1); they are shown as
 //! percentages and percentage points.
 
-use h2w_api::{Comparison, Experiment, Mode};
+use h2w_api::{CompareSide, Comparison, Experiment, Mode};
 use leptos::prelude::*;
 
 use crate::api;
@@ -15,12 +17,19 @@ use crate::components::ui::{
 use crate::components::widgets::mode_label;
 use crate::logic::format;
 use crate::logic::jobs::Tone;
-use crate::logic::report::{delta_bars, delta_extent, sign_test_reading};
+use crate::logic::report::{delta_bars, delta_extent, noise_reading, sign_test_reading};
 use crate::logic::urls::{SweepRef, api as paths, route};
 use crate::nav::{query_param, query_setter};
 
 fn frac(v: Option<f64>) -> String {
     v.map_or_else(|| format::DASH.to_owned(), format::frac_pct)
+}
+
+fn side_label(side: CompareSide) -> &'static str {
+    match side {
+        CompareSide::Mode(m) => mode_label(m),
+        CompareSide::Base => "starting harness",
+    }
 }
 
 #[component]
@@ -34,22 +43,23 @@ pub(crate) fn Compare() -> impl IntoView {
     let experiments = LocalResource::new(|| async {
         api::get::<Vec<Experiment>>(&paths::experiments(false)).await
     });
-    // Every (experiment, sweep, mode) that exists, with k for the noise-floor note.
+    // Every (experiment, sweep, mode) that exists, and the starting harness of every sweep
+    // whose reference rollouts were judged, with k for the noise-floor note.
     let choices = Memo::new(move |_| {
         let mut v: Vec<(SweepRef, u32, bool)> = Vec::new();
         if let Some(Ok(list)) = experiments.get() {
             for e in list {
                 for s in &e.sweeps {
+                    let r = |side| SweepRef {
+                        experiment: e.name.clone(),
+                        sweep: s.id.clone(),
+                        side,
+                    };
                     for m in &s.modes {
-                        v.push((
-                            SweepRef {
-                                experiment: e.name.clone(),
-                                sweep: s.id.clone(),
-                                mode: *m,
-                            },
-                            s.k,
-                            s.headline.is_some(),
-                        ));
+                        v.push((r(CompareSide::Mode(*m)), s.k, s.headline.is_some()));
+                    }
+                    if s.base_score.is_some() {
+                        v.push((r(CompareSide::Base), s.k, true));
                     }
                 }
             }
@@ -63,7 +73,7 @@ pub(crate) fn Compare() -> impl IntoView {
                 "{} / {} / {} (k={}){}",
                 r.experiment,
                 r.sweep,
-                mode_label(r.mode),
+                side_label(r.side),
                 k,
                 if judged { "" } else { " — not judged" }
             );
@@ -81,17 +91,27 @@ pub(crate) fn Compare() -> impl IntoView {
             }
         });
     }
-    // Only A given: default B to the other mode of the same sweep.
+    // Only A given: default B to the other mode of the same sweep, or, for the starting
+    // harness, to the sweep's first mode (did refinement beat the harness it started from?).
     Effect::new(move |_| {
         if b.get_untracked().is_empty()
             && let Some(ra) = SweepRef::parse(&a.get())
         {
-            let other = match ra.mode {
-                Mode::Parallel => Mode::Sequential,
-                Mode::Sequential => Mode::Parallel,
+            let others: &[CompareSide] = match ra.side {
+                CompareSide::Mode(Mode::Parallel) => &[CompareSide::Mode(Mode::Sequential)],
+                CompareSide::Mode(Mode::Sequential) => &[CompareSide::Mode(Mode::Parallel)],
+                CompareSide::Base => &[
+                    CompareSide::Mode(Mode::Parallel),
+                    CompareSide::Mode(Mode::Sequential),
+                ],
             };
-            let candidate = SweepRef { mode: other, ..ra };
-            if choices.with(|c| c.iter().any(|(r, _, _)| *r == candidate)) {
+            let found = others.iter().find_map(|&side| {
+                let candidate = SweepRef { side, ..ra.clone() };
+                choices
+                    .with(|c| c.iter().any(|(r, _, _)| *r == candidate))
+                    .then_some(candidate)
+            });
+            if let Some(candidate) = found {
                 b.set(candidate.to_param());
             }
         }
@@ -115,7 +135,7 @@ pub(crate) fn Compare() -> impl IntoView {
         <div class="page">
             <PageHeader
                 title="Compare"
-                subtitle="Two sweeps, or the two modes of one sweep, task by task: who won, by how much, and whether it is more than chance."
+                subtitle="Two sweeps, the two modes of one sweep, or a mode against the harness it started from, task by task: who won, by how much, and whether it is more than chance."
             />
             <div class="compare-pickers">
                 <div class="compare-side">
@@ -146,7 +166,7 @@ pub(crate) fn Compare() -> impl IntoView {
                 Some(Ok(None)) => view! {
                     <EmptyState
                         title="Pick two results"
-                        body="Choose a sweep and mode for A and for B. Comparing the parallel and sequential modes of one sweep is a good start; both need to be judged."
+                        body="Choose a sweep and mode for A and for B. A good start: a sweep's starting harness as A and its parallel mode as B, which asks whether refinement beat the harness it started from (the starting harness is offered once its reference rollouts are judged)."
                     />
                 }
                 .into_any(),
@@ -154,7 +174,9 @@ pub(crate) fn Compare() -> impl IntoView {
                     let bars = delta_bars(&c.tasks);
                     let extent = delta_extent(&bars);
                     let reading = sign_test_reading(&c);
-                    let low_k = [k_of(&a.get_untracked()), k_of(&b.get_untracked())].contains(&Some(1));
+                    let noise = noise_reading(&c);
+                    let low_k = noise.is_none()
+                        && [k_of(&a.get_untracked()), k_of(&b.get_untracked())].contains(&Some(1));
                     let mut rows = c.tasks.clone();
                     rows.sort_by(|x, y| {
                         y.delta
@@ -185,9 +207,21 @@ pub(crate) fn Compare() -> impl IntoView {
                                 value=c.sign_test_p.map_or_else(|| format::DASH.to_owned(), format::p_value)
                                 hint="two-sided, ties dropped"
                             />
+                            {c.noise.as_ref().map(|n| view! {
+                                <Stat
+                                    label="Noise floor"
+                                    value=format::points(n.mean_abs * 100.0)
+                                    hint="the starting harness, run to run, per task"
+                                />
+                            })}
                         </div>
                         <Card title="What this means">
                             <p class="reading">{reading}</p>
+                            {noise.map(|text| view! {
+                                <p class="reading">
+                                    {text}" "<Term id="noise-floor">"About the noise floor"</Term>
+                                </p>
+                            })}
                             {low_k
                                 .then(|| {
                                     view! {

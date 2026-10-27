@@ -7,11 +7,12 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use h2w_api::{
-    AnonId, AuditSession, BaseJudgedRow, BaseRun, Cell, Census, ChangeKind, Component, Experience,
-    ExportBundle, ExportTarget, FileContent, FileDiff, FileEntry, FileKind, FileText, HarnessDiff,
-    HarnessFile, HarnessRef, HarnessRole, HarnessTree, JudgedRow, Ledger, LibraryDomain,
-    LibraryEntry, Mode, ModeRecord, ModeScore, ModeSummary, ScoreReport, Scores, Selection,
-    Similarity, Stage, Substrate, Surface, SweepSummary, TaskDetail, TaskModeOutcome, TaskRow,
+    AnonId, AuditSession, BaseJudgedRow, BaseOutcome, BaseRun, Cell, Census, ChangeKind, Component,
+    Experience, ExportBundle, ExportTarget, FileContent, FileDiff, FileEntry, FileKind, FileText,
+    HarnessDiff, HarnessFile, HarnessRef, HarnessRole, HarnessTree, JudgedRow, Ledger,
+    LibraryDomain, LibraryEntry, Mode, ModeRecord, ModeScore, ModeSummary, ScoreReport, Scores,
+    Selection, Similarity, Stage, Substrate, Surface, SweepSummary, TaskDetail, TaskModeOutcome,
+    TaskRow,
 };
 
 use crate::util::{Rng, seed_of, unified_diff};
@@ -792,12 +793,44 @@ pub(crate) fn task_detail(spec: &SweepSpec, task: &TaskSpec) -> TaskDetail {
     }
 }
 
+/// The starting harness on each task, from the graded reference rollouts, as the server
+/// computes it: mean partial credit, spread when k >= 2, all-pass when every rollout passed.
+pub(crate) fn base_outcomes(rows: &[BaseJudgedRow]) -> BTreeMap<String, BaseOutcome> {
+    let mut per: BTreeMap<String, Vec<(f64, bool)>> = BTreeMap::new();
+    for r in rows {
+        if let (Some(p), Some(c)) = (r.points_passed, r.points_max)
+            && c > 0.0
+        {
+            per.entry(r.task_id.clone())
+                .or_default()
+                .push((p / c, r.all_pass == Some(true)));
+        }
+    }
+    per.into_iter()
+        .map(|(task, v)| {
+            let n = v.len();
+            let score = v.iter().map(|x| x.0).sum::<f64>() / n as f64;
+            let lo = v.iter().map(|x| x.0).fold(f64::INFINITY, f64::min);
+            let hi = v.iter().map(|x| x.0).fold(f64::NEG_INFINITY, f64::max);
+            let outcome = BaseOutcome {
+                graded: u32::try_from(n).unwrap_or(u32::MAX),
+                score,
+                spread: (n >= 2).then_some(hi - lo),
+                all_pass: v.iter().all(|x| x.1),
+            };
+            (task, outcome)
+        })
+        .collect()
+}
+
 pub(crate) fn task_rows(spec: &SweepSpec) -> Vec<TaskRow> {
+    let base = base_outcomes(&scores(spec).base_rows);
     spec.tasks
         .iter()
         .map(|t| {
             let runs = mode_runs(t);
             TaskRow {
+                base: base.get(&t.id).cloned(),
                 task_id: t.id.clone(),
                 slug: t.slug(),
                 domain: t.domain.clone(),
@@ -926,6 +959,17 @@ pub(crate) fn summary(spec: &SweepSpec) -> SweepSummary {
         failed: count(TaskState::BaseFailed),
         usd,
         headline: headline(spec),
+        base_score: {
+            let fr: Vec<f64> = scores(spec)
+                .base_rows
+                .iter()
+                .filter_map(|r| r.points_passed.zip(r.points_max))
+                .filter(|(_, c)| *c > 0.0)
+                .map(|(p, c)| p / c)
+                .collect();
+            (!fr.is_empty())
+                .then(|| (100.0 * fr.iter().sum::<f64>() / fr.len() as f64 * 100.0).round() / 100.0)
+        },
         updated_at: Some(spec.updated_at.clone()),
     }
 }

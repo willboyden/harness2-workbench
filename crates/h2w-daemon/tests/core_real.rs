@@ -1051,6 +1051,21 @@ async fn results_endpoints_on_a_standard_experiment() {
     )
     .await;
     assert!(cmp.n_common > 0, "{cmp:?}");
+    let vs_base: Comparison = get_json(
+        &t,
+        "/api/v1/compare?a=std-fx/lab-oc-agg1/base&b=std-fx/lab-oc-agg1/parallel",
+    )
+    .await;
+    assert_eq!(vs_base.a, "std-fx/lab-oc-agg1/base");
+    assert_eq!((vs_base.n_common, vs_base.wins), (2, 2), "{vs_base:?}");
+    assert_eq!(
+        status_of(
+            &t,
+            "/api/v1/compare?a=std-fx/lab-oc-agg1/bases&b=std-fx/lab-oc-agg1/parallel"
+        )
+        .await,
+        422
+    );
     // A preview estimate can use this experiment's measured spend.
     let r = t
         .post("/api/v1/estimate", Some(&t.viewer))

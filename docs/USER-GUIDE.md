@@ -158,13 +158,17 @@ A **sweep** is one benchmark cell, budget k, seed and tag; both recursion modes 
 ![The tasks tab of a sweep](images/sweep-tasks.png)
 
 The header shows the number of tasks (`2 ok · 0 partial · 0 failed`), recorded spend and the
-**Headline** (the scores per mode once judged, "not judged yet" before). **Compare…** opens the
-comparison with this sweep (its first mode) chosen as A. The four tabs are bound to the address (`?tab=report`), so
-you can link to them.
+**Headline** (the scores per mode once judged, "not judged yet" before, and a **base** score once
+the reference rollouts are judged). **Compare…** opens the comparison with this sweep: its starting
+harness as A and its first mode as B once the reference rollouts are judged, else its first mode as
+A. The four tabs are bound to the address (`?tab=report`), so you can link to them.
 
 **Tasks.** One row per task: status (`ok`, `skipped`, `partial`, `base-failed`, `running`,
 `exception`, or `unreadable` / `too-large` for a summary file the server could not or would not
-read), the harness each mode adopted (`agg1`, `c1`, or *kept base*), its score, and spend.
+read), the harness each mode adopted (`agg1`, `c1`, or *kept base*), its score, and spend. Once
+the reference rollouts are judged (**Judge** with *bases*), a **Base score** column shows the
+starting harness on each task (the mean of its graded reference rollouts, with their count and, from
+k = 2, their spread), and each mode's score says how far it is from it (`−2.5 pts vs base`).
 Filter by **Domain** and **Status**; the table pages. A score is a percentage of the judge's points
 with an *all pass* or *not all pass* note; badges such as `1 fell back` (a stage fell back after two
 rejected proposals) and `1 error` explain odd rows. A task that was not graded shows `—`: ungraded
@@ -385,14 +389,20 @@ before a line is stored, but that is best effort and **every viewer can read eve
 ![The comparison page (mock)](images/mock-compare.png)
 
 *Mock data.* **Compare** puts two results side by side, task by task: choose **A (the reference)**
-and **B (the challenger)**, each a sweep and mode (comparing the parallel and sequential modes of one
-sweep is a good start; both must be judged). The page shows the mean score of each, the difference
+and **B (the challenger)**, each a sweep and mode, or a sweep's **starting harness** (offered once
+its reference rollouts are judged). A sweep's starting harness as A and its parallel mode as B asks
+the central question: did refinement beat the harness it started from? The page shows the mean score of each, the difference
 **B − A** in points, **wins / losses / ties** over the tasks graded on both sides, and the two-sided
 **sign test** (ties dropped), then **What this means** in plain words (for example that with fewer
 than six decisive tasks the test cannot reach p < 0.05, or that k = 1 results are noisy), a bar chart
 of the per-task change and a table. Ungraded tasks are left out of the means and the test.
+**Noise floor**, when shown, is how far the starting harness itself moved between runs on these
+tasks: between the starting harnesses of two sweeps of the same profile (the same harness on the
+same tasks, run twice), or between the k reference rollouts of each task (k of 2 or more). **What
+this means** then says whether the mean difference is within it. A difference within the noise
+floor can be run-to-run variation: run the sweep again with another seed before concluding.
 **Swap A and B** exchanges them, and the chosen pair is in the address, so you can share it.
-**Compare…** on a sweep page opens this page with that sweep chosen as A.
+**Compare…** on a sweep page opens this page with that sweep chosen.
 
 ## 10. Benchmarks and splits
 

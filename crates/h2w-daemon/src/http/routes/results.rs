@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use h2w_api::{
-    AuditSession, Comparison, ErrorBody, ExportBundle, ExportTarget, FileContent, FileEntry,
-    HarnessDiff, HarnessTree, LibraryDomain, Mode, Page, ScoreReport, Scores, TaskDetail, TaskRow,
+    AuditSession, CompareSide, Comparison, ErrorBody, ExportBundle, ExportTarget, FileContent,
+    FileEntry, HarnessDiff, HarnessTree, LibraryDomain, Mode, Page, ScoreReport, Scores,
+    TaskDetail, TaskRow,
 };
 use h2w_core::namespace::Namespace;
 use h2w_core::results::DEFAULT_READ_CAP;
@@ -487,24 +488,29 @@ pub async fn audit_text(
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[serde(deny_unknown_fields)]
 pub struct CompareQuery {
-    /// `<experiment>/<sweep>/<mode>`
+    /// `<experiment>/<sweep>/<mode>`, or `<experiment>/<sweep>/base` for the starting harness
     pub a: String,
-    /// `<experiment>/<sweep>/<mode>`
+    /// `<experiment>/<sweep>/<mode>`, or `<experiment>/<sweep>/base` for the starting harness
     pub b: String,
 }
 
-fn split_side(field: &str, s: &str) -> Result<(String, String, Mode), ApiError> {
+fn split_side(field: &str, s: &str) -> Result<(String, String, CompareSide), ApiError> {
     let parts: Vec<&str> = s.split('/').collect();
-    let [exp, sweep, m] = parts.as_slice() else {
+    let [exp, sweep, side] = parts.as_slice() else {
         return Err(ApiError::invalid(
             field,
-            "must be <experiment>/<sweep>/<mode>",
+            "must be <experiment>/<sweep>/<mode> or <experiment>/<sweep>/base",
         ));
     };
-    Ok(((*exp).to_owned(), (*sweep).to_owned(), mode(field, m)?))
+    let side = match CompareSide::parse(side) {
+        Some(s) => s,
+        None => CompareSide::Mode(mode(field, side)?),
+    };
+    Ok(((*exp).to_owned(), (*sweep).to_owned(), side))
 }
 
-/// Per-task deltas between two (sweep, mode) results, with a sign test.
+/// Per-task deltas between two results (a mode's adopted harnesses, or a sweep's starting
+/// harness), with a sign test and the starting harness's measured run-to-run variation.
 #[utoipa::path(get, path = "/api/v1/compare", tag = "results", params(CompareQuery),
     responses((status = 200, body = Comparison), (status = "default", description = "Error", body = ErrorBody)))]
 pub async fn compare(
@@ -519,6 +525,9 @@ pub async fn compare(
     let (na, nb) = (sweep_ns(&sa)?, sweep_ns(&sb)?);
     let (ka, kb) = (ra.kind, rb.kind);
     let (la, lb) = (q.a.clone(), q.b.clone());
+    // Two sweeps' reference rollouts measure run-to-run variation only when the same executor
+    // produced them: different sweeps of experiments pinned to the same profile.
+    let across = (ea != eb || sa != sb) && ra.profile.is_some() && ra.profile == rb.profile;
     results_json(&state, move |cancel| {
         // One budget for the request: two sweeps' scores and task rows.
         let mut budget = cancel.budget(COMPARE_BYTES, 4);
@@ -533,7 +542,7 @@ pub async fn compare(
             domains.entry(r.task_id).or_insert(r.domain);
         }
         Ok(h2w_core::results::compare(
-            &la, &scores_a, ma, &lb, &scores_b, mb, &domains,
+            &la, &scores_a, ma, &lb, &scores_b, mb, &domains, across,
         ))
     })
     .await
@@ -556,10 +565,16 @@ mod tests {
         let (e, s, m) = split_side("a", "demo/demo-oc-agg2/sequential").unwrap();
         assert_eq!(
             (e.as_str(), s.as_str(), m),
-            ("demo", "demo-oc-agg2", Mode::Sequential)
+            ("demo", "demo-oc-agg2", CompareSide::Mode(Mode::Sequential))
         );
+        let (_, _, base) = split_side("a", "demo/demo-oc-agg2/base").unwrap();
+        assert_eq!(base, CompareSide::Base);
         assert!(split_side("a", "demo/x").is_err());
         assert!(split_side("a", "demo/x/y/z").is_err());
+        assert_eq!(
+            split_side("a", "demo/x/bases").unwrap_err().status.as_u16(),
+            422
+        );
     }
 
     #[test]

@@ -34,7 +34,9 @@ Contents: [conventions](#1-conventions) · [authentication](#2-authentication) �
   URLs in a log are not masked. See [THREAT-MODEL.md](THREAT-MODEL.md) (I4) for what it does and
   does not cover.
 - Mode path segments and `/compare` references accept `parallel` and `sequential`, and also the
-  on-disk tokens `agg` and `seq`.
+  on-disk tokens `agg` and `seq`. A `/compare` reference may name `base` instead of a mode
+  (`<experiment>/<sweep>/base`): the sweep's starting harness, the mean of its graded reference
+  rollouts per task.
 - Scores: percent (0..100) in reports, fractions (0..1) in judge rows, task rows and comparisons
   (`Comparison.delta = b - a`, in fraction units). Judge rows carry `n_passed` / `n_criteria` as
   integers; when the judge wrote fractional points (JobBench's weighted judging) those are empty
@@ -221,7 +223,7 @@ enforces the role written here.
 | GET | `/experiments/{exp}/sweeps/{sweep}/library` | viewer |  | 200 [LibraryDomain] | Experience libraries of a sweep. |
 | GET | `/experiments/{exp}/sweeps/{sweep}/audit` | viewer |  | 200 [AuditSession] | Improver and selector sessions of a sweep. |
 | GET | `/experiments/{exp}/sweeps/{sweep}/audit/{session}/{part}` | viewer |  | 200 plain; charset=utf-8 | One text part (`mission`, `system`, `response`) of an audit session, as plain text. |
-| GET | `/compare` | viewer |  | 200 Comparison | Per-task deltas between two (sweep, mode) results, with a sign test. |
+| GET | `/compare` | viewer |  | 200 Comparison | Per-task deltas between two results (`a`, `b`: `<experiment>/<sweep>/<mode>` or `<experiment>/<sweep>/base`), with a sign test and, when the sweeps hold graded reference rollouts, `noise`: how far the starting harness moved between runs (`across_sweeps` for two sweeps of experiments pinned to the same profile, else `within_sweep` from k ≥ 2 reference rollouts). Task rows carry `base` (the starting harness's graded rollouts: count, mean, spread) and sweep summaries `base_score` (percent). |
 
 ### Planning and validation
 
