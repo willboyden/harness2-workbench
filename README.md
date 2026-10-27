@@ -62,8 +62,14 @@ Every feature below carries two words so you can see what is claimed and what is
 | **unverified** | no run of any kind recorded |
 
 "Verified live" below means: by the documentation author on 2026-10-23 and 2026-10-24 on Linux x86_64
-with harness2 `1cfe254`, or by the project maintainers, as stated. **No model-backed sweep has been run
-through the Workbench**: the only real harness2 workflow exercised end to end is the free offline demo.
+with harness2 `1cfe254`, or by the project maintainers, as stated. **One model-backed sweep has been run
+through the Workbench**, by the maintainers on 2026-10-26: one LAB task (k = 1, parallel) in container
+isolation, behind an egress allowlist that held only a LiteLLM gateway serving self-hosted open-weight
+models (executor and improver GLM-5.3-Flash, judge DeepSeek V4.1 Flash through a `gpt-` alias).
+`preview`, `run`, `judge` (refined and base) and `report` completed, on a 0.1.0 server whose runner
+image set the two OpenCode variables that the server now sets itself
+([MODELS.md](docs/MODELS.md#2-which-benchmark-and-executor-work-with-which-profile-kind)). One task
+proves the pipeline, not a result. No Vertex AI sweep has been run.
 
 Most of this code and documentation was written by AI coding agents (Claude) under human direction
 and review; the `Co-Authored-By` trailers of the commits record which.
@@ -82,12 +88,12 @@ and review; the `Co-Authored-By` trailers of the commits record which.
 | Managed harness2 install (pinned commit) or an existing checkout | Implemented | verified live | a few seconds with warm caches; only the tested commit can be installed unless an administrator sets `paths.allow_untested_harness2_rev` |
 | Offline install bundles: `bundle export`, `verify`, `import` | Implemented | verified live by the maintainers on 2026-10-26: a real LAB installation (7.3 GiB) exported, verified and imported into a second Workbench on the same host, where a LAB `check` and the demo ran with no network; runner-image loading, another machine and host isolation unverified | command line only; the SHA-256 must come from a channel you trust; [ADMIN-GUIDE §3.5](docs/ADMIN-GUIDE.md#35-offline-installation-bundles), [ADR 0009](docs/adr/0009-offline-install-bundles.md) |
 | Free demo workflow (`harness2-demo`) | Implemented | verified live (real harness2) | also through MCP |
-| Benchmark `check` and `setup` | Implemented | `check` verified live (failure path on an uninstalled benchmark); `setup` against recorded dry-run output only | real setup is network-heavy and unverified |
-| Sweeps: `preview`, `run`, `judge`, `report`, `split`, `pipeline` | Implemented | fakes only | parsers checked against recorded harness2 output and output of upstream's own code run offline |
-| Browsing results: tasks, harness trees, diffs, exports, rollouts, libraries, improver audit, comparisons with a sign test, manifests | Implemented | verified live on the demo; JobBench, LAB and WorkBuddy layouts against recorded fixtures only | read-only, path-checked, bounded (row above); a sweep list shows at most the newest 200 sweeps of an experiment |
+| Benchmark `check` and `setup` | Implemented | `check` verified live (an uninstalled benchmark, and LAB ready, 2026-10-26); `setup` verified live for LAB by the maintainers on 2026-10-26 (container isolation, through the egress proxy); JobBench and WorkBuddy setup against recorded dry-run output only | real setup is network-heavy; the hosts it needs are in [ADMIN-GUIDE §9](docs/ADMIN-GUIDE.md#9-the-egress-allowlist) |
+| Sweeps: `preview`, `run`, `judge`, `report`, `split`, `pipeline` | Implemented | `preview`, `run`, `judge` (with and without `bases`) and `report` verified live by the maintainers on 2026-10-26 for one LAB task (OpenAI-compatible profile, container isolation); `split` and `pipeline` fakes only | parsers checked against recorded harness2 output and output of upstream's own code run offline |
+| Browsing results: tasks, harness trees, diffs, exports, rollouts, libraries, improver audit, comparisons with a sign test, manifests | Implemented | verified live on the demo, and for the task list, task detail, harness diff and scores on that LAB run; JobBench and WorkBuddy layouts against recorded fixtures only | read-only, path-checked, bounded (row above); a sweep list shows at most the newest 200 sweeps of an experiment |
 | Cost estimates | Implemented | verified live (the arithmetic) | judging and retries excluded |
 | Model profiles: Vertex AI | Implemented | fakes only | [MODELS](docs/MODELS.md) |
-| Model profiles: OpenAI-compatible endpoints (LiteLLM, vLLM, SGLang, Ollama) | Implemented | fakes only; compatibility read from upstream sources | open questions listed |
+| Model profiles: OpenAI-compatible endpoints (LiteLLM, vLLM, SGLang, Ollama) | Implemented | verified live by the maintainers on 2026-10-26 through LiteLLM (one LAB task: executor, improver, and LAB's judge over the Responses API); vLLM, SGLang and Ollama directly: compatibility read from upstream sources | open questions listed |
 | Codex executor and the Vertex bridge | Implemented | fakes only | host isolation only |
 | WorkBuddy-Bench | Partial | unverified | Vertex-only upstream; host isolation only |
 | Container isolation (Docker or Podman) | Implemented | verified live by the maintainers on rootless Docker, 2026-10-23; refusals and `doctor` verified live by the author; the 0600 environment file and the `container_network` and `runner_image` checks verified live by the author only against a stand-in `docker` script; rootful Docker and Podman unverified | [ADMIN-GUIDE §8](docs/ADMIN-GUIDE.md#8-container-isolation-step-by-step) |

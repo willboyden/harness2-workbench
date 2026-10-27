@@ -23,6 +23,23 @@ All notable changes to this project are documented here. The format follows
 - ADMIN-GUIDE §3.2 still called the release archives unpublished; it now says what was verified for
   v0.1.0.
 
+Found by the first model-backed run (LAB, container isolation, an egress allowlist holding only an
+OpenAI-compatible gateway):
+
+- OpenCode sessions of `openai_compatible` profiles exited before their first turn when they could
+  not reach `models.dev`: harness2 runs OpenCode from source, which has no bundled model catalogue,
+  fetches one at start-up and JSON-parses the egress proxy's refusal. The server now sets
+  `OPENCODE_DISABLE_MODELS_FETCH=1` and `OPENCODE_DISABLE_LSP_DOWNLOAD=1` for these profiles; the
+  generated provider needs nothing from the catalogue. Vertex profiles keep the fetch
+  (docs/MODELS.md says to allow `models.dev` for them in container isolation).
+- The runner image ships ripgrep, so OpenCode's grep, glob and list tools no longer try to download
+  it from GitHub.
+- The setup-host catalogue lists `api.github.com` and `pkg.pr.new`, which OpenCode's lockfile needs
+  during LAB setup and upstream's list leaves out.
+- `doctor` no longer fails a container-isolated server for a host without uv, Python 3.12, git,
+  Node.js, npm, curl, Pandoc or Poppler: jobs use the runner image's copies, so those checks are
+  skipped with the reason (the `runner_image` check covers the image).
+
 ## [0.1.0] - 2026-10-24
 
 The first release.

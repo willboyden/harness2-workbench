@@ -23,11 +23,17 @@ pub const DEPENDENCY_PINS: &[(&str, &str)] = &[
 /// Codex CLI version harness2 installs (`config.CODEX_VERSION`).
 pub const CODEX_VERSION: &str = "0.144.6";
 
-/// Hosts setup downloads from (upstream `docs/SETUP.md` "Network access during setup").
+/// Hosts setup downloads from: upstream `docs/SETUP.md` "Network access during setup", plus two
+/// that a LAB setup behind the egress proxy needed and upstream does not list: `api.github.com`
+/// (Bun fetches OpenCode's pinned git dependency `ghostty-web` there; GitHub redirects to
+/// codeload) and `pkg.pr.new` (one package of OpenCode's `bun.lock`, a pinned `@solidjs/start`
+/// preview build).
 pub const SETUP_HOSTS: &[&str] = &[
     "github.com",
     "codeload.github.com",
+    "api.github.com",
     "registry.npmjs.org",
+    "pkg.pr.new",
     "huggingface.co",
     "cdn-lfs.huggingface.co",
     "astral.sh",
