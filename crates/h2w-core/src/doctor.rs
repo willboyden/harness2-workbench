@@ -173,6 +173,19 @@ impl Checks {
             self.push(id, label, missing_level, missing, Some(remedy), needed_for);
         }
     }
+
+    /// Under container isolation every job runs in the runner image, so this host's copy of a
+    /// toolchain program decides nothing: the check is skipped (`runner_image` covers the image).
+    fn in_image(&mut self, id: &str, label: &str, needed_for: &[&str]) {
+        self.push(
+            id,
+            label,
+            CheckLevel::Skip,
+            format!("container isolation: jobs use the runner image's {label}, not this host's"),
+            None,
+            needed_for,
+        );
+    }
 }
 
 const ALL_BENCHES: &[&str] = &["demo", "jb", "lab", "wb"];
@@ -182,11 +195,14 @@ const ALL_BENCHES: &[&str] = &["demo", "jb", "lab", "wb"];
 /// Levels: `fail` when nothing can run (harness2 not installed; uv, Python 3.12 or git
 /// missing; gcloud missing while a profile uses Vertex; no container runtime under
 /// container isolation), `warn` when only some benchmarks or features are affected, `skip`
-/// when a check does not apply. The `dotenv` check looks for a `.env` file in the harness2
+/// when a check does not apply. Under container isolation the toolchain jobs use (uv, Python
+/// 3.12, git, Node.js, npm, curl, Pandoc, Poppler) comes from the runner image, so those host
+/// checks are skipped. The `dotenv` check looks for a `.env` file in the harness2
 /// checkout (harness2 loads it for every variable a job does not set).
 #[must_use]
 pub fn evaluate(results: &[ProbeResult], ctx: &DoctorContext) -> DoctorReport {
     let mut c = Checks(Vec::new());
+    let image = ctx.isolation == Isolation::Container;
     let h = &ctx.harness2;
     let short = |s: &str| s.chars().take(12).collect::<String>();
     if h.installed {
@@ -240,17 +256,23 @@ pub fn evaluate(results: &[ProbeResult], ctx: &DoctorContext) -> DoctorReport {
             ALL_BENCHES,
         );
     }
-    c.tool(
-        results,
-        "uv",
-        "uv",
-        CheckLevel::Fail,
-        "uv is not installed; it creates harness2's Python 3.12 environment",
-        "Install uv: https://docs.astral.sh/uv/getting-started/installation/",
-        &["install", "jb", "lab", "wb"],
-    );
+    if image {
+        c.in_image("uv", "uv", &["install", "jb", "lab", "wb"]);
+    } else {
+        c.tool(
+            results,
+            "uv",
+            "uv",
+            CheckLevel::Fail,
+            "uv is not installed; it creates harness2's Python 3.12 environment",
+            "Install uv: https://docs.astral.sh/uv/getting-started/installation/",
+            &["install", "jb", "lab", "wb"],
+        );
+    }
     let uv_ok = works(probe(results, "uv"));
-    if !uv_ok {
+    if image {
+        c.in_image("python312", "Python 3.12", &["install"]);
+    } else if !uv_ok {
         c.push(
             "python312",
             "Python 3.12",
@@ -278,20 +300,26 @@ pub fn evaluate(results: &[ProbeResult], ctx: &DoctorContext) -> DoctorReport {
             &["install"],
         );
     }
-    c.tool(
-        results,
-        "git",
-        "git",
-        CheckLevel::Fail,
-        "git is not installed; it fetches harness2 and the benchmark checkouts",
-        "Install git (Debian/Ubuntu: sudo apt-get install -y git).",
-        &["install", "jb", "lab", "wb"],
-    );
+    if image {
+        c.in_image("git", "git", &["install", "jb", "lab", "wb"]);
+    } else {
+        c.tool(
+            results,
+            "git",
+            "git",
+            CheckLevel::Fail,
+            "git is not installed; it fetches harness2 and the benchmark checkouts",
+            "Install git (Debian/Ubuntu: sudo apt-get install -y git).",
+            &["install", "jb", "lab", "wb"],
+        );
+    }
     let node = probe(results, "node");
     let node_remedy = "Install Node.js 20 or newer (https://nodejs.org/en/download); \
                        harness2-setup uses npm to install Bun and the Codex CLI.";
     let node_needed = &["jb", "lab", "wb", "codex"];
-    if works(node) {
+    if image {
+        c.in_image("node20", "Node.js 20+", node_needed);
+    } else if works(node) {
         let line = version_line(node).unwrap_or_default();
         match major(&line) {
             Some(m) if m >= 20 => c.push(
@@ -329,24 +357,29 @@ pub fn evaluate(results: &[ProbeResult], ctx: &DoctorContext) -> DoctorReport {
             node_needed,
         );
     }
-    c.tool(
-        results,
-        "npm",
-        "npm",
-        CheckLevel::Warn,
-        "npm is not installed; benchmark setup needs it",
-        "Install npm with Node.js 20 or newer (https://nodejs.org/en/download).",
-        node_needed,
-    );
-    c.tool(
-        results,
-        "curl",
-        "curl",
-        CheckLevel::Warn,
-        "curl is not installed; WorkBuddy setup downloads its datasets with it",
-        "Install curl (Debian/Ubuntu: sudo apt-get install -y curl).",
-        &["wb"],
-    );
+    if image {
+        c.in_image("npm", "npm", node_needed);
+        c.in_image("curl", "curl", &["wb"]);
+    } else {
+        c.tool(
+            results,
+            "npm",
+            "npm",
+            CheckLevel::Warn,
+            "npm is not installed; benchmark setup needs it",
+            "Install npm with Node.js 20 or newer (https://nodejs.org/en/download).",
+            node_needed,
+        );
+        c.tool(
+            results,
+            "curl",
+            "curl",
+            CheckLevel::Warn,
+            "curl is not installed; WorkBuddy setup downloads its datasets with it",
+            "Install curl (Debian/Ubuntu: sudo apt-get install -y curl).",
+            &["wb"],
+        );
+    }
     let docker = probe(results, "docker");
     if works(docker) {
         let v = version_line(docker).unwrap_or_default();
@@ -399,21 +432,27 @@ pub fn evaluate(results: &[ProbeResult], ctx: &DoctorContext) -> DoctorReport {
             &["container"],
         );
     }
-    c.tool(
-        results,
-        "pandoc",
-        "Pandoc",
-        CheckLevel::Warn,
-        "Pandoc is not installed; LAB converts documents with it",
-        "Install Pandoc (Debian/Ubuntu: sudo apt-get install -y pandoc).",
-        &["lab"],
-    );
+    if image {
+        c.in_image("pandoc", "Pandoc", &["lab"]);
+    } else {
+        c.tool(
+            results,
+            "pandoc",
+            "Pandoc",
+            CheckLevel::Warn,
+            "Pandoc is not installed; LAB converts documents with it",
+            "Install Pandoc (Debian/Ubuntu: sudo apt-get install -y pandoc).",
+            &["lab"],
+        );
+    }
     let pdf = probe(results, "pdftoppm");
     let pdf_ok = pdf.is_some_and(|p| {
         p.found
             && (p.exit_code == Some(0) || format!("{}{}", p.stdout, p.stderr).contains("version"))
     });
-    if pdf_ok {
+    if image {
+        c.in_image("pdftoppm", "Poppler (pdftoppm)", &["lab"]);
+    } else if pdf_ok {
         let v = version_line(pdf).unwrap_or_else(|| "pdftoppm is available".into());
         c.push(
             "pdftoppm",
@@ -671,32 +710,77 @@ mod tests {
             r("node", true, 0, "v18.19.0\n"),
             r("gcloud", false, 127, ""),
         ];
-        let ctx = DoctorContext {
+        let mut ctx = DoctorContext {
             harness2: status(false, None),
-            isolation: Isolation::Container,
+            isolation: Isolation::Host,
             free_disk_bytes: None,
             uses_vertex: true,
             generated_at: "t".into(),
         };
         let rep = evaluate(&results, &ctx);
         assert!(!rep.ok);
-        for id in [
-            "harness2",
-            "uv",
-            "python312",
-            "git",
-            "gcloud",
-            "container_runtime",
-        ] {
+        for id in ["harness2", "uv", "python312", "git", "gcloud"] {
             assert_eq!(level(&rep, id), CheckLevel::Fail, "{id}");
         }
         assert_eq!(level(&rep, "node20"), CheckLevel::Warn);
         assert_eq!(level(&rep, "adc"), CheckLevel::Warn);
         assert_eq!(level(&rep, "dotenv"), CheckLevel::Skip);
+        assert_eq!(level(&rep, "container_runtime"), CheckLevel::Skip);
         assert!(rep.checks.iter().all(|c| c.level == CheckLevel::Ok
             || c.level == CheckLevel::Skip
             || c.remedy.is_some()));
+        // Under container isolation a missing runtime fails; the host toolchain does not count.
+        ctx.isolation = Isolation::Container;
+        let rep = evaluate(&results, &ctx);
+        assert!(!rep.ok);
+        assert_eq!(level(&rep, "container_runtime"), CheckLevel::Fail);
+        assert_eq!(level(&rep, "uv"), CheckLevel::Skip);
         assert_eq!(major("v20.0.1"), Some(20));
         assert_eq!(major("garbage"), None);
+    }
+
+    #[test]
+    fn container_isolation_skips_the_host_toolchain() {
+        // A host with Docker and nothing else: uv, Python, git, Node, npm, curl, Pandoc and
+        // Poppler are all missing here, and none of it matters, because jobs run in the image.
+        let results = vec![
+            r("docker", true, 0, "29.6.0\n"),
+            r("podman", false, 127, ""),
+        ];
+        let ctx = DoctorContext {
+            harness2: status(true, None),
+            isolation: Isolation::Container,
+            free_disk_bytes: Some(100 * 1024 * 1024 * 1024),
+            uses_vertex: false,
+            generated_at: "t".into(),
+        };
+        let rep = evaluate(&results, &ctx);
+        assert!(rep.ok, "{:?}", rep.checks);
+        for id in [
+            "uv",
+            "python312",
+            "git",
+            "node20",
+            "npm",
+            "curl",
+            "pandoc",
+            "pdftoppm",
+        ] {
+            assert_eq!(level(&rep, id), CheckLevel::Skip, "{id}");
+            let check = rep.checks.iter().find(|c| c.id == id).unwrap();
+            assert!(check.detail.starts_with("container isolation:"), "{id}");
+            assert!(check.remedy.is_none(), "{id}");
+        }
+        assert_eq!(level(&rep, "docker"), CheckLevel::Ok);
+        assert_eq!(level(&rep, "container_runtime"), CheckLevel::Ok);
+        // The same host under host isolation fails: there the host's toolchain is what runs.
+        let host = DoctorContext {
+            isolation: Isolation::Host,
+            ..ctx
+        };
+        let rep = evaluate(&results, &host);
+        assert!(!rep.ok);
+        assert_eq!(level(&rep, "uv"), CheckLevel::Fail);
+        assert_eq!(level(&rep, "pandoc"), CheckLevel::Warn);
     }
 }
