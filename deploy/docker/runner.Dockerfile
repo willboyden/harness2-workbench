@@ -9,7 +9,9 @@
 # Contents: Node 22 + npm (harness2 setup installs Bun and OpenCode through npm), uv with a
 # managed CPython 3.12 (harness2's benchmarks require 3.12), git, curl, unzip, Pandoc and
 # Poppler (LAB documents), and ripgrep (OpenCode's grep, glob and list tools: without `rg` on
-# PATH OpenCode downloads it from GitHub, which a job behind the egress proxy cannot reach).
+# PATH OpenCode downloads it from GitHub, which a job behind the egress proxy cannot reach), and
+# a `podman` stand-in that runs only LAB's document parser (deploy/docker/podman-standin.sh: LAB
+# parses documents with `podman run`, which a container job cannot do).
 # No harness2 code is baked in: the checkout is mounted, so the image stays generic and a
 # harness2 bump never requires a rebuild.
 #
@@ -28,6 +30,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /uvx /usr/local/bin/
+COPY --chmod=0755 deploy/docker/podman-standin.sh /usr/local/bin/podman
 # uv's licence texts, which its image does not carry (the files of the pinned tag; update them
 # with uv, docs/SUPPLY-CHAIN.md). Debian packages keep theirs in /usr/share/doc/*/copyright.
 COPY deploy/docker/licenses/uv/ /usr/share/doc/uv/

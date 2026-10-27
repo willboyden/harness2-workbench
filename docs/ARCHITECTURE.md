@@ -572,3 +572,12 @@ independent audit (findings F1–F16):
   isolation`), the message and the link, and no setup or check buttons; the New run wizard stops
   at its first step with the message; splits are offered only for benchmarks the server runs.
   The mock API mirrors the rule (`--container`, `--not-offered BENCH`).
+
+**v1.7 (2026-10-27) — LAB documents under container isolation.**
+- The runner image's `/usr/local/bin/podman` is `deploy/docker/podman-standin.sh`. It accepts only
+  `podman run [--rm] [--network=none] [--cap-drop=ALL] [--security-opt=no-new-privileges]
+  -v <file>:/doc/<name>:ro <image> parse-doc {docx|pdf|pptx|xlsx} /doc/<name>` (the call of LAB's
+  `read_doc.py` in "sandbox" mode), with `<file>` an absolute regular file, and runs
+  `python3 -I $LAB_BENCH_ROOT/sandbox/parsers/parse_doc.py <ext> <file>`; anything else exits 125.
+- `cargo xtask runner-docs --harness2-home <home> [--image] [--runtime]` checks it against a real
+  LAB checkout: each document read through the stand-in must equal `read_doc.py --in host`.
