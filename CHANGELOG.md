@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-26
+
+The first model-backed run through the Workbench (one LAB task on self-hosted models behind LiteLLM,
+in container isolation) found the fixes below; this release also adds offline install bundles.
+
 ### Added
 
 - Offline install bundles ([ADR 0009](docs/adr/0009-offline-install-bundles.md),
@@ -17,6 +22,15 @@ All notable changes to this project are documented here. The format follows
   paths, nothing below a link, links that stay inside, no hard links or devices, no setuid bits) and
   the bundle's fit (architecture, harness2 commit, interpreter), and keeps the previous installation.
   Command line only; audited as `bundle.export` and `bundle.import`.
+
+### Changed
+
+- The default runner image is `harness2-workbench-runner:<Workbench version>`
+  (`harness2-workbench-runner:0.1.1` here, `0.1.0` before), and the documentation, Dockerfiles,
+  compose file and CI build that tag: the image changed (it now ships ripgrep). **Rebuild the runner
+  image** for 0.1.1 (`docker build -f deploy/docker/runner.Dockerfile -t
+  harness2-workbench-runner:0.1.1 .`), or keep `isolation.container.image` pointing at an image you
+  built yourself.
 
 ### Fixed
 
@@ -122,5 +136,6 @@ Each change, its tests and how it was checked are in
   an environment that reads empty or denied for that moment is read again for up to about 0.25 s
   (found by a test that failed once on a CI runner).
 
-[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/willboyden/harness2-workbench/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/willboyden/harness2-workbench/releases/tag/v0.1.0
