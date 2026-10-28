@@ -460,10 +460,25 @@ async fn check_profile(
     State(st): State<AppState>,
     headers: HeaderMap,
     Path(name): Path<String>,
+    Query(scope): Query<CheckScope>,
 ) -> R<Json<ProfileCheck>> {
     require(&st, &headers, Role::Viewer)?;
     if !valid_slug(&name) {
         return Err(invalid(vec![("name".into(), PROFILE_NAME_RULE.into())]));
+    }
+    let bench = scope.bench.unwrap_or_default();
+    let substrate = scope.substrate.unwrap_or_default();
+    if !matches!(bench.as_str(), "" | "jb" | "lab" | "wb") {
+        return Err(invalid(vec![(
+            "bench".into(),
+            "must be one of jb, lab, wb".into(),
+        )]));
+    }
+    if !matches!(substrate.as_str(), "" | "oc" | "cx" | "hm" | "ts") {
+        return Err(invalid(vec![(
+            "substrate".into(),
+            "must be one of oc, cx, hm, ts".into(),
+        )]));
     }
     let g = lock(&st.s);
     let Some(p) = g.profiles.get(&name) else {
@@ -483,12 +498,35 @@ async fn check_profile(
         .filter(|s| s.needs_acknowledgement())
         .map(h2w_api::cloud_judge_warning)
         .collect();
-    warnings.extend(profile_warnings(p));
+    // Like the server's scoping (`h2w_core::env::job_profile_warnings`), by each warning's
+    // subject: the mock's texts name the benchmark or executor they are about.
+    warnings.extend(profile_warnings(p).into_iter().filter(|w| {
+        let about = |b: &str| bench.is_empty() || bench == b;
+        if w.starts_with("WorkBuddy-Bench") {
+            about("wb")
+        } else if w.contains("JobBench") && !w.contains("LAB") {
+            about("jb")
+        } else if w.starts_with("LAB's judge") {
+            about("lab")
+        } else if w.starts_with("The Codex executor") {
+            substrate.is_empty() || substrate == "cx"
+        } else {
+            true
+        }
+    }));
     Ok(Json(ProfileCheck {
         warnings,
         missing_secrets,
         judge_site,
     }))
+}
+
+/// `?bench=` / `?substrate=` of a profile check (contract v1.12).
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckScope {
+    bench: Option<String>,
+    substrate: Option<String>,
 }
 
 /// Secrets a profile references, in the server's order (endpoints, Vertex credentials, extra

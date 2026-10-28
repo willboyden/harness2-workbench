@@ -335,7 +335,7 @@ fn CellStep(wiz: Wiz) -> impl IntoView {
                     })
                 />
                 <a class="small" href="/settings/profiles">"Manage profiles"</a>
-                <ProfileCheckFor profile=wiz.profile />
+                <ProfileCheckFor profile=wiz.profile bench=wiz.bench substrate=wiz.substrate />
             </div>
         </div>
         <RadioCards

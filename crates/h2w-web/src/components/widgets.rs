@@ -457,16 +457,26 @@ pub(crate) fn CloudJudgeConfirm(
     }
 }
 
-/// [`ProfileCheckNotes`] for the profile named by a signal; nothing while it is empty.
+/// [`ProfileCheckNotes`] for the profile named by a signal, scoped to a benchmark and executor
+/// when given; nothing while the name is empty.
 #[component]
-pub(crate) fn ProfileCheckFor(#[prop(into)] profile: Signal<String>) -> impl IntoView {
+pub(crate) fn ProfileCheckFor(
+    #[prop(into)] profile: Signal<String>,
+    /// Only the warnings about jobs on this benchmark (`jb`, `lab`, `wb`; empty = any).
+    #[prop(optional, into)]
+    bench: Signal<String>,
+    /// Only the warnings about jobs with this executor (`oc`, `cx`, `hm`, `ts`; empty = any).
+    #[prop(optional, into)]
+    substrate: Signal<String>,
+) -> impl IntoView {
     let check = LocalResource::new(move || {
-        let name = profile.get();
+        let (name, bench, substrate) = (profile.get(), bench.get(), substrate.get());
         async move {
             if name.is_empty() {
                 None
             } else {
-                Some(api::get::<ProfileCheck>(&paths::profile_check(&name)).await)
+                let url = paths::profile_check_for(&name, &bench, &substrate);
+                Some(api::get::<ProfileCheck>(&url).await)
             }
         }
     });

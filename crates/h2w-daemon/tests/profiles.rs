@@ -89,3 +89,56 @@ async fn a_stored_profile_that_breaks_current_rules_is_refused_at_job_creation()
     );
     t.stop().await;
 }
+
+/// `?bench=` and `?substrate=` keep the warnings about those jobs (contract v1.12): what the run
+/// wizard shows for the benchmark and executor it is about to use.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_scoped_check_keeps_the_warnings_about_those_jobs() {
+    let t = TestServer::start().await;
+    t.put_profile(json!({"name": "local", "kind": "openai_compatible",
+        "solver_model": "glm", "judge_model": "glm-judge",
+        "endpoint": {"base_url": "http://127.0.0.1:9/v1"}}))
+        .await;
+    let check = |query: &str| {
+        let req = t.get(
+            &format!("/api/v1/profiles/local/check{query}"),
+            Some(&t.viewer),
+        );
+        async move { req.send().await.unwrap() }
+    };
+    let warnings = |query: &str| {
+        let r = check(query);
+        async move {
+            let r = r.await;
+            assert_eq!(r.status(), 200);
+            r.json::<ProfileCheck>().await.unwrap().warnings
+        }
+    };
+    let has = |w: &[String], needle: &str| w.iter().any(|x| x.contains(needle));
+    let all = warnings("").await;
+    assert!(
+        has(&all, "Codex executor") && has(&all, "WorkBuddy-Bench"),
+        "{all:?}"
+    );
+
+    let lab_hm = warnings("?bench=lab&substrate=hm").await;
+    assert!(has(&lab_hm, "LAB's judge does not recognise"), "{lab_hm:?}");
+    assert!(!has(&lab_hm, "Codex executor") && !has(&lab_hm, "WorkBuddy-Bench"));
+    assert!(!has(&lab_hm, "JobBench"), "{lab_hm:?}");
+    assert!(lab_hm.iter().all(|w| all.contains(w)));
+
+    assert!(has(
+        &warnings("?bench=lab&substrate=cx").await,
+        "Codex executor"
+    ));
+    assert!(has(&warnings("?bench=wb").await, "WorkBuddy-Bench"));
+
+    for (query, field) in [("?bench=xx", "bench"), ("?substrate=zz", "substrate")] {
+        let r = check(query).await;
+        assert_eq!(r.status(), 422, "{query}");
+        let e: ErrorBody = r.json().await.unwrap();
+        assert!(e.error.details.iter().any(|d| d.field == field), "{e:?}");
+    }
+    assert_eq!(check("?other=1").await.status(), 422);
+    t.stop().await;
+}

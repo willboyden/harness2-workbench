@@ -323,8 +323,9 @@ cost before anything starts. Operators and above can start a run; a viewer can w
 Pick the experiment (or create one) and the model profile (locked to the experiment's pinned one,
 if any). Below the profile the page shows the **profile check**: *Jobs will be refused until these
 secrets are set* (secrets the profile references that have no value) and *What this profile cannot
-do* (the warnings in [MODELS.md](MODELS.md#warnings-the-server-raises); capability notes such as
-"WorkBuddy-Bench cannot use this profile" appear for every OpenAI-compatible profile). Then choose
+do* (the warnings in [MODELS.md](MODELS.md#warnings-the-server-raises) that concern the benchmark
+and executor chosen below; it updates as you change them, so for example "WorkBuddy-Bench cannot use
+this profile" appears only while WorkBuddy-Bench is chosen). Then choose
 the **benchmark** (JobBench, LAB or WorkBuddy-Bench; one that is not installed says *Not set up yet*
 and links to the Benchmarks page; one this server does not run says why, links to the Workbench that
 runs it when the administrator gave one, and stops the wizard at this step) and the **executor**

@@ -57,9 +57,10 @@ pub(crate) const CHECK_PROFILE: &str = "Check a model profile before starting wo
 returns warnings (what the profile cannot do, e.g. no judge model, a judge LAB does not \
 recognise, WorkBuddy without Vertex Gemini models), missing_secrets (referenced secrets with \
 no value; jobs with the profile are refused until an admin sets them in the web UI) and \
-judge_site: where the judge runs (local, cloud with its provider and hosts, or unknown). A \
-cloud judge sees every task and output it grades: use one only with generated or synthetic \
-data. Read-only; never returns secret values.";
+judge_site: where the judge runs (local, cloud with its provider and hosts, or unknown). Pass \
+bench and/or substrate to keep only the warnings about the jobs you plan. A cloud judge sees \
+every task and output it grades: use one only with generated or synthetic data. Read-only; \
+never returns secret values.";
 
 pub(crate) const LIST_EXPERIMENTS: &str = "List experiments. An experiment is one harness2 \
 results directory holding any number of sweeps; a sweep is one (benchmark cell, k, seed, tag) \

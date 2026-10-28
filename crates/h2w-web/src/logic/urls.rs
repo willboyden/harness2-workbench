@@ -111,6 +111,14 @@ pub(crate) mod api {
     pub(crate) fn profile_check(name: &str) -> String {
         p(&format!("/profiles/{}/check", enc(name)))
     }
+    /// The check scoped to jobs on `bench` with executor `substrate` (empty = any).
+    pub(crate) fn profile_check_for(name: &str, bench: &str, substrate: &str) -> String {
+        format!(
+            "{}{}",
+            profile_check(name),
+            query(&[("bench", bench), ("substrate", substrate)])
+        )
+    }
     pub(crate) fn secrets() -> String {
         p("/secrets")
     }
@@ -391,6 +399,14 @@ mod tests {
         );
         assert_eq!(
             api::profile_check("vertex-flash"),
+            "/api/v1/profiles/vertex-flash/check"
+        );
+        assert_eq!(
+            api::profile_check_for("vertex-flash", "lab", "hm"),
+            "/api/v1/profiles/vertex-flash/check?bench=lab&substrate=hm"
+        );
+        assert_eq!(
+            api::profile_check_for("vertex-flash", "", ""),
             "/api/v1/profiles/vertex-flash/check"
         );
         assert_eq!(

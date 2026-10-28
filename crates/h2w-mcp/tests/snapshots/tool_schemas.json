@@ -137,13 +137,76 @@
       "readOnlyHint": true,
       "title": "Check a model profile"
     },
-    "description": "Check a model profile before starting work with it: returns warnings (what the profile cannot do, e.g. no judge model, a judge LAB does not recognise, WorkBuddy without Vertex Gemini models), missing_secrets (referenced secrets with no value; jobs with the profile are refused until an admin sets them in the web UI) and judge_site: where the judge runs (local, cloud with its provider and hosts, or unknown). A cloud judge sees every task and output it grades: use one only with generated or synthetic data. Read-only; never returns secret values.",
+    "description": "Check a model profile before starting work with it: returns warnings (what the profile cannot do, e.g. no judge model, a judge LAB does not recognise, WorkBuddy without Vertex Gemini models), missing_secrets (referenced secrets with no value; jobs with the profile are refused until an admin sets them in the web UI) and judge_site: where the judge runs (local, cloud with its provider and hosts, or unknown). Pass bench and/or substrate to keep only the warnings about the jobs you plan. A cloud judge sees every task and output it grades: use one only with generated or synthetic data. Read-only; never returns secret values.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "bench": {
+          "anyOf": [
+            {
+              "description": "A benchmark harness2 can install and run.",
+              "oneOf": [
+                {
+                  "const": "jb",
+                  "description": "JobBench: professional work tasks, grouped by occupation.",
+                  "type": "string"
+                },
+                {
+                  "const": "lab",
+                  "description": "LAB (Harvey Labs): legal work, grouped by practice area. Needs Pandoc + Poppler.",
+                  "type": "string"
+                },
+                {
+                  "const": "wb",
+                  "description": "WorkBuddy-Bench: office, web and code subsets. Needs Docker. Custom Tencent license.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Only the warnings about jobs on this benchmark (omit for every benchmark)."
+        },
         "profile": {
           "description": "Model profile name (see list_profiles).",
           "type": "string"
+        },
+        "substrate": {
+          "anyOf": [
+            {
+              "description": "The agent framework that executes task rollouts (\"substrate\" upstream).",
+              "oneOf": [
+                {
+                  "const": "oc",
+                  "description": "OpenCode (upstream default), run from a pinned source checkout through Bun.",
+                  "type": "string"
+                },
+                {
+                  "const": "cx",
+                  "description": "OpenAI Codex CLI against a Responses-API endpoint. Upstream runs it with its sandbox\ndisabled.",
+                  "type": "string"
+                },
+                {
+                  "const": "hm",
+                  "description": "Nous Research's Hermes Agent against an OpenAI-compatible endpoint. Not in upstream\nharness2: it needs a harness2 with this substrate (`Harness2Status.substrates`), and it\nruns LAB only. Additive after contract v1.10.",
+                  "type": "string"
+                },
+                {
+                  "const": "ts",
+                  "description": "Turnstone against an OpenAI-compatible endpoint, one throwaway server per rollout. Not\nin upstream harness2: it needs a harness2 with this substrate, and it runs LAB only.\nAdditive after contract v1.10.",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Only the warnings about jobs with this executor (omit for every executor)."
         }
       },
       "required": [
