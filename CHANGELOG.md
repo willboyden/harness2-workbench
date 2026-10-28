@@ -27,6 +27,22 @@ All notable changes to this project are documented here. The format follows
 - The profile check warns that harness2 judges `claude` and `gemini` ids for LAB on Vertex AI (so
   such a judge needs Vertex settings to judge LAB), and that JobBench's judge sends temperature 0,
   which Claude models from 4.7 on refuse.
+- Hermes Agent (`hm`) and Turnstone (`ts`) executors for LAB, offered when the installed harness2
+  ships them (`harness2.substrates` in `GET /api/v1/system/info`): setup, runs, pipelines, judging,
+  results and the run wizard; their endpoint variables go only to jobs on that executor
+  ([docs/notes/substrates.md](docs/notes/substrates.md)).
+- Export to a **Hermes Agent home** and a **Turnstone bundle**, and conversion between all five
+  layouts; the export dialog starts on the harness's own framework.
+- `POST /api/v1/harness/validate` reports Hermes Agent's and Turnstone's own refusals in harness2's
+  words, and `notes` names the scanners only harness2 can apply.
+
+### Fixed
+
+- OpenCode project exports put skill helpers in `.opencode/skills/<name>/` while the skills ran
+  them from `skills/<name>/`; helpers now go where harness2's OpenCode runner puts them, and
+  exports between frameworks move skill paths in skill files and in the always-on text.
+- Job logs repeated every profile warning; they now repeat only those about the job's benchmark and
+  executor.
 
 ### Changed
 

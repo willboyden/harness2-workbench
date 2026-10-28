@@ -422,6 +422,7 @@ pub async fn manifest(
             runs_dir: EXPERIMENT_MOUNT.to_owned(),
             opencode_config_path: "/h2w/job/opencode.json".to_owned(),
             gcp_credentials_path: "/h2w/job/gcp-credentials.json".to_owned(),
+            substrate: None,
         };
         if let Ok(env) = h2w_core::env::build(p, &Placeholder, &ctx) {
             env_names = env.vars.into_iter().map(|(n, _)| n).collect();

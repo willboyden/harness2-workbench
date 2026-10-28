@@ -643,6 +643,7 @@ mod tests {
             python: Some("3.12.14".into()),
             extras: vec![],
             home,
+            substrates: h2w_api::Substrate::upstream_set(),
         }
     }
 

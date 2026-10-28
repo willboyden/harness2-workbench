@@ -7,6 +7,41 @@ use h2w_api::{
 
 use super::judge::JudgeGate;
 
+/// The executor a form value names (`oc`, `cx`, `hm`, `ts`); OpenCode for anything else.
+pub(crate) fn substrate_of(s: &str) -> Substrate {
+    Substrate::ALL
+        .into_iter()
+        .find(|x| x.as_cli() == s)
+        .unwrap_or(Substrate::Oc)
+}
+
+/// The executor choices the server's harness2 supports, as radio options: (value, label, help).
+pub(crate) fn substrate_options(supported: &[Substrate]) -> Vec<(String, String, String)> {
+    Substrate::ALL
+        .into_iter()
+        .filter(|s| s.upstream() || supported.contains(s))
+        .map(|s| {
+            let help = match s {
+                Substrate::Oc => "Upstream default; 24,000-character always-on budget.",
+                Substrate::Cx => "Codex CLI on a Responses-API endpoint; 8,000-character budget.",
+                Substrate::Hm => {
+                    "LAB only. Hermes Agent on the profile's endpoint; SOUL.md and memory share a \
+                     20,000-character budget."
+                }
+                Substrate::Ts => {
+                    "LAB only. Turnstone on the profile's endpoint, one throwaway server per \
+                     rollout; 24,000-character budget."
+                }
+            };
+            (
+                s.as_cli().to_owned(),
+                s.display_name().to_owned(),
+                help.to_owned(),
+            )
+        })
+        .collect()
+}
+
 /// `(field, problem)` pairs, as `RunOptions::validate` reports them.
 pub(crate) type Problems = Vec<(String, String)>;
 
@@ -709,6 +744,36 @@ mod tests {
             sweep
                 .submit_spec(HostRisk::Contained, JudgeGate::Confirm)
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn executors_follow_what_the_server_supports() {
+        let upstream = substrate_options(&Substrate::upstream_set());
+        assert_eq!(
+            upstream.iter().map(|o| o.0.as_str()).collect::<Vec<_>>(),
+            ["oc", "cx"]
+        );
+        let all = substrate_options(&Substrate::ALL);
+        assert_eq!(
+            all.iter().map(|o| o.0.as_str()).collect::<Vec<_>>(),
+            ["oc", "cx", "hm", "ts"]
+        );
+        assert!(all[2].2.starts_with("LAB only"));
+        assert_eq!(substrate_of("ts"), Substrate::Ts);
+        assert_eq!(substrate_of("nope"), Substrate::Oc);
+        // A LAB-only executor on another benchmark is a cell problem the wizard shows.
+        let f = RunForm {
+            bench: Bench::Jb,
+            substrate: Substrate::Hm,
+            ..RunForm::default()
+        };
+        assert!(
+            describe(&f.cell_problems())
+                .iter()
+                .any(|p| p.contains("runs LAB only")),
+            "{:?}",
+            describe(&f.cell_problems())
         );
     }
 

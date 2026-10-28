@@ -480,7 +480,8 @@ async fn prepare<'a>(
         None => None,
     };
     if let Some(p) = &profile {
-        for w in h2w_core::env::profile_warnings(p) {
+        let substrate = validate::substrate_of(spec).map(|(_, s)| s);
+        for w in h2w_core::env::job_profile_warnings(p, validate::bench_of(spec), substrate) {
             pump.system(format!("profile {}: {w}", p.name)).await;
         }
     }

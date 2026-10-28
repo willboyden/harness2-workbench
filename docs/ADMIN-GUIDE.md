@@ -1111,6 +1111,15 @@ needs, run setup, then **remove the blocked hosts and restart the proxy** before
 (an experiment that reaches its own rubrics measures nothing). Record the restrictions you used
 alongside any published result.
 
+**Hermes Agent and Turnstone** (executors `hm` and `ts`, offered when the installed harness2 ships
+them; [notes/substrates.md](notes/substrates.md)). A `setup` job with `substrate` `hm` or `ts`
+clones the framework at harness2's pin from `github.com` and installs its locked dependencies from
+`pypi.org` and `files.pythonhosted.org`, all in the list above. `uv` builds their virtual
+environments with the Python 3.12 where the job runs (the runner image has one); without one it
+would download a Python from GitHub's release hosts. During evaluation both call only the profile's
+endpoint: in the maintainers' run of one LAB task on each (2026-10-27), the proxy allowed only the
+gateway, and its only refusals were the agent's own attempts to install a Python package from PyPI.
+
 ## 10. The compose reference deployment
 
 `deploy/compose.yaml` runs the whole Workbench contained **from your host and network**: three

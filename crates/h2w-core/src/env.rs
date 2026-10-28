@@ -17,7 +17,7 @@
 //! `OPENAI_BASE_URL`/`OPENAI_API_KEY`. WorkBuddy's setup requires Vertex Gemini models, so
 //! `openai_compatible` profiles cannot drive WorkBuddy (see `docs/notes/core.md`).
 
-use h2w_api::{Endpoint, ModelProfile, ProfileKind};
+use h2w_api::{Bench, Endpoint, ModelProfile, ProfileKind, Substrate};
 
 use crate::{CoreError, Result, names};
 
@@ -170,6 +170,9 @@ pub struct EnvContext {
     pub opencode_config_path: String,
     /// Where a service-account key will be written (for `GOOGLE_APPLICATION_CREDENTIALS`).
     pub gcp_credentials_path: String,
+    /// The executor of the job's cell, when it has one: Hermes Agent and Turnstone runs get
+    /// their endpoint variables (`HARNESS2_HERMES_*`, `HARNESS2_TURNSTONE_*`), other jobs not.
+    pub substrate: Option<Substrate>,
 }
 
 /// Everything a job needs from its profile. `Debug` never prints values.
@@ -267,9 +270,33 @@ fn claude_version(model: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
+/// Which jobs a profile warning concerns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarningScope {
+    /// Every job that uses the profile.
+    Every,
+    /// Jobs on this benchmark.
+    Bench(Bench),
+    /// Jobs with this executor.
+    Substrate(Substrate),
+}
+
+impl WarningScope {
+    /// Whether a job on `bench` with executor `substrate` shows the warning. A job with no
+    /// benchmark (or no executor) shows every warning about benchmarks (or executors).
+    #[must_use]
+    pub fn concerns(self, bench: Option<Bench>, substrate: Option<Substrate>) -> bool {
+        match self {
+            WarningScope::Every => true,
+            WarningScope::Bench(b) => bench.is_none_or(|x| x == b),
+            WarningScope::Substrate(s) => substrate.is_none_or(|x| x == s),
+        }
+    }
+}
+
 /// Non-fatal warnings about what a profile cannot do, for the server to show when a
-/// profile is saved and before a run. A profile with warnings is still valid
-/// ([`validate_profile`] does not fail on any of them).
+/// profile is saved. A profile with warnings is still valid ([`validate_profile`] does not
+/// fail on any of them). [`job_profile_warnings`] keeps the ones a job is concerned by.
 ///
 /// Covered: no executor or judge model (harness2 starts no sweep without both), a judge
 /// LAB's judge does not recognise, JobBench's judge requirements (an endpoint or Vertex
@@ -277,10 +304,35 @@ fn claude_version(model: &str) -> Option<(u32, u32)> {
 /// models, and a missing Codex (Responses-API) endpoint for the `cx` executor.
 #[must_use]
 pub fn profile_warnings(profile: &ModelProfile) -> Vec<String> {
+    scoped_profile_warnings(profile)
+        .into_iter()
+        .map(|(_, w)| w)
+        .collect()
+}
+
+/// The [`profile_warnings`] a job on `bench` with executor `substrate` is concerned by, for
+/// its log: a LAB run on Hermes Agent does not need to hear about Codex or WorkBuddy-Bench.
+#[must_use]
+pub fn job_profile_warnings(
+    profile: &ModelProfile,
+    bench: Option<Bench>,
+    substrate: Option<Substrate>,
+) -> Vec<String> {
+    scoped_profile_warnings(profile)
+        .into_iter()
+        .filter(|(scope, _)| scope.concerns(bench, substrate))
+        .map(|(_, w)| w)
+        .collect()
+}
+
+/// [`profile_warnings`], each with the jobs it concerns.
+#[must_use]
+pub fn scoped_profile_warnings(profile: &ModelProfile) -> Vec<(WarningScope, String)> {
     let ctx = EnvContext {
         runs_dir: String::new(),
         opencode_config_path: String::new(),
         gcp_credentials_path: String::new(),
+        substrate: None,
     };
     let p = plan(profile, &ctx);
     let has = |name: &str| p.vars.iter().any(|(k, _)| k == name);
@@ -291,59 +343,80 @@ pub fn profile_warnings(profile: &ModelProfile) -> Vec<String> {
         })
     };
     let mut w = Vec::new();
+    let every = WarningScope::Every;
+    let (lab, jb) = (
+        WarningScope::Bench(Bench::Lab),
+        WarningScope::Bench(Bench::Jb),
+    );
     let solver = lit("HARNESS2_SOLVER_MODEL");
     match solver.as_deref() {
-        None if !has("HARNESS2_SOLVER_MODEL") => w.push(
+        None if !has("HARNESS2_SOLVER_MODEL") => w.push((
+            every,
             "No executor model: harness2 refuses to run without HARNESS2_SOLVER_MODEL.".to_owned(),
-        ),
-        Some(s) if !s.contains('/') => w.push(format!(
-            "The executor model {s:?} is not in OpenCode's provider/model form, which harness2 \
+        )),
+        Some(s) if !s.contains('/') => w.push((
+            every,
+            format!(
+                "The executor model {s:?} is not in OpenCode's provider/model form, which harness2 \
              requires."
+            ),
         )),
         _ => {}
     }
     let judge = lit("HARNESS2_JUDGE_MODEL");
     let project = has("GOOGLE_CLOUD_PROJECT");
     match judge.as_deref() {
-        None => w.push(
+        None => w.push((
+            every,
             "No judge model: harness2 starts no sweep and judges nothing without \
              HARNESS2_JUDGE_MODEL."
                 .to_owned(),
-        ),
+        )),
         Some(j) => {
             if !lab_judge_supported(j) {
-                w.push(format!(
-                    "LAB's judge does not recognise the judge model {j:?} (it accepts ids \
+                w.push((
+                    lab,
+                    format!(
+                        "LAB's judge does not recognise the judge model {j:?} (it accepts ids \
                      starting with claude, gemini, gpt, o1, o3, o4, o5, mistral or vertex/), so \
                      this profile cannot judge LAB."
+                    ),
                 ));
             }
             if !has("HARNESS2_JUDGE_BASE_URL") && !project {
-                w.push(
+                w.push((
+                    jb,
                     "JobBench judging needs a judge endpoint or Vertex AI settings (harness2 \
                      reads HARNESS2_JUDGE_BASE_URL or GOOGLE_CLOUD_PROJECT)."
                         .to_owned(),
-                );
+                ));
             }
             if !j.starts_with("gemini") && !has("HARNESS2_JUDGE_API_KEY") {
-                w.push(
+                w.push((
+                    jb,
                     "JobBench needs a judge endpoint with an API key for a non-Gemini judge \
                      (HARNESS2_JUDGE_BASE_URL and HARNESS2_JUDGE_API_KEY)."
                         .to_owned(),
-                );
+                ));
             }
             if (j.starts_with("claude") || j.starts_with("gemini")) && !project {
-                w.push(format!(
-                    "harness2 judges LAB's {j:?} on Vertex AI (it adds vertex/ to claude and \
+                w.push((
+                    lab,
+                    format!(
+                        "harness2 judges LAB's {j:?} on Vertex AI (it adds vertex/ to claude and \
                      gemini ids), so this profile cannot judge LAB without Vertex AI settings; \
                      JobBench judging uses the judge endpoint."
+                    ),
                 ));
             }
             if claude_version(j).is_some_and(|v| v >= (4, 7)) && has("HARNESS2_JUDGE_BASE_URL") {
-                w.push(format!(
-                    "JobBench's judge sends temperature 0, which Claude models from 4.7 on \
+                w.push((
+                    jb,
+                    format!(
+                        "JobBench's judge sends temperature 0, which Claude models from 4.7 on \
                      refuse, so JobBench judging with {j:?} fails; use claude-sonnet-4-6, \
                      claude-opus-4-6 or claude-haiku-4-5 to judge JobBench."
+                    ),
                 ));
             }
         }
@@ -354,19 +427,21 @@ pub fn profile_warnings(profile: &ModelProfile) -> Vec<String> {
         && judge.as_deref().is_some_and(|j| j.starts_with("gemini"))
         && project;
     if !wb_ok {
-        w.push(
+        w.push((
+            WarningScope::Bench(Bench::Wb),
             "WorkBuddy-Bench cannot use this profile: its setup requires a google-vertex/gemini \
              executor, a gemini judge and Vertex AI settings."
                 .to_owned(),
-        );
+        ));
     }
     if !has("HARNESS2_CODEX_BASE_URL") {
-        w.push(
+        w.push((
+            WarningScope::Substrate(Substrate::Cx),
             "The Codex executor (substrate cx) needs a Responses-API endpoint: set the \
              profile's Codex endpoint (for Vertex AI, run the bridge job and use its URL and \
              key)."
                 .to_owned(),
-        );
+        ));
     }
     w
 }
@@ -423,6 +498,23 @@ fn codex_vars(plan: &mut Plan, profile: &ModelProfile, default_model: &str) {
         plan.host_of(&ep.base_url);
     } else if let Some(m) = &profile.codex_model {
         plan.lit("HARNESS2_CODEX_MODEL", m.clone());
+    }
+}
+
+/// Hermes Agent and Turnstone (in a harness2 that adds them) call the profile's Chat
+/// Completions endpoint; harness2 defaults their model ids to the bare solver id. Set only for
+/// a job whose cell runs that executor, so other jobs carry no extra copy of the key.
+fn agent_vars(plan: &mut Plan, profile: &ModelProfile, substrate: Option<Substrate>) {
+    let prefix = match substrate {
+        Some(Substrate::Hm) => "HARNESS2_HERMES",
+        Some(Substrate::Ts) => "HARNESS2_TURNSTONE",
+        _ => return,
+    };
+    if let Some(ep) = &profile.endpoint {
+        plan.lit(&format!("{prefix}_BASE_URL"), ep.base_url.clone());
+        if let Some(s) = &ep.api_key_secret {
+            plan.secret(&format!("{prefix}_API_KEY"), s);
+        }
     }
 }
 
@@ -516,6 +608,7 @@ fn plan(profile: &ModelProfile, ctx: &EnvContext) -> Plan {
                 .or(profile.judge_model.as_ref().and(profile.endpoint.as_ref()));
             judge_vars(&mut plan, profile, judge_ep);
             codex_vars(&mut plan, profile, &profile.solver_model);
+            agent_vars(&mut plan, profile, ctx.substrate);
         }
         ProfileKind::Custom => {}
     }
@@ -745,11 +838,22 @@ pub fn validate_profile(profile: &ModelProfile) -> Result<()> {
         runs_dir: String::new(),
         opencode_config_path: String::new(),
         gcp_credentials_path: String::new(),
+        substrate: None,
     };
+    // Every name the server may generate for this profile, whichever executor a job runs.
     let generated: Vec<String> = {
         let mut p = profile.clone();
         p.extra_env.clear();
-        plan(&p, &ctx).vars.into_iter().map(|(n, _)| n).collect()
+        [None, Some(Substrate::Hm), Some(Substrate::Ts)]
+            .into_iter()
+            .flat_map(|substrate| {
+                let c = EnvContext {
+                    substrate,
+                    ..ctx.clone()
+                };
+                plan(&p, &c).vars.into_iter().map(|(n, _)| n)
+            })
+            .collect()
     };
     let mut seen: Vec<&str> = Vec::new();
     for e in &profile.extra_env {
@@ -885,6 +989,7 @@ mod tests {
             runs_dir: "/data/experiments/e1".into(),
             opencode_config_path: "/data/jobs/j1/opencode.json".into(),
             gcp_credentials_path: "/data/jobs/j1/gcp.json".into(),
+            substrate: None,
         }
     }
 
@@ -991,6 +1096,66 @@ mod tests {
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn hermes_and_turnstone_runs_get_the_endpoint_and_nothing_else_does() {
+        let mut p = base(ProfileKind::OpenaiCompatible);
+        p.endpoint = Some(Endpoint {
+            base_url: "http://127.0.0.1:4000/v1".into(),
+            api_key_secret: Some("LLM_KEY".into()),
+        });
+        let secrets = Map(HashMap::from([("LLM_KEY", "sk-test-0123456789")]));
+        let with = |sub: Option<Substrate>| {
+            build(
+                &p,
+                &secrets,
+                &EnvContext {
+                    substrate: sub,
+                    ..ctx()
+                },
+            )
+            .unwrap()
+        };
+        let hm = with(Some(Substrate::Hm));
+        assert_eq!(
+            var(&hm, "HARNESS2_HERMES_BASE_URL"),
+            Some("http://127.0.0.1:4000/v1")
+        );
+        assert_eq!(
+            var(&hm, "HARNESS2_HERMES_API_KEY"),
+            Some("sk-test-0123456789")
+        );
+        // The value is redacted in logs like every other secret.
+        assert!(
+            hm.secrets
+                .iter()
+                .any(|(_, v)| v.as_str() == "sk-test-0123456789")
+        );
+        assert_eq!(var(&hm, "HARNESS2_TURNSTONE_BASE_URL"), None);
+        let ts = with(Some(Substrate::Ts));
+        assert_eq!(
+            var(&ts, "HARNESS2_TURNSTONE_BASE_URL"),
+            Some("http://127.0.0.1:4000/v1")
+        );
+        assert_eq!(var(&ts, "HARNESS2_HERMES_BASE_URL"), None);
+        for other in [None, Some(Substrate::Oc), Some(Substrate::Cx)] {
+            let env = with(other);
+            for name in ["HARNESS2_HERMES_BASE_URL", "HARNESS2_TURNSTONE_API_KEY"] {
+                assert_eq!(var(&env, name), None, "{other:?} {name}");
+            }
+        }
+        // extra_env cannot also set a generated name on such a profile...
+        p.extra_env = vec![EnvVar {
+            name: "HARNESS2_HERMES_BASE_URL".into(),
+            value: Some("http://other:1/v1".into()),
+            secret: None,
+        }];
+        assert!(validate_profile(&p).is_err());
+        // ...but it is how a custom profile points Hermes Agent at an endpoint.
+        p.kind = ProfileKind::Custom;
+        p.endpoint = None;
+        assert!(validate_profile(&p).is_ok());
     }
 
     #[test]
@@ -1227,6 +1392,50 @@ mod tests {
 
         let c = base(ProfileKind::Custom);
         let w = profile_warnings(&c);
+        assert!(w.iter().any(|x| x.starts_with("No executor model")));
+        assert!(w.iter().any(|x| x.starts_with("No judge model")));
+    }
+
+    #[test]
+    fn a_job_hears_only_the_warnings_about_its_benchmark_and_executor() {
+        let mut p = base(ProfileKind::OpenaiCompatible);
+        p.endpoint = Some(Endpoint {
+            base_url: "http://127.0.0.1:4000/v1".into(),
+            api_key_secret: None,
+        });
+        p.judge_model = Some("glm-5".into());
+        let all = profile_warnings(&p);
+        let job = |bench, substrate| job_profile_warnings(&p, bench, substrate);
+        let has = |w: &[String], needle: &str| w.iter().any(|x| x.contains(needle));
+
+        let lab_hm = job(Some(Bench::Lab), Some(Substrate::Hm));
+        assert!(has(&lab_hm, "LAB's judge does not recognise"));
+        assert!(!has(&lab_hm, "Codex executor"), "{lab_hm:?}");
+        assert!(!has(&lab_hm, "WorkBuddy-Bench"));
+        assert!(!has(&lab_hm, "non-Gemini judge"));
+
+        let lab_cx = job(Some(Bench::Lab), Some(Substrate::Cx));
+        assert!(has(&lab_cx, "Codex executor"));
+        let jb_oc = job(Some(Bench::Jb), Some(Substrate::Oc));
+        assert!(has(&jb_oc, "non-Gemini judge"));
+        assert!(!has(&jb_oc, "LAB's judge"));
+        assert!(has(
+            &job(Some(Bench::Wb), Some(Substrate::Oc)),
+            "WorkBuddy-Bench"
+        ));
+
+        // A job with no benchmark or executor (a bridge, say) hears all of them, and the
+        // filter never invents or drops a warning the full list does not have.
+        assert_eq!(job(None, None), all);
+        for (bench, sub) in [
+            (Some(Bench::Lab), Some(Substrate::Ts)),
+            (None, Some(Substrate::Cx)),
+        ] {
+            assert!(job(bench, sub).iter().all(|w| all.contains(w)));
+        }
+
+        let c = base(ProfileKind::Custom);
+        let w = job_profile_warnings(&c, Some(Bench::Lab), Some(Substrate::Ts));
         assert!(w.iter().any(|x| x.starts_with("No executor model")));
         assert!(w.iter().any(|x| x.starts_with("No judge model")));
     }

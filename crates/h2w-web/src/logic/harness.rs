@@ -81,6 +81,8 @@ pub(crate) fn surface_label(s: Surface) -> &'static str {
     match s {
         Surface::Opencode => "OpenCode",
         Surface::Codex => "Codex",
+        Surface::Hermes => "Hermes Agent",
+        Surface::Turnstone => "Turnstone",
     }
 }
 

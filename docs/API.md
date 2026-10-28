@@ -259,7 +259,11 @@ Notes on single routes:
   container isolation is configured and the runtime answers) and `host_risks_preacknowledged`
   (`true` when the administrator set `isolation.preacknowledge_host_risks`, so jobs need no
   `acknowledge_risks`), `cloud_judges` (`acknowledge` or `refuse`, from `[judge] cloud`) and
-  `private_judge_hosts` (from `[judge] private_hosts`, omitted when empty).
+  `private_judge_hosts` (from `[judge] private_hosts`, omitted when empty). Its `harness2` object
+  lists `substrates`, the executors the installed checkout supports: upstream's `oc` and `cx`, plus
+  `hm` (Hermes Agent) and `ts` (Turnstone) when the checkout ships `harness2/substrate/hermes.py`
+  or `turnstone.py` ([notes/substrates.md](notes/substrates.md)). A server older than this field
+  omits it: read that as `["oc", "cx"]`.
 - Every profile carries `judge_site` (response only; ignored when sent, never stored), absent when
   it has no judge model: `{"kind": "local"|"cloud"|"unknown", "provider": "Anthropic",
   "hosts": ["api.anthropic.com"]}`. `cloud` means at least one host judging reaches is public;
@@ -284,9 +288,18 @@ Notes on single routes:
   $ curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/profiles/local-vllm/check
   {"warnings":["WorkBuddy-Bench cannot use this profile: its setup requires a google-vertex/gemini executor, a gemini judge and Vertex AI settings.","The Codex executor (substrate cx) needs a Responses-API endpoint: set the profile's Codex endpoint (for Vertex AI, run the bridge job and use its URL and key)."],"missing_secrets":["VLLM_API_KEY"]}
   ```
-- `GET .../tasks/{task}/modes/{mode}/harnesses/{label}/export` takes `target=raw|opencode|codex`
-  and `format=json|tar.gz`; the archive is deterministic and arrives as `application/gzip` with a
-  `Content-Disposition` attachment name.
+- `GET .../tasks/{task}/modes/{mode}/harnesses/{label}/export` takes
+  `target=raw|opencode|codex|hermes|turnstone` and `format=json|tar.gz`; the archive is
+  deterministic and arrives as `application/gzip` with a `Content-Disposition` attachment name.
+  Any harness exports to any target; what a target has no counterpart for (OpenCode plugins or
+  Codex hooks to another framework, sub-agents to `hermes` or `turnstone`, skill names Turnstone
+  refuses, an empty identity text or a text over 32,768 characters for `turnstone`) is a `422` on
+  `target` naming it. The bundle's `notes` say what moved and what to adjust
+  ([USER-GUIDE.md](USER-GUIDE.md#64-export)).
+- `POST /harness/validate` (`surface`: `opencode`, `codex`, `hermes` or `turnstone`) reports
+  harness2's rules and, for `hermes` and `turnstone`, the framework's own refusals, in harness2's
+  words. `notes` (omitted when empty) names what harness2 also checks that the Workbench cannot:
+  the scanners it loads from the Hermes Agent or Turnstone install.
 - `GET .../rollouts/{label}/file` returns at most 2 MiB; rollout browsing never follows symlinks.
 
 ## 5. Errors
@@ -435,7 +448,8 @@ on `params.rev`: `only the tested harness2 commit <sha> can be installed; an adm
 allow others with paths.allow_untested_harness2_rev = true`. With the switch on, `rev` accepts any
 full 40-character commit id and the job builds what it finds there (use only commits you trust).
 
-`cell` is `{"bench": "lab"}` (also `"substrate": "oc"|"cx"`, and `"subset"` for `wb`);
+`cell` is `{"bench": "lab"}` (also `"substrate": "oc"|"cx"|"hm"|"ts"`, and `"subset"` for `wb`;
+`hm` (Hermes Agent) and `ts` (Turnstone) run LAB only, in a harness2 that ships them);
 `options` is `{"k": 1, "modes": ["parallel"], "seed": 7, "split": "all", "workers": 1,
 "only_domains": [], "max_tasks": 10}` where only `k` and `modes` are required. Defaults and ranges:
 `k` 1..32, `workers` 1..64, `max_tasks` 1..100000.
@@ -445,7 +459,12 @@ container-isolation limits (`409`); host isolation needs `acknowledge_risks: tru
 `pipeline` unless the server pre-acknowledges (`422`); harness2 installed (`503`); the experiment
 exists (`422`; a `demo` creates its experiment), is the right kind (`409`), is not archived
 (`409`) and is pinned to the same profile (`409`); the profile exists and its secrets are set
-(`422` naming the secret); for `judge` and `pipeline`, a profile whose judge is not local is refused
+(`422` naming the secret); an executor the installed harness2 lacks (`422` on
+`params.cell.substrate`, or `params.substrate` for `setup`: `the installed harness2 has no Hermes
+Agent executor: it needs a harness2 that adds it (docs/notes/substrates.md)`); for `run` and
+`pipeline` on `hm` or `ts`, an OpenAI-compatible endpoint (`422` on `params.profile`: `Hermes Agent
+needs an OpenAI-compatible endpoint: use an openai_compatible profile, or set
+HARNESS2_HERMES_BASE_URL in profile <name>'s extra environment`); for `judge` and `pipeline`, a profile whose judge is not local is refused
 with `409` under `[judge] cloud = "refuse"` (`this server refuses cloud judges ([judge] cloud =
 "refuse") and profile <name>'s judge is not local (<provider>: <hosts>)`), and otherwise needs
 `acknowledge_cloud_judge: true` (`422` on `params.acknowledge_cloud_judge`, with the cloud-judge

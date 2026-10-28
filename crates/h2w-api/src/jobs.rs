@@ -199,7 +199,8 @@ pub struct SetupParams {
     /// wb only. `None` for wb installs all three subsets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subset: Option<WbSubset>,
-    /// Executor framework (`oc` OpenCode or `cx` Codex).
+    /// Executor framework: `oc` OpenCode, `cx` Codex, or (LAB only, in a harness2 that adds
+    /// them) `hm` Hermes Agent and `ts` Turnstone.
     #[serde(default = "default_substrate")]
     pub substrate: Substrate,
     /// Print the setup plan without changing anything.

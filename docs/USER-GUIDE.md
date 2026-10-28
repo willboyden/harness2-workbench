@@ -248,8 +248,9 @@ judging writes them, are shown as written); mock example below.
 Every harness the mode produced is a button (`base`, `inv1`, …, with a dot on the adopted one).
 The viewer groups the files by the eight components **c1 to c8** (system prompt, guardrails, memory,
 tool guidance, sub-agents, skills, scripts, plugins and hooks); always-on components are marked, and
-the **Always-on budget** bar shows how much of the cap (24,000 characters for OpenCode, 8,000 for
-Codex) is used. Click a file to read it (**Copy**). Also shown: counts of skills, sub-agents,
+the **Always-on budget** bar shows how much of the cap (24,000 characters for OpenCode and
+Turnstone, 8,000 for Codex, 20,000 for Hermes Agent's `SOUL.md` and `memories/MEMORY.md` together)
+is used. Click a file to read it (**Copy**). Also shown: counts of skills, sub-agents,
 scripts, plugins and hooks, and the harness **fingerprint**.
 
 ### 6.2 Comparing two harnesses
@@ -274,12 +275,40 @@ coloured). Rollout files are written by models and by the task: treat them as un
 
 ![The export dialog](images/export-dialog.png)
 
-Choose the layout: **Raw** (the tree exactly as harness2 stores it), **OpenCode project** (`AGENTS.md`
-plus `.opencode/` skills, agents and plugins) or **Codex project** (`AGENTS.md`, `.agents/skills` and
-`.codex/hooks.json`). For the project layouts `AGENTS.md` joins `systemprompt.md`, `guardrails.md`,
-`LongTermMEMORY.md` and `tool_descriptions/tool_guidance.md` in that order. Preview the files, then
-**JSON** (downloads the files as one JSON document) or **Download .tar.gz** (a deterministic
-archive). Read what a harness contains before you put it in a project: it was written by a model.
+Choose the layout. The dialog starts on the framework the harness was made for, and any harness
+converts to any of them:
+
+| Layout | Files | Use it with |
+|---|---|---|
+| **Raw** | the tree exactly as harness2 stores it | harness2, or your own tooling |
+| **OpenCode project** | `AGENTS.md`, `.opencode/` skills, agents and plugins, skill helpers in `skills/<name>/`, `scripts/` | an OpenCode project root |
+| **Codex project** | `AGENTS.md`, `.agents/skills`, `.codex/hooks.json`, `scripts/` | a Codex project root |
+| **Hermes Agent home** | `SOUL.md`, `memories/MEMORY.md`, `skills/`, `scripts/` | your `HERMES_HOME` (`scripts/` goes in the workspace) |
+| **Turnstone bundle** | `persona.md`, `instructions.md`, `skills/`, `scripts/`, `IMPORT.md` | Turnstone, which keeps a harness in its database: `IMPORT.md` lists the steps (a persona with `persona.md` as its base prompt, `instructions.md` in the `session.instructions` setting, one named skill per folder) |
+
+The always-on text moves by role. The identity text (the system prompt, Codex's `AGENTS.md`, Hermes
+Agent's `SOUL.md` or Turnstone's persona) stays the identity text; guardrails and tool guidance
+become further always-on instructions; long-term memory goes to `memories/MEMORY.md` for Hermes
+Agent and into `instructions.md` for Turnstone. For the project layouts `AGENTS.md` joins
+`systemprompt.md`, `guardrails.md`, `LongTermMEMORY.md` and `tool_descriptions/tool_guidance.md` in
+that order. Paths to skill files move with the skills, in the skill files and in the always-on
+text: each layout keeps a skill's helpers where that framework runs them from (Hermes Agent's skills
+reach their own folder as `${HERMES_SKILL_DIR}`; OpenCode and Turnstone projects keep helpers in
+`skills/<name>/` in the workspace, where harness2's runners put them; Codex in
+`.agents/skills/<name>/`). File contents are not otherwise changed; the **notes** under the preview
+say what a layout could not carry over (for example a trigger line that names another framework's
+skill tool, or a `SOUL.md` that names a skill helper by a workspace path Hermes Agent cannot
+reach).
+
+Some conversions are refused, with the reason, because the target has nothing that does the same
+job: OpenCode plugins and Codex hooks (they act inside the tool loop) to any other framework,
+sub-agents to Hermes Agent or Turnstone, and, for Turnstone, skill names it does not accept
+(lowercase letters, digits and single hyphens only), an empty identity text, or a base prompt or
+`SKILL.md` over 32,768 characters. Export **Raw** for those.
+
+Preview the files, then **JSON** (downloads the files as one JSON document) or **Download .tar.gz**
+(a deterministic archive). Read what a harness contains before you put it in a project: it was
+written by a model.
 
 ## 7. Starting a run
 
@@ -300,6 +329,11 @@ the **benchmark** (JobBench, LAB or WorkBuddy-Bench; one that is not installed s
 and links to the Benchmarks page; one this server does not run says why, links to the Workbench that
 runs it when the administrator gave one, and stops the wizard at this step) and the **executor**
 (OpenCode with a 24,000-character always-on budget, or Codex with 8,000 on a Responses-API endpoint).
+When the installed harness2 ships them, two more executors are offered for LAB:
+**Hermes Agent** (its `SOUL.md` and memory share a 20,000-character budget) and **Turnstone** (one
+throwaway Turnstone server per rollout, 24,000 characters). Both use the profile's
+OpenAI-compatible endpoint; the improver stays on OpenCode whatever the executor. harness2 at the
+commit this release tests ships OpenCode and Codex only, so the two are hidden there.
 
 **2. Options.**
 
@@ -432,7 +466,9 @@ state and no buttons:
 
 - **Check readiness** (operators) runs harness2's offline readiness check for that benchmark; no
   model is called.
-- **Set up…** (admin) opens a dialog: choose the **executor to prepare** and, for benchmarks that
+- **Set up…** (admin) opens a dialog: choose the **executor to prepare** (Hermes Agent and Turnstone,
+  for LAB, when the installed harness2 ships them: setup installs each at harness2's pin with its own
+  virtual environment) and, for benchmarks that
   bake model routes into their environments, a **model profile**. **Plan (dry run)** prints every
   command setup would run without changing anything; **Set up now** clones the pinned code, applies
   patches, builds environments and downloads task data (network-heavy, can take long, and runs

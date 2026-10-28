@@ -2,8 +2,7 @@
 
 use h2w_api::{
     Bench, BenchmarkStatus, BenchmarkUnavailable, CostEstimate, DomainCount, Experiment, Job,
-    JobResult, JobSpec, JobStatus, ModelProfile, PreviewResult, Role, Split, SplitInfo, Substrate,
-    WbSubset,
+    JobResult, JobSpec, JobStatus, ModelProfile, PreviewResult, Role, Split, SplitInfo, WbSubset,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -23,7 +22,8 @@ use crate::logic::jobs::{Tone, cell_label, modes_label};
 use crate::logic::judge::JudgeGate;
 use crate::logic::urls::{api as paths, route};
 use crate::logic::wizard::{
-    HostRisk, Preset, RunForm, Step, describe, expected_tasks, quick_counts,
+    HostRisk, Preset, RunForm, Step, describe, expected_tasks, quick_counts, substrate_of,
+    substrate_options,
 };
 use crate::nav::query_param;
 use crate::pages::experiments::CreateExperiment;
@@ -389,16 +389,20 @@ fn CellStep(wiz: Wiz) -> impl IntoView {
                     }
                 })
         }}
-        <RadioCards
-            name="run-substrate"
-            legend="Executor"
-            value=wiz.substrate
-            compact=true
-            options=vec![
-                ("oc".to_owned(), "OpenCode".to_owned(), "Upstream default; 24,000-character always-on budget.".to_owned()),
-                ("cx".to_owned(), "Codex".to_owned(), "Codex CLI on a Responses-API endpoint; 8,000-character budget.".to_owned()),
-            ]
-        />
+        {move || {
+            let supported = session()
+                .system
+                .with(|s| s.as_ref().map(|s| s.harness2.substrates.clone()).unwrap_or_default());
+            view! {
+                <RadioCards
+                    name="run-substrate"
+                    legend="Executor"
+                    value=wiz.substrate
+                    compact=true
+                    options=substrate_options(&supported)
+                />
+            }
+        }}
         <Problems wiz=wiz step=Step::Cell />
     }
 }
@@ -883,11 +887,7 @@ pub(crate) fn NewRun() -> impl IntoView {
         profile: profile.get(),
         bench: bench_of(&bench.get()),
         subset: subset_of(&subset.get()),
-        substrate: if substrate.get() == "cx" {
-            Substrate::Cx
-        } else {
-            Substrate::Oc
-        },
+        substrate: substrate_of(&substrate.get()),
         k: k.get(),
         parallel: parallel.get(),
         sequential: sequential.get(),

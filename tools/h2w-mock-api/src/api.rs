@@ -261,6 +261,8 @@ async fn system_info(State(st): State<AppState>, headers: HeaderMap) -> R<Json<S
                 Vec::new()
             },
             home: admin.then(|| "/srv/harness2-workbench/harness2".to_owned()),
+            // A harness2 with every executor, so the web UI shows Hermes Agent and Turnstone.
+            substrates: h2w_api::Substrate::ALL.to_vec(),
         },
         isolation: g.isolation,
         host_risks_preacknowledged: g.host_risks_preacknowledged,
@@ -1513,8 +1515,9 @@ async fn validate_harness(
 ) -> R<Json<ValidationReport>> {
     require(&st, &headers, Role::Viewer)?;
     let cap = match body.surface {
-        Surface::Opencode => 24_000,
+        Surface::Opencode | Surface::Turnstone => 24_000,
         Surface::Codex => 8_000,
+        Surface::Hermes => 20_000,
     };
     let always: usize = body
         .files
@@ -1527,6 +1530,8 @@ async fn validate_harness(
                     | "LongTermMEMORY.md"
                     | "tool_descriptions/tool_guidance.md"
                     | "AGENTS.md"
+                    | "SOUL.md"
+                    | "memories/MEMORY.md"
             )
         })
         .map(|f| f.content.chars().count())
@@ -1541,9 +1546,24 @@ async fn validate_harness(
     if !body.allow_subagents && body.files.iter().any(|f| f.path.starts_with("sub_agents/")) {
         errors.push("sub-agents are not allowed on this deployment".to_owned());
     }
+    // The server's scanner notes, shortened.
+    let notes = match body.surface {
+        Surface::Hermes => vec![
+            "harness2 also runs Hermes Agent's prompt-injection scanner on SOUL.md and each \
+             memory entry; the Workbench does not."
+                .to_owned(),
+        ],
+        Surface::Turnstone => vec![
+            "harness2 also rates each skill with Turnstone's skill scanner; the Workbench does \
+             not."
+                .to_owned(),
+        ],
+        Surface::Opencode | Surface::Codex => Vec::new(),
+    };
     Ok(Json(ValidationReport {
         ok: errors.is_empty(),
         errors,
+        notes,
         off_surface: body
             .files
             .iter()

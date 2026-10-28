@@ -83,11 +83,30 @@ validates trees with a port of upstream's rules (`POST /api/v1/harness/validate`
 | c7 | Scripts | `scripts/<name>.py` | `scripts/<name>.py` | on demand, via the shell |
 | c8 | Plugins / hooks | `plugin/<name>.ts` | `.codex/hooks.json` | acts inside the tool loop |
 
+A harness2 that ships them also runs LAB on **Hermes Agent** (`hm`) and **Turnstone** (`ts`); the
+Workbench offers them only then (`harness2.substrates` in `GET /api/v1/system/info`). Their trees
+use these files:
+
+| # | Hermes Agent executor (`hm`) | Turnstone executor (`ts`) |
+|---|---|---|
+| c1 | `SOUL.md`: Hermes' identity slot, the first block of its system prompt | `systemprompt.md`: the persona's base prompt |
+| c2 | in `SOUL.md` | `guardrails.md`: the `session.instructions` setting, appended to every system message |
+| c3 | `memories/MEMORY.md`: entries separated by a line holding `§` | in either file |
+| c4 | in `SOUL.md` | in either file |
+| c5 | none: LAB allows no sub-agents | none: LAB allows no sub-agents, and Turnstone's `task_agent` tool is hidden |
+| c6 | `skills/<name>/SKILL.md`; helpers under the skill, run as `${HERMES_SKILL_DIR}/scripts/<file>` | `skills/<name>/SKILL.md`; names use lowercase letters, digits and single hyphens |
+| c7 | `scripts/<name>.py` | `scripts/<name>.py` |
+| c8 | none | none |
+
+The improver stays on OpenCode whatever the executor: it edits these files, and harness2 checks
+the result with LAB's rules plus the framework's own refusals before a rollout.
+
 Things the validator enforces that surprise newcomers:
 
 - **Always-on text has a cap**: 24,000 characters across the four always-on files of an
-  OpenCode harness, 8,000 for Codex's `AGENTS.md`. Every always-on token competes with the
-  agent's own output budget. `POST /api/v1/harness/validate` returns the count and the cap as
+  OpenCode harness, 8,000 for Codex's `AGENTS.md`, 20,000 for Hermes Agent's `SOUL.md` and
+  `memories/MEMORY.md` together, 24,000 for Turnstone's two files. Every always-on token competes
+  with the agent's own output budget. `POST /api/v1/harness/validate` returns the count and the cap as
   `census.always_on_chars` and `census.always_on_max`.
 - **A skill must be named in the always-on text**, or the agent never loads it. The validator
   says so in words ("an untriggered skill is dead weight") and suggests a trigger line.
@@ -95,6 +114,13 @@ Things the validator enforces that surprise newcomers:
   `scripts/Check.py` is not recognised as a script); the validator does not byte-compile them
   (harness2 does).
 - Files outside the editable surface are reported as `off_surface` and dropped.
+- **Hermes Agent and Turnstone add their own refusals**, which the validator also reports in
+  harness2's words: an empty `SOUL.md` or persona, a Turnstone skill name or `SKILL.md` it would
+  refuse (no closed frontmatter block, an empty body, more than 32,768 characters, `$1` or
+  `$ARGUMENTS` placeholders it would fill with nothing), and Hermes skill helpers named by a
+  workspace path or missing from the harness. harness2 also runs each framework's own scanner,
+  loaded from its install (Hermes Agent's prompt-injection scanner, Turnstone's skill risk
+  scanner); the Workbench cannot, and says so in the report's `notes`.
 
 ## 4. Recursion modes, the budget k, and what a sweep costs
 
@@ -183,7 +209,7 @@ walked through in the [user guide](USER-GUIDE.md).
 | harness, tree | the c1 to c8 files an agent runs with | `GET /experiments/{exp}/sweeps/{sweep}/tasks/{task}/modes/{mode}/harnesses/{label}`; `get_harness`; UI task page |
 | label | name of one harness in a task: `base`, `inv1`, `dom1`, `agg1`, `c1`, ... | the `{label}` path segment, `chosen_label` in task rows |
 | diff | file-by-file change between two labels | `.../modes/{mode}/diff?from=&to=`; `diff_harnesses` |
-| export | a harness as project files for OpenCode, Codex or raw | `.../harnesses/{label}/export?target=&format=`; `export_harness` |
+| export | a harness as files for OpenCode, Codex, Hermes Agent, Turnstone or raw | `.../harnesses/{label}/export?target=&format=`; `export_harness` |
 | base / reference execution | the unchanged harness, run `k` times | label `base`; counted in R |
 | invariant / domain candidate | edits for how the agent works vs. for the subject area | labels `inv<n>`, `dom<n>` |
 | composition | a refined harness built from the candidates | labels `agg<n>` (parallel) and `c<n>` (sequential) |

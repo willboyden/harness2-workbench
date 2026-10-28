@@ -72,10 +72,7 @@ impl SweepSpec {
     }
 
     fn surface(&self) -> Surface {
-        match self.substrate() {
-            Substrate::Oc => Surface::Opencode,
-            Substrate::Cx => Surface::Codex,
-        }
+        self.substrate().surface()
     }
 
     pub(crate) fn task(&self, slug: &str) -> Option<&TaskSpec> {
@@ -195,7 +192,9 @@ fn harness_files_raw(
             task.domain, task.domain
         );
         let skill_dir = match surface {
-            Surface::Opencode => format!("skills/{dslug}-review"),
+            Surface::Opencode | Surface::Hermes | Surface::Turnstone => {
+                format!("skills/{dslug}-review")
+            }
             Surface::Codex => format!(".agents/skills/{dslug}-review"),
         };
         extra.push((
@@ -233,6 +232,8 @@ fn harness_files_raw(
                     Component::Plugins,
                     "{\n  \"post_tool_use\": [{ \"match\": \"apply_patch\", \"run\": \"python scripts/check_requirements.py task.md out/draft.md\" }]\n}\n".to_owned(),
                 )),
+                // Neither has sub-agents or hooks on its surface.
+                Surface::Hermes | Surface::Turnstone => {}
             }
         }
     }
@@ -260,6 +261,26 @@ fn harness_files_raw(
             Component::SystemPrompt,
             format!("{prompt}\n{guard}\n{memory}\n{tools}"),
         )],
+        Surface::Hermes => vec![
+            (
+                "SOUL.md".to_owned(),
+                Component::SystemPrompt,
+                format!("{prompt}\n{guard}\n{tools}"),
+            ),
+            ("memories/MEMORY.md".to_owned(), Component::Memory, memory),
+        ],
+        Surface::Turnstone => vec![
+            (
+                "systemprompt.md".to_owned(),
+                Component::SystemPrompt,
+                format!("{prompt}\n{tools}"),
+            ),
+            (
+                "guardrails.md".to_owned(),
+                Component::Guardrails,
+                format!("{guard}\n{memory}"),
+            ),
+        ],
     };
     files.extend(extra);
     files.sort_by(|a, b| a.0.cmp(&b.0));
@@ -285,8 +306,9 @@ fn census_of(surface: Surface, files: &[(String, Component, String)]) -> Census 
     Census {
         always_on_chars: u32::try_from(always_on).unwrap_or(u32::MAX),
         always_on_max: match surface {
-            Surface::Opencode => 24_000,
+            Surface::Opencode | Surface::Turnstone => 24_000,
             Surface::Codex => 8_000,
+            Surface::Hermes => 20_000,
         },
         n_files: u32::try_from(files.len()).unwrap_or(0),
         skills: count(Component::Skills),
@@ -461,10 +483,16 @@ pub(crate) fn export(
             for f in &tree.files {
                 let content = f.content.clone().unwrap_or_default();
                 let mapped = match (target, f.component) {
-                    (ExportTarget::Opencode, Component::Skills) => Some(format!(
-                        ".opencode/{}",
-                        f.path.trim_start_matches(".agents/")
-                    )),
+                    // Like the server: SKILL.md in .opencode/skills/, helpers in the
+                    // workspace's skills/<name>/, where harness2's OpenCode runner puts them.
+                    (ExportTarget::Opencode, Component::Skills) => {
+                        let rel = f.path.trim_start_matches(".agents/");
+                        Some(if rel.ends_with("/SKILL.md") {
+                            format!(".opencode/{rel}")
+                        } else {
+                            rel.to_owned()
+                        })
+                    }
                     (ExportTarget::Opencode, Component::Subagents) => {
                         Some(f.path.replace("sub_agents/", ".opencode/agent/"))
                     }
@@ -491,6 +519,73 @@ pub(crate) fn export(
             if target == ExportTarget::Codex && tree.census.sub_agents > 0 {
                 notes.push("Codex has no sub-agent surface; sub-agent files are exported as plain markdown for reference.".into());
             }
+            out
+        }
+        // Like the server: the identity text, the rest of the always-on text, skills and
+        // scripts in each framework's layout (the mock's trees carry no plugins or hooks).
+        ExportTarget::Hermes | ExportTarget::Turnstone => {
+            let (identity, rest, memory) = match tree.surface {
+                Surface::Codex => (text("AGENTS.md"), String::new(), String::new()),
+                Surface::Hermes => (text("SOUL.md"), String::new(), text("memories/MEMORY.md")),
+                Surface::Turnstone => (
+                    text("systemprompt.md"),
+                    text("guardrails.md"),
+                    String::new(),
+                ),
+                Surface::Opencode => (
+                    text("systemprompt.md"),
+                    format!(
+                        "{}\n\n{}",
+                        text("guardrails.md"),
+                        text("tool_descriptions/tool_guidance.md")
+                    ),
+                    text("LongTermMEMORY.md"),
+                ),
+            };
+            let mut out = if target == ExportTarget::Hermes {
+                vec![
+                    FileText {
+                        path: "SOUL.md".into(),
+                        content: format!("{identity}\n\n{rest}"),
+                    },
+                    FileText {
+                        path: "memories/MEMORY.md".into(),
+                        content: memory,
+                    },
+                ]
+            } else {
+                vec![
+                    FileText { path: "persona.md".into(), content: identity },
+                    FileText { path: "instructions.md".into(), content: format!("{rest}\n\n{memory}") },
+                    FileText {
+                        path: "IMPORT.md".into(),
+                        content: "# Turnstone bundle\n\n1. `persona.md`: a persona's base prompt.\n2. `instructions.md`: the `session.instructions` setting.\n3. `skills/<name>/SKILL.md`: named skills.\n".into(),
+                    },
+                ]
+            };
+            for f in &tree.files {
+                let content = f.content.clone().unwrap_or_default();
+                match f.component {
+                    Component::Skills => out.push(FileText {
+                        path: format!(
+                            "skills/{}",
+                            f.path.rsplit("skills/").next().unwrap_or(&f.path)
+                        ),
+                        content,
+                    }),
+                    Component::Scripts => out.push(FileText {
+                        path: f.path.clone(),
+                        content,
+                    }),
+                    _ => {}
+                }
+            }
+            notes.push(if target == ExportTarget::Hermes {
+                "SOUL.md, memories/ and skills/ go into the Hermes home; scripts/ into the project."
+                    .into()
+            } else {
+                "IMPORT.md says how to apply the bundle.".into()
+            });
             out
         }
     };

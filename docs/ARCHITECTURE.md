@@ -171,7 +171,7 @@ Unsafe methods (POST/PUT/PATCH/DELETE) require header `x-h2w-request: 1`.
 | GET | `/experiments/{exp}/sweeps/{sweep}/tasks/{task}` | viewer | | `TaskDetail` |
 | GET | `…/tasks/{task}/modes/{mode}/harnesses/{label}` | viewer | | `HarnessTree` |
 | GET | `…/tasks/{task}/modes/{mode}/diff` | viewer | `?from&to` | `HarnessDiff` |
-| GET | `…/tasks/{task}/modes/{mode}/harnesses/{label}/export` | viewer | `?target=raw\|opencode\|codex&format=json\|tar.gz` | `ExportBundle` or `application/gzip` attachment |
+| GET | `…/tasks/{task}/modes/{mode}/harnesses/{label}/export` | viewer | `?target=raw\|opencode\|codex\|hermes\|turnstone&format=json\|tar.gz` (v1.11) | `ExportBundle` or `application/gzip` attachment |
 | GET | `…/tasks/{task}/modes/{mode}/rollouts/{label}/files` | viewer | `?path=` | `Vec<FileEntry>` |
 | GET | `…/tasks/{task}/modes/{mode}/rollouts/{label}/file` | viewer | `?path=` | `FileContent` (2 MiB cap) |
 | GET | `/experiments/{exp}/sweeps/{sweep}/scores` | viewer | | `Scores` |
@@ -632,3 +632,22 @@ independent audit (findings F1–F16):
   (`H2W_MCP_ALLOW_CLOUD_JUDGE_ACK`), reported in `server_info`'s policy. The web UI's profile
   editor has judge presets and a live judge-site notice; judging and pipelines with a cloud judge
   ask for the synthetic-data confirmation.
+
+**v1.11 (2026-10-27) — Hermes Agent and Turnstone executors.**
+- `Substrate` gains `hm` (Hermes Agent) and `ts` (Turnstone): `Substrate::ALL`, `upstream()` (only
+  `oc` and `cx`), `lab_only()`, `surface()`. `Surface` gains `hermes` and `turnstone`;
+  `ExportTarget` gains `hermes` and `turnstone` (`ExportTarget::ALL`, `as_param()`).
+- `Harness2Status.substrates`: the executors the installed checkout supports, detected from
+  `harness2/substrate/hermes.py` and `turnstone.py`; `serde` default `["oc", "cx"]` for a server that
+  omits it. `ValidationReport.notes` (omitted when empty): what harness2 also checks that the
+  Workbench cannot (scanners loaded from each framework's install).
+- Job validation: `hm`/`ts` cells run LAB only (`Cell::validate`; `setup` likewise); a cell or setup
+  naming an executor the installed harness2 lacks is `422` on `params.cell.substrate` or
+  `params.substrate`; a `run` or `pipeline` on `hm`/`ts` needs an `openai_compatible` profile or the
+  executor's `..._BASE_URL` in `extra_env` (`422` on `params.profile`). `EnvContext.substrate`
+  limits `HARNESS2_HERMES_*` / `HARNESS2_TURNSTONE_*` to jobs on that executor.
+- `h2w_core::tree` validates Hermes and Turnstone trees with harness2's rules and each framework's
+  static refusals, in harness2's words; `h2w_core::export` converts any surface to any target and
+  refuses what has no counterpart. `h2w_core::env::job_profile_warnings` filters a job log's profile
+  warnings by benchmark and executor (`WarningScope`).
+- Docs: [notes/substrates.md](notes/substrates.md).

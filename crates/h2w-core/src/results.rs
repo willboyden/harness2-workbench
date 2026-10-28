@@ -715,10 +715,7 @@ fn index_title(head: &[u8]) -> Option<String> {
 }
 
 fn surface_of(substrate: Substrate) -> Surface {
-    match substrate {
-        Substrate::Oc => Surface::Opencode,
-        Substrate::Cx => Surface::Codex,
-    }
+    substrate.surface()
 }
 
 const AUDIT_PARTS: [&str; 3] = ["mission", "system", "response"];
