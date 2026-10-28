@@ -18,7 +18,7 @@
 # Every base is pinned by digest. Dependabot proposes Node updates (14-day cooldown); uv is
 # bumped by hand, because its registry gives Dependabot no publication date to check the
 # cooldown against (docs/SUPPLY-CHAIN.md, "Bumping uv by hand").
-# Build: docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.3 .
+# Build: docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.4 .
 
 FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a AS uv
 

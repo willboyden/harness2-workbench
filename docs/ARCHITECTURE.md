@@ -331,7 +331,7 @@ mode = "host"                        # host | container
 preacknowledge_host_risks = false
 [isolation.container]
 runtime = "docker"                   # docker | podman
-image = "harness2-workbench-runner:0.1.3"
+image = "harness2-workbench-runner:0.1.4"
 network = "none"
 cpus = 4.0
 memory_mb = 8192

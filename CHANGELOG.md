@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-27
+
+Judges at cloud providers, with a synthetic-data confirmation; two more executors for LAB (Hermes
+Agent and Turnstone, when the installed harness2 ships them); and harness exports that convert
+between frameworks instead of only giving the raw tree.
+
 ### Added
 
 - Judging with a cloud model: the profile editor's **Judge** part fills the judge from a provider
@@ -36,6 +42,19 @@ All notable changes to this project are documented here. The format follows
 - `POST /api/v1/harness/validate` reports Hermes Agent's and Turnstone's own refusals in harness2's
   words, and `notes` names the scanners only harness2 can apply.
 
+### Changed
+
+- **Upgrade note:** `judge` and `pipeline` jobs with a profile whose judge is not local (including
+  the upstream Vertex AI setup) are refused until `acknowledge_cloud_judge` is set. API clients
+  that judge with a cloud model must add it.
+- The default runner image is `harness2-workbench-runner:0.1.4` (the tag follows the Workbench
+  version), and the documentation, Dockerfiles, compose file and CI build that tag. The image
+  itself did not change since 0.1.3: `docker tag harness2-workbench-runner:0.1.3
+  harness2-workbench-runner:0.1.4` is enough, or rebuild it.
+- The run wizard's *What this profile cannot do* lists only the warnings about the chosen
+  benchmark and executor (`GET /profiles/{name}/check?bench=&substrate=`; MCP `check_profile` takes
+  `bench` and `substrate` too).
+
 ### Fixed
 
 - OpenCode project exports put skill helpers in `.opencode/skills/<name>/` while the skills ran
@@ -43,15 +62,6 @@ All notable changes to this project are documented here. The format follows
   exports between frameworks move skill paths in skill files and in the always-on text.
 - Job logs repeated every profile warning; they now repeat only those about the job's benchmark and
   executor.
-
-### Changed
-
-- The run wizard's *What this profile cannot do* lists only the warnings about the chosen
-  benchmark and executor (`GET /profiles/{name}/check?bench=&substrate=`; MCP `check_profile` takes
-  `bench` and `substrate` too).
-- `judge` and `pipeline` jobs with a profile whose judge is not local (including the upstream
-  Vertex AI setup) are refused until `acknowledge_cloud_judge` is set. API clients that judge with
-  a cloud model must add it.
 
 ## [0.1.3] - 2026-10-27
 
@@ -277,7 +287,8 @@ Each change, its tests and how it was checked are in
   an environment that reads empty or denied for that moment is read again for up to about 0.25 s
   (found by a test that failed once on a CI runner).
 
-[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/willboyden/harness2-workbench/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/willboyden/harness2-workbench/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/willboyden/harness2-workbench/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/willboyden/harness2-workbench/compare/v0.1.0...v0.1.1
