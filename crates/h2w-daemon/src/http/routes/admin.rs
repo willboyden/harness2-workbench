@@ -4,8 +4,9 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use h2w_api::{
-    AuditEvent, AuditOutcome, AuditVerification, CreateTokenRequest, ErrorBody, ModelProfile, Page,
-    ProfileCheck, SecretInfo, SetSecretRequest, TokenCreated, TokenInfo,
+    AuditEvent, AuditOutcome, AuditVerification, Bench, CreateTokenRequest, ErrorBody,
+    ModelProfile, Page, ProfileCheck, SecretInfo, SetSecretRequest, Substrate, TokenCreated,
+    TokenInfo,
 };
 use http::StatusCode;
 use serde::Deserialize;
@@ -35,17 +36,55 @@ async fn with_secret_infos(
     Ok(p)
 }
 
-/// `h2w_core::env::profile_warnings` plus, for a judge that is not local, the cloud-judge
-/// warning first.
-fn warnings_with_judge(profile: &ModelProfile, site: Option<&h2w_api::JudgeSite>) -> Vec<String> {
+/// `h2w_core::env::job_profile_warnings` for jobs on `bench` with executor `substrate` (each
+/// `None` = any, so both `None` is every warning) plus, for a judge that is not local, the
+/// cloud-judge warning first.
+fn warnings_with_judge(
+    profile: &ModelProfile,
+    site: Option<&h2w_api::JudgeSite>,
+    bench: Option<Bench>,
+    substrate: Option<Substrate>,
+) -> Vec<String> {
     let mut warnings = Vec::new();
     if let Some(s) = site
         && s.needs_acknowledgement()
     {
         warnings.push(h2w_api::cloud_judge_warning(s));
     }
-    warnings.extend(h2w_core::env::profile_warnings(profile));
+    warnings.extend(h2w_core::env::job_profile_warnings(
+        profile, bench, substrate,
+    ));
     warnings
+}
+
+/// The jobs a profile check is about: a benchmark, an executor, or both (contract v1.12).
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct CheckQuery {
+    /// Keep only the warnings that concern jobs on this benchmark: `jb`, `lab` or `wb`.
+    pub bench: Option<String>,
+    /// Keep only the warnings that concern jobs with this executor: `oc`, `cx`, `hm` or `ts`.
+    pub substrate: Option<String>,
+}
+
+/// A query value as one of `all`, by its command-line name; `422` on `field` otherwise.
+fn parse_cli<T: Copy>(
+    field: &str,
+    value: Option<&str>,
+    all: &[T],
+    name: impl Fn(T) -> &'static str,
+) -> Result<Option<T>, ApiError> {
+    let Some(v) = value else {
+        return Ok(None);
+    };
+    all.iter()
+        .copied()
+        .find(|t| name(*t) == v)
+        .map(Some)
+        .ok_or_else(|| {
+            let names: Vec<&str> = all.iter().map(|t| name(*t)).collect();
+            ApiError::invalid(field, format!("must be one of {}", names.join(", ")))
+        })
 }
 
 /// Every model profile (with the state of the secrets each references).
@@ -67,14 +106,22 @@ pub async fn list_profiles(
 /// secrets without a value (job creation refuses those with 422), and where the judge runs
 /// (a cloud judge adds its warning first).
 #[utoipa::path(get, path = "/api/v1/profiles/{name}/check", tag = "profiles",
-    params(("name" = String, Path, description = "Profile name")),
+    params(("name" = String, Path, description = "Profile name"), CheckQuery),
     responses((status = 200, body = ProfileCheck), (status = "default", description = "Error", body = ErrorBody)))]
 pub async fn check_profile(
     _auth: Auth<ViewerRole>,
     State(state): State<AppState>,
     Path(name): Path<String>,
+    ApiQuery(q): ApiQuery<CheckQuery>,
 ) -> Result<Json<ProfileCheck>, ApiError> {
     check_name("name", h2w_core::names::profile_name(&name))?;
+    let bench = parse_cli("bench", q.bench.as_deref(), &Bench::ALL, Bench::as_cli)?;
+    let substrate = parse_cli(
+        "substrate",
+        q.substrate.as_deref(),
+        &Substrate::ALL,
+        Substrate::as_cli,
+    )?;
     let n = name.clone();
     let profile = state
         .db
@@ -89,7 +136,7 @@ pub async fn check_profile(
     }
     let judge_site = h2w_api::judge_site(&profile, &state.cfg.judge_private_hosts);
     Ok(Json(ProfileCheck {
-        warnings: warnings_with_judge(&profile, judge_site.as_ref()),
+        warnings: warnings_with_judge(&profile, judge_site.as_ref(), bench, substrate),
         missing_secrets,
         judge_site,
     }))
@@ -117,7 +164,7 @@ pub async fn put_profile(
     profile.judge_site = None;
     h2w_core::env::validate_profile(&profile)?;
     let site = h2w_api::judge_site(&profile, &state.cfg.judge_private_hosts);
-    let warnings = warnings_with_judge(&profile, site.as_ref());
+    let warnings = warnings_with_judge(&profile, site.as_ref(), None, None);
     for w in &warnings {
         tracing::warn!(profile = %name, "{w}");
     }

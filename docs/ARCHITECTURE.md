@@ -651,3 +651,11 @@ independent audit (findings F1–F16):
   refuses what has no counterpart. `h2w_core::env::job_profile_warnings` filters a job log's profile
   warnings by benchmark and executor (`WarningScope`).
 - Docs: [notes/substrates.md](notes/substrates.md).
+
+**v1.12 (2026-10-27) — scoped profile checks.**
+- `GET /profiles/{name}/check` takes optional `bench` (`jb` | `lab` | `wb`) and `substrate`
+  (`oc` | `cx` | `hm` | `ts`) query parameters (`CheckQuery`, `deny_unknown_fields`; another
+  value is `422` on that field) and then lists only the warnings
+  `h2w_core::env::job_profile_warnings` keeps for those jobs; the cloud-judge warning stays first.
+  Without them the answer is unchanged. MCP `check_profile` takes the same two optional fields;
+  the run wizard sends its chosen benchmark and executor.

@@ -281,7 +281,10 @@ Notes on single routes:
   cannot do (`warnings`: the same texts the server logs when a profile is saved, see
   [MODELS.md](MODELS.md#warnings-the-server-raises)) and which referenced secrets have no value
   (`missing_secrets`; a job with such a profile is refused with `422`). It never returns a secret
-  value. `404` for an unknown profile, `422` for a malformed name. A real answer for an
+  value. Optional `bench` (`jb`, `lab`, `wb`) and `substrate` (`oc`, `cx`, `hm`, `ts`) keep only
+  the warnings about jobs on that benchmark or with that executor (the run wizard sends both;
+  any other value is a `422` on that field); without them every warning is listed. `404` for an
+  unknown profile, `422` for a malformed name. A real answer for an
   OpenAI-compatible profile whose key was not set yet:
 
   ```console

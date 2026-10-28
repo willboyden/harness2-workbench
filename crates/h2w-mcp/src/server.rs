@@ -33,11 +33,11 @@ use crate::{
     limits::WaitLimiter,
     output,
     params::{
-        AuditSessionInput, BridgeInput, CheckInput, ChooseSplitInput, CompareInput,
-        CreateExperimentInput, DemoInput, DiffInput, DoctorInput, EstimateInput, ExperimentInput,
-        ExportInput, HarnessInput, InstallInput, JobInput, JobLogInput, JudgeInput,
-        ListExperimentsInput, ListJobsInput, ListTasksInput, MAX_WAIT_SECS, NoArgs, PipelineInput,
-        PreviewInput, ProfileInput, ReportInput, RolloutFileInput, RolloutFilesInput, RunInput,
+        AuditSessionInput, BridgeInput, CheckInput, CheckProfileInput, ChooseSplitInput,
+        CompareInput, CreateExperimentInput, DemoInput, DiffInput, DoctorInput, EstimateInput,
+        ExperimentInput, ExportInput, HarnessInput, InstallInput, JobInput, JobLogInput,
+        JudgeInput, ListExperimentsInput, ListJobsInput, ListTasksInput, MAX_WAIT_SECS, NoArgs,
+        PipelineInput, PreviewInput, ReportInput, RolloutFileInput, RolloutFilesInput, RunInput,
         SetupInput, SplitInput, SweepInput, TaskInput, UpdateExperimentInput, ValidateInput,
         WaitInput,
     },
@@ -608,7 +608,7 @@ impl H2sMcp {
         name = "check_profile",
         title = "Check a model profile",
         description = d::CHECK_PROFILE,
-        input_schema = input_schema::<ProfileInput>(),
+        input_schema = input_schema::<CheckProfileInput>(),
         annotations(
             title = "Check a model profile",
             read_only_hint = true,
@@ -620,12 +620,19 @@ impl H2sMcp {
     async fn check_profile(
         &self,
         ctx: RequestContext<RoleServer>,
-        Args(input): Args<ProfileInput>,
+        Args(input): Args<CheckProfileInput>,
     ) -> rmcp::model::CallToolResult {
+        let mut query = Vec::new();
+        if let Some(b) = input.bench {
+            query.push(("bench", b.as_cli().to_owned()));
+        }
+        if let Some(s) = input.substrate {
+            query.push(("substrate", s.as_cli().to_owned()));
+        }
         self.get_json::<ProfileCheck>(
             &ctx,
             &["profiles", &input.profile, "check"],
-            &[],
+            &query,
             Role::Viewer,
             "",
         )

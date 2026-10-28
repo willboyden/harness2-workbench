@@ -168,7 +168,8 @@ about that job's benchmark and executor (a LAB run on Hermes Agent does not repe
 WorkBuddy-Bench lines; a job with neither repeats them all). They are *not* part of the `PUT`
 response. To read them on demand, ask the server:
 `GET /api/v1/profiles/{name}/check` (viewer role; MCP tool `check_profile`; the web UI shows the same
-after a profile is saved and in the run wizard) returns `{"warnings": [...], "missing_secrets":
+after a profile is saved, and in the run wizard only those about the benchmark and executor you
+chose, through the optional `bench` and `substrate` parameters) returns `{"warnings": [...], "missing_secrets":
 [...], "judge_site": {...}}`, where `missing_secrets` names the referenced secrets that have no value
 yet (a job with such a profile is refused with `422` until they are set) and `judge_site` says where
 the judge runs. For a judge that is not local, the check's warnings begin with the cloud-judge

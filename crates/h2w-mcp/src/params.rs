@@ -121,12 +121,18 @@ pub(crate) struct ExperimentInput {
 impl ToolInput for ExperimentInput {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ProfileInput {
+pub(crate) struct CheckProfileInput {
     /// Model profile name (see list_profiles).
     pub(crate) profile: String,
+    /// Only the warnings about jobs on this benchmark (omit for every benchmark).
+    #[serde(default)]
+    pub(crate) bench: Option<h2w_api::Bench>,
+    /// Only the warnings about jobs with this executor (omit for every executor).
+    #[serde(default)]
+    pub(crate) substrate: Option<h2w_api::Substrate>,
 }
 
-impl ToolInput for ProfileInput {}
+impl ToolInput for CheckProfileInput {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CreateExperimentInput {

@@ -46,6 +46,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The run wizard's *What this profile cannot do* lists only the warnings about the chosen
+  benchmark and executor (`GET /profiles/{name}/check?bench=&substrate=`; MCP `check_profile` takes
+  `bench` and `substrate` too).
 - `judge` and `pipeline` jobs with a profile whose judge is not local (including the upstream
   Vertex AI setup) are refused until `acknowledge_cloud_judge` is set. API clients that judge with
   a cloud model must add it.
