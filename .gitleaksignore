@@ -1,3 +1,5 @@
 # gitleaks false positives (fingerprint = commit:path:rule:line). Review every entry.
 # A test literal shaped like an API key ("sk-test-0123456789"), not a credential.
 14669eb14b7e5a03a5d2c8efd0547df6588e9b74:crates/h2s-core/src/env.rs:generic-api-key:710
+# The same test literal, in the Hermes Agent / Turnstone endpoint test.
+18ccff83a19bbb3c714953aa67864bd18bf2c900:crates/h2w-core/src/env.rs:generic-api-key:1108
