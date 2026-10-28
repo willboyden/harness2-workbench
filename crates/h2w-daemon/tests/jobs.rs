@@ -1656,3 +1656,93 @@ async fn the_refuse_policy_and_private_hosts() {
     assert!(info.private_judge_hosts.is_empty());
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hermes_and_turnstone_need_lab_a_harness2_that_has_them_and_an_endpoint() {
+    let t = TestServer::start().await;
+    t.put_profile(json!({
+        "name": "gw", "kind": "openai_compatible", "solver_model": "glm-5",
+        "endpoint": {"base_url": "http://127.0.0.1:4000/v1"},
+    }))
+    .await;
+    t.put_profile(json!({"name": "vx", "kind": "custom", "solver_model": "m/x"}))
+        .await;
+    t.put_experiment("hm-a", Some("gw")).await;
+    t.put_experiment("hm-b", Some("vx")).await;
+    let hm_run = |exp: &str, profile: &str, bench: &str| {
+        let mut spec = run_spec(exp, profile, None);
+        spec["params"]["cell"] = json!({"bench": bench, "substrate": "hm"});
+        spec
+    };
+    let problem = |e: &ErrorBody| {
+        e.error
+            .details
+            .first()
+            .map(|d| (d.field.clone(), d.problem.clone()))
+            .unwrap_or_default()
+    };
+
+    // LAB only, whatever the harness2.
+    let r = t.create_job(&t.operator, hm_run("hm-a", "gw", "jb")).await;
+    assert_eq!(r.status(), 422);
+    let (field, msg) = problem(&r.json().await.unwrap());
+    assert_eq!(field, "params.cell");
+    assert!(msg.contains("Hermes Agent runs LAB only"), "{msg}");
+    let setup =
+        json!({"kind": "setup", "params": {"bench": "jb", "substrate": "ts", "dry_run": true}});
+    let r = t.create_job(&t.admin, setup).await;
+    assert_eq!(r.status(), 422);
+    assert_eq!(problem(&r.json().await.unwrap()).0, "params.substrate");
+
+    // Upstream harness2 has no Hermes Agent.
+    let r = t.create_job(&t.operator, hm_run("hm-a", "gw", "lab")).await;
+    assert_eq!(r.status(), 422);
+    let (field, msg) = problem(&r.json().await.unwrap());
+    assert_eq!(field, "params.cell.substrate");
+    assert!(msg.contains("no Hermes Agent executor"), "{msg}");
+    let info: h2w_api::SystemInfo = t
+        .get("/api/v1/system/info", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(info.harness2.substrates, h2w_api::Substrate::upstream_set());
+
+    // A harness2 that ships the module: the job runs, with an endpoint in the profile.
+    let modules = t.root.path().join("harness2/harness2/substrate");
+    std::fs::create_dir_all(&modules).unwrap();
+    std::fs::write(modules.join("hermes.py"), "").unwrap();
+    let info: h2w_api::SystemInfo = t
+        .get("/api/v1/system/info", Some(&t.viewer))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(info.harness2.substrates.contains(&h2w_api::Substrate::Hm));
+    assert!(!info.harness2.substrates.contains(&h2w_api::Substrate::Ts));
+    let r = t.create_job(&t.operator, hm_run("hm-a", "gw", "lab")).await;
+    assert_eq!(r.status(), 201);
+    let j: Job = r.json().await.unwrap();
+    t.wait_terminal(&j.id, 30).await;
+    // A profile without an OpenAI-compatible endpoint cannot run it.
+    let r = t.create_job(&t.operator, hm_run("hm-b", "vx", "lab")).await;
+    assert_eq!(r.status(), 422);
+    let (field, msg) = problem(&r.json().await.unwrap());
+    assert_eq!(field, "params.profile");
+    assert!(msg.contains("HARNESS2_HERMES_BASE_URL"), "{msg}");
+    // Turnstone is still missing from this checkout.
+    let mut ts = hm_run("hm-a", "gw", "lab");
+    ts["params"]["cell"]["substrate"] = json!("ts");
+    let r = t.create_job(&t.operator, ts).await;
+    assert_eq!(r.status(), 422);
+    assert!(
+        problem(&r.json().await.unwrap())
+            .1
+            .contains("no Turnstone executor")
+    );
+    t.stop().await;
+}

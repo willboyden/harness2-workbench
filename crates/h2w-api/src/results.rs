@@ -107,7 +107,8 @@ pub struct SweepSummary {
     /// `None` for the demo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell: Option<Cell>,
-    /// Executor framework (`oc` OpenCode or `cx` Codex).
+    /// Executor framework: `oc` OpenCode, `cx` Codex, or (LAB only, in a harness2 that adds
+    /// them) `hm` Hermes Agent and `ts` Turnstone.
     pub substrate: Substrate,
     /// Task-level recursion budget.
     pub k: u32,
@@ -444,6 +445,12 @@ pub enum Surface {
     Opencode,
     /// `AGENTS.md`, `.agents/skills/`, `sub_agents/`, `scripts/`, `.codex/hooks.json`.
     Codex,
+    /// `SOUL.md`, `memories/MEMORY.md`, `skills/`, `scripts/` (Hermes Agent). Additive after
+    /// contract v1.10.
+    Hermes,
+    /// `systemprompt.md`, `guardrails.md`, `skills/`, `scripts/` (Turnstone). Additive after
+    /// contract v1.10.
+    Turnstone,
 }
 
 /// The eight editable harness components (c1..c8 upstream).
@@ -591,6 +598,10 @@ pub struct ValidationReport {
     pub off_surface: Vec<String>,
     /// Component counts and the always-on budget.
     pub census: Census,
+    /// What harness2 also checks that this report cannot (scanners loaded from the Hermes
+    /// Agent or Turnstone install). Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 /// Target layout for exporting a harness into a project.
@@ -606,6 +617,47 @@ pub enum ExportTarget {
     Opencode,
     /// A Codex project: `AGENTS.md`, `.agents/skills/`, `.codex/hooks.json`, `scripts/`.
     Codex,
+    /// A Hermes Agent home: `SOUL.md`, `memories/MEMORY.md`, `skills/`, plus the workspace's
+    /// `scripts/`. Additive after contract v1.10.
+    Hermes,
+    /// A Turnstone bundle: `persona.md` (the persona's base prompt), `instructions.md` (the
+    /// `session.instructions` setting), `skills/`, `scripts/` and `IMPORT.md` saying how to
+    /// apply them (Turnstone keeps a harness in its database). Additive after contract v1.10.
+    Turnstone,
+}
+
+impl ExportTarget {
+    pub const ALL: [ExportTarget; 5] = [
+        ExportTarget::Raw,
+        ExportTarget::Opencode,
+        ExportTarget::Codex,
+        ExportTarget::Hermes,
+        ExportTarget::Turnstone,
+    ];
+
+    /// The query value: `raw`, `opencode`, `codex`, `hermes` or `turnstone`.
+    #[must_use]
+    pub fn as_param(self) -> &'static str {
+        match self {
+            ExportTarget::Raw => "raw",
+            ExportTarget::Opencode => "opencode",
+            ExportTarget::Codex => "codex",
+            ExportTarget::Hermes => "hermes",
+            ExportTarget::Turnstone => "turnstone",
+        }
+    }
+
+    /// The framework whose layout the target writes; `None` for the raw tree.
+    #[must_use]
+    pub fn framework(self) -> Option<Surface> {
+        match self {
+            ExportTarget::Raw => None,
+            ExportTarget::Opencode => Some(Surface::Opencode),
+            ExportTarget::Codex => Some(Surface::Codex),
+            ExportTarget::Hermes => Some(Surface::Hermes),
+            ExportTarget::Turnstone => Some(Surface::Turnstone),
+        }
+    }
 }
 
 /// `GET .../harnesses/{label}/export?target=...` (JSON form).

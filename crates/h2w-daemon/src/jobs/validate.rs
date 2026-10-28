@@ -3,7 +3,9 @@
 //! `h2w-core` run in the backend; state checks (experiment exists, profile pinned, secrets
 //! set, ...) run in the job manager.
 
-use h2w_api::{Bench, Cell, DEMO_K_MAX, FieldProblem, JobSpec, K_MAX, Mode, RunOptions, WbSubset};
+use h2w_api::{
+    Bench, Cell, DEMO_K_MAX, FieldProblem, JobSpec, K_MAX, Mode, RunOptions, Substrate, WbSubset,
+};
 
 fn p(out: &mut Vec<FieldProblem>, field: impl Into<String>, problem: impl Into<String>) {
     out.push(FieldProblem {
@@ -88,7 +90,16 @@ pub fn structural(spec: &JobSpec) -> Vec<FieldProblem> {
     match spec {
         JobSpec::InstallHarness2(_) => {}
         JobSpec::Demo(d) => k(&mut out, "params.k", d.k, DEMO_K_MAX),
-        JobSpec::Setup(s) => subset_rules(&mut out, s.bench, s.subset, false),
+        JobSpec::Setup(s) => {
+            subset_rules(&mut out, s.bench, s.subset, false);
+            if s.substrate.lab_only() && s.bench != Bench::Lab {
+                p(
+                    &mut out,
+                    "params.substrate",
+                    format!("{} runs LAB only so far", s.substrate.display_name()),
+                );
+            }
+        }
         JobSpec::Check(c) => cell(&mut out, "params.cell", &c.cell),
         JobSpec::Preview(pv) => {
             cell(&mut out, "params.cell", &pv.cell);
@@ -180,6 +191,25 @@ pub fn cell_of(spec: &JobSpec) -> Option<Cell> {
         JobSpec::Report(r) => Some(r.cell),
         JobSpec::Pipeline(p) => Some(p.cell),
         _ => None,
+    }
+}
+
+/// The benchmark a spec runs, sets up or splits, if any.
+#[must_use]
+pub fn bench_of(spec: &JobSpec) -> Option<Bench> {
+    cell_of(spec).map(|c| c.bench).or(match spec {
+        JobSpec::Setup(s) => Some(s.bench),
+        JobSpec::Split(s) => Some(s.bench),
+        _ => None,
+    })
+}
+
+/// The executor a spec runs or sets up, if any.
+#[must_use]
+pub fn substrate_of(spec: &JobSpec) -> Option<(&'static str, Substrate)> {
+    match spec {
+        JobSpec::Setup(s) => Some(("params.substrate", s.substrate)),
+        other => cell_of(other).map(|c| ("params.cell.substrate", c.substrate)),
     }
 }
 

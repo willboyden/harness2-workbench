@@ -540,12 +540,7 @@ impl JobManager {
         let isolation = self.settings.isolation;
         // The same rule as `GET /benchmarks` shows: an administrator's `not_offered` entry,
         // or WorkBuddy-Bench under container isolation.
-        let bench = validate::cell_of(&spec).map(|c| c.bench).or(match &spec {
-            JobSpec::Setup(s) => Some(s.bench),
-            JobSpec::Split(s) => Some(s.bench),
-            _ => None,
-        });
-        if let Some(why) = bench
+        if let Some(why) = validate::bench_of(&spec)
             .and_then(|b| h2w_core::bench::unavailable(b, isolation, &self.settings.not_offered))
         {
             return Err(ApiError::conflict(why.message));
@@ -590,6 +585,23 @@ impl JobManager {
             return Err(ApiError::unavailable(
                 "harness2 is not installed; an admin can run the install_harness2 job",
             ));
+        }
+        // Hermes Agent and Turnstone need a harness2 that adds them (`Harness2Status`).
+        if let Some((field, sub)) = validate::substrate_of(&spec).filter(|(_, s)| !s.upstream()) {
+            let paths = &self.settings.paths;
+            let supported =
+                h2w_core::install::read_status(&paths.harness2_home, paths.harness2_managed)
+                    .substrates;
+            if !supported.contains(&sub) {
+                return Err(ApiError::invalid(
+                    field,
+                    format!(
+                        "the installed harness2 has no {} executor: it needs a harness2 that adds \
+                         it (docs/notes/substrates.md)",
+                        sub.display_name()
+                    ),
+                ));
+            }
         }
 
         // The experiment.
@@ -669,6 +681,30 @@ impl JobManager {
             }
             if !missing.is_empty() {
                 return Err(ApiError::validation(missing));
+            }
+            // Hermes Agent and Turnstone call an OpenAI-compatible endpoint: the profile's own, or
+            // one its extra environment names.
+            if matches!(spec, JobSpec::Run(_) | JobSpec::Pipeline(_))
+                && let Some(c) = validate::cell_of(&spec).filter(|c| c.substrate.lab_only())
+            {
+                let var = if c.substrate == h2w_api::Substrate::Hm {
+                    "HARNESS2_HERMES_BASE_URL"
+                } else {
+                    "HARNESS2_TURNSTONE_BASE_URL"
+                };
+                let endpoint = (p.kind == h2w_api::ProfileKind::OpenaiCompatible
+                    && p.endpoint.is_some())
+                    || p.extra_env.iter().any(|e| e.name == var);
+                if !endpoint {
+                    return Err(ApiError::invalid(
+                        "params.profile",
+                        format!(
+                            "{} needs an OpenAI-compatible endpoint: use an openai_compatible \
+                             profile, or set {var} in profile {pn}'s extra environment",
+                            c.substrate.display_name()
+                        ),
+                    ));
+                }
             }
             // A judge that is not local sees the experiment's tasks and outputs: the caller
             // confirms they are generated or synthetic, or the policy refuses the job.

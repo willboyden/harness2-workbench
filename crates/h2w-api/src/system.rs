@@ -88,6 +88,11 @@ pub struct Harness2Status {
     /// Optional package extras installed.
     #[serde(default)]
     pub extras: Vec<InstallExtra>,
+    /// Executors this checkout supports: upstream's `oc` and `cx`, plus `hm` (Hermes Agent)
+    /// and `ts` (Turnstone) when it is a harness2 that adds them. A server before contract
+    /// v1.10 omits the field: read that as `oc` and `cx`.
+    #[serde(default = "crate::Substrate::upstream_set")]
+    pub substrates: Vec<crate::Substrate>,
     /// Admin only: the checkout directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,

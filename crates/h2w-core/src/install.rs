@@ -13,7 +13,7 @@
 use std::path::Path;
 
 use cap_std::fs::Dir;
-use h2w_api::{Harness2Status, InstallExtra};
+use h2w_api::{Harness2Status, InstallExtra, Substrate};
 
 use crate::safefs::{self, EntryKind};
 use crate::{
@@ -293,10 +293,23 @@ pub fn read_status(home: &Path, managed: bool) -> Harness2Status {
         python: None,
         extras: Vec::new(),
         home: Some(home.to_string_lossy().into_owned()),
+        substrates: Substrate::upstream_set(),
     };
     let Some(dir) = open_home(home) else {
         return status;
     };
+    // A harness2 that adds Hermes Agent or Turnstone ships their substrate modules.
+    for (sub, module) in [
+        (Substrate::Hm, "harness2/substrate/hermes.py"),
+        (Substrate::Ts, "harness2/substrate/turnstone.py"),
+    ] {
+        if matches!(
+            safefs::open_file_opt(&dir, module, "substrate module"),
+            Ok(Some(_))
+        ) {
+            status.substrates.push(sub);
+        }
+    }
     status.commit = read_head(&dir);
     status.python = safefs::read_text_opt(&dir, ".venv/pyvenv.cfg", 64 * 1024, "pyvenv.cfg")
         .ok()
@@ -387,6 +400,39 @@ mod tests {
         .unwrap();
         assert_eq!(committed, cutoff);
         assert_eq!(cutoff.offset(), time::UtcOffset::UTC);
+    }
+
+    #[test]
+    fn substrates_follow_the_checkout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("h");
+        std::fs::create_dir_all(home.join("harness2/substrate")).unwrap();
+        let upstream = read_status(&home, false);
+        assert_eq!(upstream.substrates, [Substrate::Oc, Substrate::Cx]);
+        std::fs::write(home.join("harness2/substrate/hermes.py"), "").unwrap();
+        assert_eq!(
+            read_status(&home, false).substrates,
+            [Substrate::Oc, Substrate::Cx, Substrate::Hm]
+        );
+        // A link is not a module this checkout ships.
+        std::os::unix::fs::symlink(
+            "/etc/hostname",
+            home.join("harness2/substrate/turnstone.py"),
+        )
+        .unwrap();
+        assert!(
+            !read_status(&home, false)
+                .substrates
+                .contains(&Substrate::Ts)
+        );
+        std::fs::remove_file(home.join("harness2/substrate/turnstone.py")).unwrap();
+        std::fs::write(home.join("harness2/substrate/turnstone.py"), "").unwrap();
+        assert_eq!(read_status(&home, false).substrates, Substrate::ALL);
+        // No checkout at all: upstream's two, as an older server reports.
+        assert_eq!(
+            read_status(&tmp.path().join("none"), false).substrates,
+            Substrate::upstream_set()
+        );
     }
 
     #[test]

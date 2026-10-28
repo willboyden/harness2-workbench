@@ -21,7 +21,7 @@ use crate::logic::format;
 use crate::logic::jobs::Tone;
 use crate::logic::names;
 use crate::logic::urls::{api as paths, route};
-use crate::logic::wizard::task_lines;
+use crate::logic::wizard::{substrate_of, substrate_options, task_lines};
 use crate::state::{ConfirmRequest, session, toasts, ui};
 
 fn key(b: &BenchmarkStatus) -> String {
@@ -64,11 +64,7 @@ fn SetupDialog(open: RwSignal<bool>, target: RwSignal<Option<BenchmarkStatus>>) 
         Some(JobSpec::Setup(SetupParams {
             bench: b.bench,
             subset: b.subset,
-            substrate: if substrate.get_untracked() == "cx" {
-                Substrate::Cx
-            } else {
-                Substrate::Oc
-            },
+            substrate: substrate_of(&substrate.get_untracked()),
             dry_run,
             profile: Some(profile.get_untracked()).filter(|p| !p.is_empty()),
         }))
@@ -116,16 +112,20 @@ fn SetupDialog(open: RwSignal<bool>, target: RwSignal<Option<BenchmarkStatus>>) 
                         }
                     })
             }}
-            <RadioCards
-                name="setup-substrate"
-                legend="Executor to prepare"
-                value=substrate
-                compact=true
-                options=vec![
-                    ("oc".to_owned(), "OpenCode".to_owned(), "Upstream default.".to_owned()),
-                    ("cx".to_owned(), "Codex".to_owned(), "Codex CLI configuration.".to_owned()),
-                ]
-            />
+            {move || {
+                let supported = session().system.with(|s| {
+                    s.as_ref().map(|s| s.harness2.substrates.clone()).unwrap_or_default()
+                });
+                view! {
+                    <RadioCards
+                        name="setup-substrate"
+                        legend="Executor to prepare"
+                        value=substrate
+                        compact=true
+                        options=substrate_options(&supported)
+                    />
+                }
+            }}
             <SelectField
                 id="setup-profile"
                 label="Model profile (optional)"

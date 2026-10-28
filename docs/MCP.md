@@ -244,7 +244,7 @@ models.
 | Follow | `list_jobs`, `get_job`, `wait_for_job`, `get_job_log` | viewer |
 | | `cancel_job` (an admin kind needs admin) | operator |
 | Read results | `list_tasks`, `get_task`, `get_harness`, `diff_harnesses`, `list_rollout_files`, `read_rollout_file`, `get_scores`, `get_report`, `get_library`, `list_audit_sessions`, `read_audit_session`, `compare_sweeps` | viewer |
-| Adopt | `export_harness` (to raw, OpenCode or Codex project files) | viewer |
+| Adopt | `export_harness` (to raw files, an OpenCode or Codex project, a Hermes Agent home or a Turnstone bundle; any harness to any of them) | viewer |
 
 `get_job_log` returns one page: at most `limit` lines (up to 5,000) and about 1 MiB, with `next`
 (pass it as `from` to continue) and `complete`. `tail=N` returns the newest of the last N lines that

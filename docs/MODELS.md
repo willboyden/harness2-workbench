@@ -66,8 +66,16 @@ profile-derived variables added to it. `HARNESS2_RUNS_DIR` is always set to the 
 | `HARNESS2_JUDGE_BASE_URL`, `HARNESS2_JUDGE_API_KEY` | when `judge_endpoint` is given | `judge_endpoint`, else `endpoint` | `judge_endpoint` |
 | `OPENAI_BASE_URL`, `OPENAI_API_KEY` | when a `judge_endpoint` is given and the judge model starts with `gpt`, `o1`, `o3`, `o4` or `o5` | when the judge model starts with `gpt`, `o1`, `o3`, `o4` or `o5` | the judge endpoint |
 | `HARNESS2_CODEX_BASE_URL`, `_API_KEY`, `HARNESS2_CODEX_MODEL` | from `codex_endpoint` / `codex_model` | same | `codex_endpoint` |
+| `HARNESS2_HERMES_BASE_URL`, `_API_KEY` (a job whose executor is `hm`); `HARNESS2_TURNSTONE_BASE_URL`, `_API_KEY` (executor `ts`) | n/a: set them in `extra_env` | the endpoint and its key | `endpoint` |
 
 A `custom` profile sets nothing by itself: only its `extra_env`.
+
+Hermes Agent and Turnstone (executors `hm` and `ts`, LAB only, in a harness2 that ships them) call
+the profile's Chat Completions endpoint directly, so a run or pipeline with either needs an
+`openai_compatible` profile, or an `extra_env` that sets the executor's `..._BASE_URL`; otherwise
+the job is refused (`422` on `params.profile`). The variables go only to jobs with that executor.
+harness2 uses the solver id without its provider prefix as their model; set
+`HARNESS2_HERMES_MODEL` or `HARNESS2_TURNSTONE_MODEL` in `extra_env` for another one.
 
 ### Reserved environment variables
 
@@ -155,8 +163,10 @@ allowlist holding only the model gateway) found:
 
 Saving a profile never fails because of these limits; the server lists them instead. They are
 written to the server log and recorded in the **audit record** of the save (`profile.put`,
-`detail: warnings: ...`), and the first lines of every job that uses the profile repeat them. They
-are *not* part of the `PUT` response. To read them on demand, ask the server:
+`detail: warnings: ...`), and the first lines of every job that uses the profile repeat the ones
+about that job's benchmark and executor (a LAB run on Hermes Agent does not repeat the Codex or
+WorkBuddy-Bench lines; a job with neither repeats them all). They are *not* part of the `PUT`
+response. To read them on demand, ask the server:
 `GET /api/v1/profiles/{name}/check` (viewer role; MCP tool `check_profile`; the web UI shows the same
 after a profile is saved and in the run wizard) returns `{"warnings": [...], "missing_secrets":
 [...], "judge_site": {...}}`, where `missing_secrets` names the referenced secrets that have no value

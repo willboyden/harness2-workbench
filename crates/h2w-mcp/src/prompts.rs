@@ -48,7 +48,7 @@ pub(crate) fn list() -> Vec<Prompt> {
                 ),
                 arg(
                     "substrate",
-                    "Executor: oc (OpenCode, default) or cx (Codex).",
+                    "Executor: oc (OpenCode, default), cx (Codex), or on LAB hm (Hermes Agent) or ts (Turnstone).",
                     false,
                 ),
                 arg("experiment", "Experiment to use or create.", false),
@@ -221,7 +221,7 @@ fn improve(a: &PromptArgs<'_>) -> Result<String, McpError> {
     let goal = a.text("goal")?;
     let bench = a.choice("bench", &["jb", "lab", "wb"])?;
     let subset = a.choice("subset", &["office", "web", "code"])?;
-    let substrate = a.choice("substrate", &["oc", "cx"])?;
+    let substrate = a.choice("substrate", &["oc", "cx", "hm", "ts"])?;
     let experiment = a.identifier("experiment")?;
     let profile = a.identifier("profile")?;
     let k = match a.raw("k") {
@@ -248,6 +248,14 @@ fn improve(a: &PromptArgs<'_>) -> Result<String, McpError> {
     };
     let executor = match substrate.as_deref() {
         Some("cx") => "Codex (substrate cx; it needs a Responses-API endpoint, e.g. start_bridge)",
+        Some("hm") => {
+            "Hermes Agent (substrate hm; LAB only, needs a harness2 that adds it: check \
+             server_info's harness2.substrates)"
+        }
+        Some("ts") => {
+            "Turnstone (substrate ts; LAB only, needs a harness2 that adds it: check \
+             server_info's harness2.substrates)"
+        }
         _ => "OpenCode (substrate oc)",
     };
     let budget = budget.map_or_else(

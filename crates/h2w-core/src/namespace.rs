@@ -96,9 +96,11 @@ impl Namespace {
                 .and_then(|r| r.strip_prefix('-'))
                 .map(|r| (*b, r))
         })?;
-        let (substrate, rest) = [("oc-", Substrate::Oc), ("cx-", Substrate::Cx)]
-            .into_iter()
-            .find_map(|(p, sub)| rest.strip_prefix(p).map(|r| (sub, r)))?;
+        let (substrate, rest) = Substrate::ALL.into_iter().find_map(|sub| {
+            rest.strip_prefix(sub.as_cli())
+                .and_then(|r| r.strip_prefix('-'))
+                .map(|r| (sub, r))
+        })?;
         let (mode, rest) = [("agg", Mode::Parallel), ("seq", Mode::Sequential)]
             .into_iter()
             .find_map(|(p, m)| rest.strip_prefix(p).map(|r| (m, r)))?;
@@ -248,6 +250,17 @@ mod tests {
         );
         let ns = Namespace::parse("demo-oc-agg2").unwrap();
         assert_eq!(ns.to_string(), "demo-oc-agg2");
+        // Hermes Agent and Turnstone sweeps (a harness2 that adds them; LAB only).
+        let ns = Namespace::parse("lab-hm-agg1-s42").unwrap();
+        assert_eq!(
+            (ns.substrate, ns.mode, ns.k),
+            (Substrate::Hm, Mode::Parallel, 1)
+        );
+        assert_eq!(ns.to_string(), "lab-hm-agg1-s42");
+        let ns = Namespace::parse("lab-ts-seq2-tagged").unwrap();
+        assert_eq!(ns.substrate, Substrate::Ts);
+        assert_eq!(ns.to_string(), "lab-ts-seq2-tagged");
+        assert!(Namespace::parse("lab-hx-agg1").is_none());
         assert_eq!(
             Namespace::parse("lab-oc-agg1-s7x").unwrap().tag.as_deref(),
             Some("s7x")
@@ -353,7 +366,7 @@ mod tests {
         }
 
         #[test]
-        fn parse_then_display_round_trips(s in "(lab|jb|wb-web|demo)-(oc|cx)-(agg|seq)[0-9]{1,3}(-s[0-9]{1,3})?(-[a-zA-Z0-9_.-]{0,6})?|\\PC{0,24}") {
+        fn parse_then_display_round_trips(s in "(lab|jb|wb-web|demo)-(oc|cx|hm|ts)-(agg|seq)[0-9]{1,3}(-s[0-9]{1,3})?(-[a-zA-Z0-9_.-]{0,6})?|\\PC{0,24}") {
             if let Some(ns) = Namespace::parse(&s) {
                 prop_assert_eq!(ns.to_string(), s.clone());
                 prop_assert!(!s.contains('/') && !s.contains('\0'));

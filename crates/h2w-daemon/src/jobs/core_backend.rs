@@ -382,6 +382,7 @@ impl JobBackend for CoreBackend {
                 runs_dir: runs_dir.clone(),
                 opencode_config_path: format!("{}/opencode.json", view.jobfiles),
                 gcp_credentials_path: format!("{}/gcp-credentials.json", view.jobfiles),
+                substrate: crate::jobs::validate::cell_of(input.spec).map(|c| c.substrate),
             };
             let je =
                 h2w_core::env::build(profile, input.secrets, &ctx).map_err(|e| e.to_string())?;

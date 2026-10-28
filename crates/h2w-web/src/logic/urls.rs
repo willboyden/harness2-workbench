@@ -193,11 +193,7 @@ pub(crate) mod api {
         target: ExportTarget,
         tar_gz: bool,
     ) -> String {
-        let target = match target {
-            ExportTarget::Raw => "raw",
-            ExportTarget::Opencode => "opencode",
-            ExportTarget::Codex => "codex",
-        };
+        let target = target.as_param();
         format!(
             "{}/export{}",
             harness(exp, sw, t, mode, label),

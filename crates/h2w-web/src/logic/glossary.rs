@@ -29,7 +29,7 @@ pub(crate) const TERMS: &[Term] = &[
     Term {
         id: "always-on",
         term: "Always-on budget",
-        short: "c1–c4 are read on every task, so their combined size is capped: 24,000 characters on OpenCode, 8,000 on Codex.",
+        short: "c1–c4 are read on every task, so their combined size is capped: 24,000 characters on OpenCode and Turnstone, 8,000 on Codex, 20,000 on Hermes Agent.",
         long: "The always-on components (system prompt, guardrails, memory, tool guidance) cost context on every single task. harness2 rejects a harness whose always-on text exceeds the surface's cap, so improvers must move detail into skills, sub-agents or scripts instead. The harness viewer shows the meter.",
         see_also: &["components"],
     },
@@ -79,7 +79,7 @@ pub(crate) const TERMS: &[Term] = &[
         id: "rollout",
         term: "Rollout",
         short: "One execution of the task by the executor agent with a given harness.",
-        long: "A rollout is a single run of the executor (OpenCode or Codex) on the task, with one harness installed. It produces a deliverable (the work product the judge scores) and a trajectory (the agent's actions and observations). The rollout browser shows both.",
+        long: "A rollout is a single run of the executor (OpenCode, Codex, Hermes Agent or Turnstone) on the task, with one harness installed. It produces a deliverable (the work product the judge scores) and a trajectory (the agent's actions and observations). The rollout browser shows both.",
         see_also: &["executor", "trajectory"],
     },
     Term {
@@ -92,8 +92,8 @@ pub(crate) const TERMS: &[Term] = &[
     Term {
         id: "executor",
         term: "Executor",
-        short: "The agent framework that runs rollouts: OpenCode (default) or Codex. Upstream calls it the substrate.",
-        long: "OpenCode runs from a pinned source checkout through Bun and uses the OpenCode harness surface. Codex is the OpenAI Codex CLI against a Responses-API endpoint (on Vertex through the Codex bridge) and uses the Codex surface, whose always-on cap is smaller. Upstream runs Codex with its sandbox disabled.",
+        short: "The agent framework that runs rollouts: OpenCode (default) or Codex, and for LAB Hermes Agent or Turnstone when harness2 ships them. Upstream calls it the substrate.",
+        long: "OpenCode runs from a pinned source checkout through Bun and uses the OpenCode harness surface. Codex is the OpenAI Codex CLI against a Responses-API endpoint (on Vertex through the Codex bridge) and uses the Codex surface, whose always-on cap is smaller. Upstream runs Codex with its sandbox disabled. Hermes Agent and Turnstone (LAB only, in a harness2 that adds them) call the profile's OpenAI-compatible endpoint: Hermes Agent reads its harness from SOUL.md and memories/MEMORY.md in its own home, Turnstone from a persona and its instructions setting on a throwaway server per rollout. The improver stays on OpenCode for every executor.",
         see_also: &["components", "isolation"],
     },
     Term {

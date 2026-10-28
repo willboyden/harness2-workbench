@@ -104,14 +104,26 @@ pub enum Substrate {
     /// OpenAI Codex CLI against a Responses-API endpoint. Upstream runs it with its sandbox
     /// disabled.
     Cx,
+    /// Nous Research's Hermes Agent against an OpenAI-compatible endpoint. Not in upstream
+    /// harness2: it needs a harness2 with this substrate (`Harness2Status.substrates`), and it
+    /// runs LAB only. Additive after contract v1.10.
+    Hm,
+    /// Turnstone against an OpenAI-compatible endpoint, one throwaway server per rollout. Not
+    /// in upstream harness2: it needs a harness2 with this substrate, and it runs LAB only.
+    /// Additive after contract v1.10.
+    Ts,
 }
 
 impl Substrate {
+    pub const ALL: [Substrate; 4] = [Substrate::Oc, Substrate::Cx, Substrate::Hm, Substrate::Ts];
+
     #[must_use]
     pub fn as_cli(self) -> &'static str {
         match self {
             Substrate::Oc => "oc",
             Substrate::Cx => "cx",
+            Substrate::Hm => "hm",
+            Substrate::Ts => "ts",
         }
     }
 
@@ -120,6 +132,37 @@ impl Substrate {
         match self {
             Substrate::Oc => "OpenCode",
             Substrate::Cx => "Codex",
+            Substrate::Hm => "Hermes Agent",
+            Substrate::Ts => "Turnstone",
+        }
+    }
+
+    /// The executors upstream harness2 ships; the others need a harness2 that adds them.
+    #[must_use]
+    pub fn upstream(self) -> bool {
+        matches!(self, Substrate::Oc | Substrate::Cx)
+    }
+
+    /// Upstream's executors, as a list (the default of `Harness2Status.substrates`).
+    #[must_use]
+    pub fn upstream_set() -> Vec<Substrate> {
+        vec![Substrate::Oc, Substrate::Cx]
+    }
+
+    /// Hermes Agent and Turnstone have launchers for LAB only.
+    #[must_use]
+    pub fn lab_only(self) -> bool {
+        matches!(self, Substrate::Hm | Substrate::Ts)
+    }
+
+    /// The harness surface its trees target.
+    #[must_use]
+    pub fn surface(self) -> crate::Surface {
+        match self {
+            Substrate::Oc => crate::Surface::Opencode,
+            Substrate::Cx => crate::Surface::Codex,
+            Substrate::Hm => crate::Surface::Hermes,
+            Substrate::Ts => crate::Surface::Turnstone,
         }
     }
 }
@@ -253,7 +296,8 @@ pub struct Cell {
     /// Required for `wb`, forbidden otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subset: Option<WbSubset>,
-    /// Executor framework (`oc` OpenCode or `cx` Codex).
+    /// Executor framework: `oc` OpenCode, `cx` Codex, or (LAB only, in a harness2 that adds
+    /// them) `hm` Hermes Agent and `ts` Turnstone.
     #[serde(default = "default_substrate")]
     pub substrate: Substrate,
 }
@@ -263,19 +307,32 @@ fn default_substrate() -> Substrate {
 }
 
 impl Cell {
-    /// Mirrors upstream `make_adapter`: wb needs a subset, the others must not have one.
+    /// Mirrors `make_adapter`: wb needs a subset, the others must not have one, and Hermes
+    /// Agent and Turnstone run LAB only.
     ///
     /// # Errors
     /// A user-facing sentence naming the problem.
     pub fn validate(&self) -> Result<(), String> {
         match (self.bench, self.subset) {
-            (Bench::Wb, None) => Err("WorkBuddy-Bench needs a subset: office, web or code".into()),
-            (b, Some(_)) if b != Bench::Wb => Err(format!(
-                "subsets apply to WorkBuddy-Bench only, not {}",
-                b.as_cli()
-            )),
-            _ => Ok(()),
+            (Bench::Wb, None) => {
+                return Err("WorkBuddy-Bench needs a subset: office, web or code".into());
+            }
+            (b, Some(_)) if b != Bench::Wb => {
+                return Err(format!(
+                    "subsets apply to WorkBuddy-Bench only, not {}",
+                    b.as_cli()
+                ));
+            }
+            _ => {}
         }
+        if self.substrate.lab_only() && self.bench != Bench::Lab {
+            return Err(format!(
+                "{} runs LAB only so far; use OpenCode or Codex for {}",
+                self.substrate.display_name(),
+                self.bench.display_name()
+            ));
+        }
+        Ok(())
     }
 
     /// The benchmark's own name in namespaces: `jb`, `lab`, `wb-office`, `wb-web`, `wb-code`.
@@ -422,6 +479,28 @@ mod tests {
             substrate: Substrate::Cx,
         };
         assert!(ok.validate().is_ok());
+        // Hermes Agent and Turnstone: LAB only.
+        for sub in [Substrate::Hm, Substrate::Ts] {
+            let lab = Cell {
+                bench: Bench::Lab,
+                subset: None,
+                substrate: sub,
+            };
+            assert!(lab.validate().is_ok());
+            let jb = Cell {
+                bench: Bench::Jb,
+                subset: None,
+                substrate: sub,
+            };
+            let e = jb.validate().unwrap_err();
+            assert!(e.contains("runs LAB only"), "{e}");
+            let wb = Cell {
+                bench: Bench::Wb,
+                subset: Some(WbSubset::Code),
+                substrate: sub,
+            };
+            assert!(wb.validate().is_err());
+        }
         assert_eq!(ok.bench_name(), "wb-code");
         let lab = Cell {
             bench: Bench::Lab,

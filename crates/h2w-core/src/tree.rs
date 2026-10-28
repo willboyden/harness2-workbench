@@ -1,6 +1,8 @@
 // Derived from harness2 (https://github.com/google-research/harness2) at commit 1cfe254:
 // harness2/core/tree.py and harness2/substrate/{opencode,codex}.py, Copyright 2026 Google LLC,
-// Apache License 2.0. Translated to Rust; see NOTICE.
+// Apache License 2.0. Translated to Rust; see NOTICE. The Hermes Agent and Turnstone surfaces
+// follow harness2/substrate/{hermes,turnstone}.py of the harness2 that adds them
+// (docs/notes/substrates.md).
 
 //! Harness component trees (c1..c8): read, classify, validate, diff, fingerprint.
 //!
@@ -26,12 +28,14 @@ use crate::{CoreError, Result};
 /// relative path -> file content.
 pub type Tree = BTreeMap<String, String>;
 
-/// Always-on character cap: OpenCode 24,000; Codex 8,000.
+/// Always-on character cap: OpenCode 24,000; Codex 8,000; Hermes Agent 20,000; Turnstone
+/// 24,000.
 #[must_use]
 pub fn always_on_max(surface: Surface) -> u32 {
     match surface {
-        Surface::Opencode => 24_000,
+        Surface::Opencode | Surface::Turnstone => 24_000,
         Surface::Codex => 8_000,
+        Surface::Hermes => 20_000,
     }
 }
 
@@ -46,6 +50,8 @@ pub fn always_on_files(surface: Surface) -> &'static [&'static str] {
             "tool_descriptions/tool_guidance.md",
         ],
         Surface::Codex => &["AGENTS.md"],
+        Surface::Hermes => &["SOUL.md", "memories/MEMORY.md"],
+        Surface::Turnstone => &["systemprompt.md", "guardrails.md"],
     }
 }
 
@@ -77,6 +83,21 @@ fn cx_hint(name: &str) -> String {
     format!(
         "Fix it by adding a trigger line naming `{name}` to AGENTS.md, e.g. \"When <the \
          situation this skill handles>, read .agents/skills/{name}/SKILL.md and follow it.\""
+    )
+}
+
+fn hm_hint(name: &str) -> String {
+    format!(
+        "Fix it by adding a trigger line naming `{name}` to SOUL.md, e.g. \"When <the situation \
+         this skill handles>, load the `{name}` skill with skill_view.\""
+    )
+}
+
+fn ts_hint(name: &str) -> String {
+    format!(
+        "Fix it by adding a trigger line naming `{name}` to systemprompt.md or guardrails.md, \
+         e.g. \"- When <the situation this skill handles>, load the `{name}` skill: \
+         skills(action='load', name='{name}').\""
     )
 }
 
@@ -135,8 +156,41 @@ static CODEX: Spec = Spec {
     ],
 };
 
+static HERMES: Spec = Spec {
+    always_on: &["SOUL.md", "memories/MEMORY.md"],
+    cap_reason: "Hermes puts SOUL.md (its identity, the first block of the system prompt) and the \
+                 MEMORY.md snapshot into every request, and cuts SOUL.md down past 20,000 \
+                 characters at a 64K-token window",
+    skill_dir: "skills",
+    name_must_match: true,
+    trigger_hint: hm_hint,
+    subagent_requires_mode: false,
+    plugin_dir: None,
+    hooks_file: None,
+    hook_events: &[],
+    reject_empty_always_on: true,
+    stubs: &["scripts/README.md", "skills/README.md"],
+};
+
+static TURNSTONE: Spec = Spec {
+    always_on: &["systemprompt.md", "guardrails.md"],
+    cap_reason: "Turnstone sends the persona prompt and the instructions in the system message \
+                 of every request",
+    skill_dir: "skills",
+    name_must_match: true,
+    trigger_hint: ts_hint,
+    subagent_requires_mode: false,
+    plugin_dir: None,
+    hooks_file: None,
+    hook_events: &[],
+    reject_empty_always_on: true,
+    stubs: &["scripts/README.md", "skills/README.md"],
+};
+
 fn spec(surface: Surface) -> &'static Spec {
     match surface {
+        Surface::Hermes => &HERMES,
+        Surface::Turnstone => &TURNSTONE,
         Surface::Opencode => &OPENCODE,
         Surface::Codex => &CODEX,
     }
@@ -259,8 +313,8 @@ pub fn classify(surface: Surface, path: &str) -> Option<Component> {
     let s = spec(surface);
     if let Some(i) = s.always_on.iter().position(|a| *a == rel) {
         return Some(match (surface, i) {
-            (Surface::Opencode, 1) => Component::Guardrails,
-            (Surface::Opencode, 2) => Component::Memory,
+            (Surface::Opencode | Surface::Turnstone, 1) => Component::Guardrails,
+            (Surface::Opencode, 2) | (Surface::Hermes, 1) => Component::Memory,
             (Surface::Opencode, 3) => Component::ToolGuidance,
             _ => Component::SystemPrompt,
         });
@@ -304,11 +358,15 @@ fn component_for_display(surface: Surface, path: &str) -> Component {
     }
 }
 
-/// `AGENTS.md` at the root means Codex; otherwise OpenCode.
+/// `AGENTS.md` at the root means Codex, `SOUL.md` Hermes Agent; otherwise OpenCode. A
+/// Turnstone tree (`systemprompt.md`, `guardrails.md`) cannot be told from an OpenCode one by
+/// its files: callers that know the substrate use [`h2w_api::Substrate::surface`].
 #[must_use]
 pub fn detect_surface(tree: &Tree) -> Surface {
     if tree.contains_key("AGENTS.md") {
         Surface::Codex
+    } else if tree.contains_key("SOUL.md") {
+        Surface::Hermes
     } else {
         Surface::Opencode
     }
@@ -465,7 +523,7 @@ fn script_ref_regex(surface: Surface) -> Option<&'static Regex> {
     static OC: LazyLock<Option<Regex>> = LazyLock::new(|| build_script_ref("skills"));
     static CX: LazyLock<Option<Regex>> = LazyLock::new(|| build_script_ref(".agents/skills"));
     match surface {
-        Surface::Opencode => OC.as_ref(),
+        Surface::Opencode | Surface::Hermes | Surface::Turnstone => OC.as_ref(),
         Surface::Codex => CX.as_ref(),
     }
 }
@@ -650,6 +708,267 @@ fn check_script_refs(surface: Surface, tree: &Tree, errs: &mut Vec<String>) {
     }
 }
 
+/// Turnstone's caps on a persona's base prompt and on a loaded skill body (characters).
+pub(crate) const TURNSTONE_TEXT_MAX: usize = 32_768;
+
+/// Why Turnstone refuses `name` as a skill name, in harness2's words (`skill_name_problem` in
+/// `substrate/turnstone.py`), or `None` when it accepts it. Exact for names harness2 can see
+/// (directory names, which never hold a newline).
+pub(crate) fn turnstone_name_problem(name: &str) -> Option<String> {
+    let n = name.chars().count();
+    let edge = |c: Option<char>| c.is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    if n > 64 {
+        Some(format!("is {n} characters, over Turnstone's 64"))
+    } else if name.contains('_') {
+        Some("contains an underscore".to_owned())
+    } else if name.contains("--") {
+        Some("contains consecutive hyphens".to_owned())
+    } else if !(name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && edge(name.chars().next())
+        && edge(name.chars().last()))
+    {
+        Some("must start and end with a lowercase letter or digit".to_owned())
+    } else {
+        None
+    }
+}
+
+/// Turnstone's `split_frontmatter`: the frontmatter and the body of a SKILL.md, or `None`
+/// when it does not open with a closed YAML block (after leading BOMs,
+/// `\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)` with DOTALL).
+fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
+    fn newline(s: &str) -> Option<&str> {
+        s.strip_prefix("\r\n").or_else(|| s.strip_prefix('\n'))
+    }
+    let text = text.trim_start_matches('\u{feff}');
+    let inner = newline(text.strip_prefix("---")?.trim_start_matches([' ', '\t']))?;
+    let ends = inner
+        .char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(inner.len()));
+    for j in ends {
+        let Some(after) = inner.get(j..).and_then(newline) else {
+            continue;
+        };
+        let Some(after) = after.strip_prefix("---") else {
+            continue;
+        };
+        let after = after.trim_start_matches([' ', '\t']);
+        if after.is_empty() {
+            return Some((&inner[..j], after));
+        }
+        if let Some(body) = newline(after) {
+            return Some((&inner[..j], body));
+        }
+    }
+    None
+}
+
+/// The SKILL.md argument placeholders Turnstone fills when it loads a skill.
+static ARG_PLACEHOLDER: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"\$ARGUMENTS\b|\$\d+\b").ok());
+
+/// Turnstone's own refusals, in harness2's words (`check_tree` in `substrate/turnstone.py`).
+/// Not ported: Turnstone's skill risk scanner, which harness2 loads from the Turnstone install
+/// ([`scanner_notes`] says so).
+fn check_turnstone(tree: &Tree, errs: &mut Vec<String>) {
+    let prompt = tree.get("systemprompt.md").map_or("", String::as_str);
+    let prompt_len = prompt.chars().count();
+    if pyfmt::strip(prompt).is_empty() {
+        errs.push(
+            "systemprompt.md is empty: it is the Turnstone persona's base prompt, and Turnstone \
+             refuses a persona without one (the run would fall back to its built-in \
+             software-engineer persona). Put the agent's role and procedure there."
+                .to_owned(),
+        );
+    } else if prompt_len > TURNSTONE_TEXT_MAX {
+        errs.push(format!(
+            "systemprompt.md is {prompt_len} characters; a Turnstone persona's base prompt is \
+             capped at {TURNSTONE_TEXT_MAX}"
+        ));
+    }
+    let subs = subagent_names(tree);
+    if !subs.is_empty() {
+        let listed = subs
+            .iter()
+            .map(|n| pyfmt::repr_str(n))
+            .collect::<Vec<_>>()
+            .join(", ");
+        errs.push(format!(
+            "sub_agents are not available on the Turnstone substrate: [{listed}] (its \
+             task_agent tool is hidden from the agent); fold the work into a skill instead"
+        ));
+    }
+    for name in skill_names(Surface::Turnstone, tree) {
+        let rel = format!("skills/{name}/SKILL.md");
+        if let Some(why) = turnstone_name_problem(&name) {
+            let mut fixed = String::new();
+            for c in name.replace('_', "-").chars() {
+                if !(c == '-' && fixed.ends_with('-')) {
+                    fixed.push(c);
+                }
+            }
+            let mut fixed: String = fixed.trim_matches('-').chars().take(64).collect();
+            if fixed.is_empty() {
+                "skill".clone_into(&mut fixed);
+            }
+            errs.push(format!(
+                "skill name `{name}` {why}: Turnstone skill names use lowercase letters, digits \
+                 and single hyphens (^[a-z0-9][a-z0-9-]{{0,62}}[a-z0-9]$). Rename the \
+                 directory, its `name:` line and every trigger line, e.g. to `{fixed}`"
+            ));
+        }
+        let Some((_, body)) = split_frontmatter(tree.get(&rel).map_or("", String::as_str)) else {
+            errs.push(format!(
+                "{rel} must open with a YAML frontmatter block: a `---` line, `name: {name}`, \
+                 `description: ...`, then a closing `---` line; Turnstone's SKILL.md parser \
+                 reads the skill's name from it"
+            ));
+            continue;
+        };
+        let body = pyfmt::strip(body);
+        if body.is_empty() {
+            errs.push(format!(
+                "{rel} has no body after its frontmatter: the loaded skill would be empty"
+            ));
+            continue;
+        }
+        let body_len = body.chars().count();
+        if body_len > TURNSTONE_TEXT_MAX {
+            errs.push(format!(
+                "{rel} body is {body_len} characters; Turnstone cuts a loaded skill at \
+                 {TURNSTONE_TEXT_MAX}, so the rest would never reach the agent"
+            ));
+        }
+        let placeholders: BTreeSet<&str> = ARG_PLACEHOLDER
+            .as_ref()
+            .map(|re| re.find_iter(body).map(|m| m.as_str()).collect())
+            .unwrap_or_default();
+        if !placeholders.is_empty() {
+            errs.push(format!(
+                "{rel} contains {}: Turnstone fills `$1`-style positional placeholders and \
+                 `$ARGUMENTS` in a skill body when it loads, with nothing when the model loads \
+                 it without arguments, so `awk '{{print $1}}'` would reach the agent as \
+                 `awk '{{print }}'`. Write `${{1}}`, or move the command into a script under \
+                 skills/<name>/scripts/",
+                placeholders.into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        }
+    }
+}
+
+/// `${HERMES_SKILL_DIR}/<path>` in a Hermes skill file.
+static SKILL_DIR_TOKEN: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"\$\{HERMES_SKILL_DIR\}/([A-Za-z0-9_.\-/]+)").ok());
+
+/// A skill helper named by a workspace-relative path (harness2's `_RELATIVE_SKILL_PATH`
+/// without its lookbehind, which [`relative_skill_paths`] applies).
+static RELATIVE_SKILL_PATH: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"skills/[a-z0-9][a-z0-9_\-]*/scripts/[\w.\-]+").ok());
+
+/// `re.findall(r"(?<![\w/}$.-])skills/[a-z0-9][a-z0-9_\-]*/scripts/[\w.\-]+", src)`: a match
+/// whose preceding character fails the lookbehind is skipped and the search resumes one
+/// character later, as Python's scanner does.
+fn relative_skill_paths(src: &str) -> BTreeSet<&str> {
+    let mut found = BTreeSet::new();
+    let Some(re) = RELATIVE_SKILL_PATH.as_ref() else {
+        return found;
+    };
+    let mut at = 0;
+    while let Some(m) = re.find_at(src, at) {
+        let blocked = src[..m.start()]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || "_/}$.-".contains(c));
+        if blocked {
+            at = m.start() + 1;
+        } else {
+            found.insert(m.as_str());
+            at = m.end();
+        }
+    }
+    found
+}
+
+/// Hermes Agent's own refusals, in harness2's words (`validate_hermes_tree` in
+/// `substrate/hermes.py`). Not ported: Hermes Agent's prompt-injection scanner on `SOUL.md`
+/// and on each memory entry, which harness2 loads from the Hermes Agent install
+/// ([`scanner_notes`] says so).
+fn check_hermes(tree: &Tree, errs: &mut Vec<String>) {
+    let soul = tree.get("SOUL.md").map_or("", String::as_str);
+    if pyfmt::strip(soul).is_empty() {
+        errs.push(
+            "SOUL.md is empty: it is Hermes' identity slot, and without it the agent runs as \
+             Hermes' generic built-in assistant with none of this harness's procedure. Put the \
+             role and the standing rules back in SOUL.md."
+                .to_owned(),
+        );
+    }
+    // A BTreeMap iterates in the code-point order of Python's sorted(tree.items()).
+    for (rel, src) in tree {
+        let is_skill = rel.starts_with("skills/") && rel.ends_with("/SKILL.md");
+        if !(is_skill || HERMES.always_on.contains(&rel.as_str())) {
+            continue;
+        }
+        for r in relative_skill_paths(src) {
+            let tail = r.splitn(3, '/').nth(2).unwrap_or_default();
+            errs.push(format!(
+                "{rel} names `{r}` by a path relative to the workspace, but Hermes keeps skills \
+                 in its own home, not in the workspace, so that path does not exist where the \
+                 agent runs. Inside the skill's SKILL.md, run it as `python3 \
+                 ${{HERMES_SKILL_DIR}}/{tail}`; for a helper named from SOUL.md, ship it as \
+                 `scripts/<file>.py` instead."
+            ));
+        }
+        if !is_skill {
+            continue;
+        }
+        let root = &rel[..rel.len() - "SKILL.md".len()];
+        let refs: BTreeSet<&str> = SKILL_DIR_TOKEN
+            .as_ref()
+            .map(|re| {
+                re.captures_iter(src)
+                    .filter_map(|c| c.get(1))
+                    .map(|m| m.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for r in refs {
+            let target = format!("{root}{}", r.trim_end_matches(['/', '.']));
+            let under = format!("{target}/");
+            if !tree.contains_key(&target) && !tree.keys().any(|k| k.starts_with(&under)) {
+                errs.push(format!(
+                    "{rel} runs `${{HERMES_SKILL_DIR}}/{r}` but `{target}` is not in the harness; \
+                     ship the helper at that path in the same edit."
+                ));
+            }
+        }
+    }
+}
+
+/// What harness2 also checks for a framework but the Workbench cannot: scanners it loads from
+/// the framework's own install.
+fn scanner_notes(surface: Surface) -> Vec<String> {
+    match surface {
+        Surface::Hermes => vec![
+            "harness2 also runs Hermes Agent's prompt-injection scanner (loaded from the Hermes \
+             Agent install) on SOUL.md and on each memories/MEMORY.md entry; the Workbench does \
+             not, so a tree that passes here can still be refused there."
+                .to_owned(),
+        ],
+        Surface::Turnstone => vec![
+            "harness2 also rates each skill with Turnstone's skill scanner (loaded from the \
+             Turnstone install) and refuses one rated high or critical, which the model could \
+             not load; the Workbench does not, so a tree that passes here can still be refused \
+             there."
+                .to_owned(),
+        ],
+        Surface::Opencode | Surface::Codex => Vec::new(),
+    }
+}
+
 /// Upstream `validate()` on an already on-surface tree; returns every problem in upstream's
 /// order and wording.
 fn validate_on_surface(surface: Surface, tree: &Tree, allow_subagents: bool) -> Vec<String> {
@@ -665,11 +984,19 @@ fn validate_on_surface(surface: Surface, tree: &Tree, allow_subagents: bool) -> 
         ));
     }
     if s.reject_empty_always_on && pyfmt::strip(&body).is_empty() {
-        errs.push(format!(
-            "{} is empty — it is the only always-on file on this framework, so an empty one is \
-             a harness that does not exist",
-            s.always_on.first().copied().unwrap_or("AGENTS.md")
-        ));
+        if s.always_on.len() == 1 {
+            errs.push(format!(
+                "{} is empty — it is the only always-on file on this framework, so an empty one \
+                 is a harness that does not exist",
+                s.always_on.first().copied().unwrap_or("AGENTS.md")
+            ));
+        } else {
+            errs.push(format!(
+                "the always-on files ({}) are all empty — empty always-on text is a harness that \
+                 does not exist",
+                s.always_on.join(", ")
+            ));
+        }
     }
     check_skills(surface, tree, &body, &mut errs);
     check_subagents(surface, tree, allow_subagents, &mut errs);
@@ -680,12 +1007,19 @@ fn validate_on_surface(surface: Surface, tree: &Tree, allow_subagents: bool) -> 
         check_hooks(surface, src, &mut errs);
     }
     check_script_refs(surface, tree, &mut errs);
+    match surface {
+        Surface::Hermes => check_hermes(tree, &mut errs),
+        Surface::Turnstone => check_turnstone(tree, &mut errs),
+        Surface::Opencode | Surface::Codex => {}
+    }
     errs
 }
 
 /// All of upstream's checks: always-on cap, empty always-on (Codex), skill frontmatter
 /// (`description:`, `name:` rule per surface), untriggered skills, sub-agent rules,
-/// hooks schema (Codex), scripts invoked but not shipped. Every problem is collected.
+/// hooks schema (Codex), scripts invoked but not shipped; then the Hermes Agent and Turnstone
+/// substrates' own static refusals. Every problem is collected; `notes` names the
+/// install-loaded scanners harness2 applies on top.
 ///
 /// Paths are normalised as upstream's `is_allowed` does; files off the editable surface are
 /// listed in `off_surface` (harness2 ignores them) and the rest is validated. README stubs
@@ -711,6 +1045,7 @@ pub fn validate(surface: Surface, tree: &Tree, allow_subagents: bool) -> Validat
         errors,
         off_surface: off,
         census: census(surface, &on),
+        notes: scanner_notes(surface),
     }
 }
 
@@ -977,6 +1312,252 @@ mod tests {
         assert_eq!(r.census.n_files, 5);
     }
 
+    /// The Turnstone and Hermes Agent substrates' own refusals, against what the harness2 that
+    /// adds them prints for the same trees (`turnstone.check_tree`, and `validate_hermes_tree`
+    /// with a scanner that finds nothing): names, caps, frontmatter edge cases (BOM, CRLF,
+    /// unclosed blocks), placeholders, the workspace-path lookbehind and trailing dots.
+    #[test]
+    fn substrate_refusals_match_harness2() {
+        fn run(surface: Surface, tree: &Tree) -> Vec<String> {
+            let mut errs = Vec::new();
+            match surface {
+                Surface::Turnstone => check_turnstone(tree, &mut errs),
+                Surface::Hermes => check_hermes(tree, &mut errs),
+                Surface::Opencode | Surface::Codex => {}
+            }
+            errs
+        }
+        let fm = |n: &str, body: &str| format!("---\nname: {n}\ndescription: d\n---\n{body}");
+        let tree = |files: Vec<(String, String)>| files.into_iter().collect::<Tree>();
+        let o = |s: &str| s.to_owned();
+        let long = "a".repeat(70);
+
+        let ts_persona_subagents_names = tree(vec![
+            (o("systemprompt.md"), o("  \n")),
+            (o("guardrails.md"), o("be careful")),
+            (o("sub_agents/zeta/AGENT.md"), o("---\nname: zeta\n---\nx")),
+            (
+                o("sub_agents/helper/AGENT.md"),
+                o("---\nname: helper\n---\nx"),
+            ),
+            (o("skills/bad_name/SKILL.md"), o("no frontmatter here\n")),
+            (format!("skills/{long}/SKILL.md"), fm(&long, "body\n")),
+        ]);
+        let ts_caps_bodies_placeholders = tree(vec![
+            (o("systemprompt.md"), "x".repeat(32_769)),
+            (o("skills/ok-skill/SKILL.md"), fm("ok-skill", "   \n")),
+            (
+                o("skills/x--y/SKILL.md"),
+                fm(
+                    "x--y",
+                    "run awk '{print $1}' and $ARGUMENTS and ${1} and $12a and $10.\n",
+                ),
+            ),
+            (
+                o("skills/abc-/SKILL.md"),
+                format!(
+                    "\u{feff}---  \r\nname: abc-\r\ndescription: d\r\n---\t\r\n{}",
+                    "b".repeat(32_769)
+                ),
+            ),
+            (o("skills/__x/SKILL.md"), fm("__x", "ok\n")),
+        ]);
+        let ts_frontmatter_edges = tree(vec![
+            (o("systemprompt.md"), o("You are a lawyer.")),
+            (o("skills/z/SKILL.md"), o("---\nname: z\n---")),
+            (o("skills/j/SKILL.md"), o("--- x\nname: j\n---\nbody")),
+            (
+                o("skills/r/SKILL.md"),
+                o("---\r\nname: r\r\n---x\r\n---\r\nbody $ARGUMENTSX $2"),
+            ),
+            (o("skills/e/SKILL.md"), o("---\n---\nbody")),
+        ]);
+        let hm_paths = tree(vec![
+            (o("SOUL.md"), o(" \n")),
+            (o("memories/MEMORY.md"), o("")),
+            (
+                o("skills/s1/SKILL.md"),
+                fm(
+                    "s1",
+                    "Run python3 skills/s1/scripts/run.py then ${HERMES_SKILL_DIR}/scripts/missing.py, \
+                     ${HERMES_SKILL_DIR}/scripts/present.py, ${HERMES_SKILL_DIR}/scripts/ and \
+                     ${HERMES_SKILL_DIR}/scripts/dot.py.\n",
+                ),
+            ),
+            (o("skills/s1/scripts/present.py"), o("print(1)\n")),
+        ]);
+        let hm_soul_refs = tree(vec![
+            (
+                o("SOUL.md"),
+                o(
+                    "Use skills/s1/scripts/run.py for totals; not /skills/s1/scripts/no.py, \
+                   xskills/s1/scripts/no.py, $skills/s1/scripts/no.py or \
+                   ${HERMES_SKILL_DIR}/skills/s2/scripts/b.py. (skills/s2/scripts/c.py) \
+                   skills/s2/scripts/c.py",
+                ),
+            ),
+            (o("memories/MEMORY.md"), o("fact one\n§\nfact two")),
+            (
+                o("skills/s2/SKILL.md"),
+                fm(
+                    "s2",
+                    "${HERMES_SKILL_DIR}/scripts/a.py ${HERMES_SKILL_DIR}/./ \
+                     ${HERMES_SKILL_DIR}/scripts/a.py\n",
+                ),
+            ),
+            (o("skills/s2/scripts/a.py"), o("x\n")),
+        ]);
+
+        let ts_persona_subagents_names_expected: [&str; 5] = [
+            "systemprompt.md is empty: it is the Turnstone persona's base prompt, and Turnstone refuses a persona without one (the run would fall back to its built-in software-engineer persona). Put the agent's role and procedure there.",
+            "sub_agents are not available on the Turnstone substrate: ['helper', 'zeta'] (its task_agent tool is hidden from the agent); fold the work into a skill instead",
+            "skill name `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` is 70 characters, over Turnstone's 64: Turnstone skill names use lowercase letters, digits and single hyphens (^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$). Rename the directory, its `name:` line and every trigger line, e.g. to `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`",
+            "skill name `bad_name` contains an underscore: Turnstone skill names use lowercase letters, digits and single hyphens (^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$). Rename the directory, its `name:` line and every trigger line, e.g. to `bad-name`",
+            "skills/bad_name/SKILL.md must open with a YAML frontmatter block: a `---` line, `name: bad_name`, `description: ...`, then a closing `---` line; Turnstone's SKILL.md parser reads the skill's name from it",
+        ];
+        let ts_caps_bodies_placeholders_expected: [&str; 6] = [
+            "systemprompt.md is 32769 characters; a Turnstone persona's base prompt is capped at 32768",
+            "skill name `abc-` must start and end with a lowercase letter or digit: Turnstone skill names use lowercase letters, digits and single hyphens (^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$). Rename the directory, its `name:` line and every trigger line, e.g. to `abc`",
+            "skills/abc-/SKILL.md body is 32769 characters; Turnstone cuts a loaded skill at 32768, so the rest would never reach the agent",
+            "skills/ok-skill/SKILL.md has no body after its frontmatter: the loaded skill would be empty",
+            "skill name `x--y` contains consecutive hyphens: Turnstone skill names use lowercase letters, digits and single hyphens (^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$). Rename the directory, its `name:` line and every trigger line, e.g. to `x-y`",
+            "skills/x--y/SKILL.md contains $1, $10, $ARGUMENTS: Turnstone fills `$1`-style positional placeholders and `$ARGUMENTS` in a skill body when it loads, with nothing when the model loads it without arguments, so `awk '{print $1}'` would reach the agent as `awk '{print }'`. Write `${1}`, or move the command into a script under skills/<name>/scripts/",
+        ];
+        let ts_frontmatter_edges_expected: [&str; 4] = [
+            "skills/e/SKILL.md must open with a YAML frontmatter block: a `---` line, `name: e`, `description: ...`, then a closing `---` line; Turnstone's SKILL.md parser reads the skill's name from it",
+            "skills/j/SKILL.md must open with a YAML frontmatter block: a `---` line, `name: j`, `description: ...`, then a closing `---` line; Turnstone's SKILL.md parser reads the skill's name from it",
+            "skills/r/SKILL.md contains $2: Turnstone fills `$1`-style positional placeholders and `$ARGUMENTS` in a skill body when it loads, with nothing when the model loads it without arguments, so `awk '{print $1}'` would reach the agent as `awk '{print }'`. Write `${1}`, or move the command into a script under skills/<name>/scripts/",
+            "skills/z/SKILL.md has no body after its frontmatter: the loaded skill would be empty",
+        ];
+        let hm_paths_expected: [&str; 4] = [
+            "SOUL.md is empty: it is Hermes' identity slot, and without it the agent runs as Hermes' generic built-in assistant with none of this harness's procedure. Put the role and the standing rules back in SOUL.md.",
+            "skills/s1/SKILL.md names `skills/s1/scripts/run.py` by a path relative to the workspace, but Hermes keeps skills in its own home, not in the workspace, so that path does not exist where the agent runs. Inside the skill's SKILL.md, run it as `python3 ${HERMES_SKILL_DIR}/scripts/run.py`; for a helper named from SOUL.md, ship it as `scripts/<file>.py` instead.",
+            "skills/s1/SKILL.md runs `${HERMES_SKILL_DIR}/scripts/dot.py.` but `skills/s1/scripts/dot.py` is not in the harness; ship the helper at that path in the same edit.",
+            "skills/s1/SKILL.md runs `${HERMES_SKILL_DIR}/scripts/missing.py` but `skills/s1/scripts/missing.py` is not in the harness; ship the helper at that path in the same edit.",
+        ];
+        let hm_soul_refs_expected: [&str; 3] = [
+            "SOUL.md names `skills/s1/scripts/run.py` by a path relative to the workspace, but Hermes keeps skills in its own home, not in the workspace, so that path does not exist where the agent runs. Inside the skill's SKILL.md, run it as `python3 ${HERMES_SKILL_DIR}/scripts/run.py`; for a helper named from SOUL.md, ship it as `scripts/<file>.py` instead.",
+            "SOUL.md names `skills/s2/scripts/c.py` by a path relative to the workspace, but Hermes keeps skills in its own home, not in the workspace, so that path does not exist where the agent runs. Inside the skill's SKILL.md, run it as `python3 ${HERMES_SKILL_DIR}/scripts/c.py`; for a helper named from SOUL.md, ship it as `scripts/<file>.py` instead.",
+            "skills/s2/SKILL.md runs `${HERMES_SKILL_DIR}/./` but `skills/s2/` is not in the harness; ship the helper at that path in the same edit.",
+        ];
+
+        for (surface, tree, expected) in [
+            (
+                Surface::Turnstone,
+                &ts_persona_subagents_names,
+                &ts_persona_subagents_names_expected[..],
+            ),
+            (
+                Surface::Turnstone,
+                &ts_caps_bodies_placeholders,
+                &ts_caps_bodies_placeholders_expected[..],
+            ),
+            (
+                Surface::Turnstone,
+                &ts_frontmatter_edges,
+                &ts_frontmatter_edges_expected[..],
+            ),
+            (Surface::Hermes, &hm_paths, &hm_paths_expected[..]),
+            (Surface::Hermes, &hm_soul_refs, &hm_soul_refs_expected[..]),
+        ] {
+            assert_eq!(run(surface, tree), expected);
+        }
+        // Export refuses the same names for the same reasons.
+        assert_eq!(
+            turnstone_name_problem("abc-").as_deref(),
+            Some("must start and end with a lowercase letter or digit")
+        );
+        assert_eq!(turnstone_name_problem("a"), None);
+        // The report names the scanners it could not apply, for these two only.
+        assert!(validate(Surface::Hermes, &hm_paths, false).notes[0].contains("prompt-injection"));
+        assert!(
+            validate(Surface::Opencode, &Tree::new(), false)
+                .notes
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn hermes_and_turnstone_messages_match_harness2() {
+        // Expected texts printed by the harness2 that adds these surfaces: tree.validate's,
+        // then the substrate's own refusals (the LAB adapter runs both).
+        let hm = t(&[
+            ("SOUL.md", "  \n"),
+            ("memories/MEMORY.md", ""),
+            (
+                "skills/a/SKILL.md",
+                "---\nname: a\ndescription: x\n---\nbody\n",
+            ),
+        ]);
+        assert_eq!(
+            validate(Surface::Hermes, &hm, false).errors,
+            vec![
+                "the always-on files (SOUL.md, memories/MEMORY.md) are all empty — empty \
+                 always-on text is a harness that does not exist",
+                "skill 'a' is never named in the always-on text, so the agent will not know to \
+                 invoke it — an untriggered skill is dead weight. Fix it by adding a trigger line \
+                 naming `a` to SOUL.md, e.g. \"When <the situation this skill handles>, load the \
+                 `a` skill with skill_view.\"",
+                "SOUL.md is empty: it is Hermes' identity slot, and without it the agent runs as \
+                 Hermes' generic built-in assistant with none of this harness's procedure. Put the \
+                 role and the standing rules back in SOUL.md.",
+            ]
+        );
+        let ts = t(&[
+            ("systemprompt.md", ""),
+            ("guardrails.md", " "),
+            (
+                "skills/b/SKILL.md",
+                "---\nname: b\ndescription: y\n---\nbody\n",
+            ),
+        ]);
+        assert_eq!(
+            validate(Surface::Turnstone, &ts, false).errors,
+            vec![
+                "the always-on files (systemprompt.md, guardrails.md) are all empty — empty \
+                 always-on text is a harness that does not exist",
+                "skill 'b' is never named in the always-on text, so the agent will not know to \
+                 invoke it — an untriggered skill is dead weight. Fix it by adding a trigger line \
+                 naming `b` to systemprompt.md or guardrails.md, e.g. \"- When <the situation \
+                 this skill handles>, load the `b` skill: skills(action='load', name='b').\"",
+                "systemprompt.md is empty: it is the Turnstone persona's base prompt, and \
+                 Turnstone refuses a persona without one (the run would fall back to its built-in \
+                 software-engineer persona). Put the agent's role and procedure there.",
+            ]
+        );
+        let big = Tree::from([
+            ("SOUL.md".to_owned(), "x".repeat(15_000)),
+            ("memories/MEMORY.md".to_owned(), "y".repeat(5_001)),
+        ]);
+        assert_eq!(
+            validate(Surface::Hermes, &big, false).errors,
+            vec![
+                "always-on content is 20003 chars, over the 20000 cap; Hermes puts SOUL.md (its \
+                 identity, the first block of the system prompt) and the MEMORY.md snapshot into \
+                 every request, and cuts SOUL.md down past 20,000 characters at a 64K-token window",
+            ]
+        );
+        // Components: Turnstone's guardrails and Hermes' memory are filed as such.
+        assert_eq!(
+            classify(Surface::Turnstone, "guardrails.md"),
+            Some(Component::Guardrails)
+        );
+        assert_eq!(
+            classify(Surface::Hermes, "memories/MEMORY.md"),
+            Some(Component::Memory)
+        );
+        assert_eq!(
+            classify(Surface::Hermes, "SOUL.md"),
+            Some(Component::SystemPrompt)
+        );
+        assert_eq!(
+            classify(Surface::Hermes, "sub_agents/x/AGENT.md"),
+            Some(Component::Subagents)
+        );
+        assert_eq!(always_on_max(Surface::Hermes), 20_000);
+        assert_eq!(detect_surface(&hm), Surface::Hermes);
+    }
+
     #[test]
     fn codex_validation_messages() {
         let tree = t(&[
@@ -1126,6 +1707,9 @@ mod tests {
     fn script_ref_regex_compiles() {
         assert!(script_ref_regex(Surface::Opencode).is_some());
         assert!(script_ref_regex(Surface::Codex).is_some());
+        assert!(ARG_PLACEHOLDER.is_some());
+        assert!(SKILL_DIR_TOKEN.is_some());
+        assert!(RELATIVE_SKILL_PATH.is_some());
     }
 
     fn sparse(path: &std::path::Path, len: u64) {

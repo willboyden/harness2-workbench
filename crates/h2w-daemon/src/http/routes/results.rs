@@ -283,11 +283,7 @@ pub async fn export(
         ExportFormat::Json => Ok(super::json_body(body)),
         ExportFormat::TarGz => {
             let bytes = body;
-            let target_name = match target {
-                ExportTarget::Raw => "raw",
-                ExportTarget::Opencode => "opencode",
-                ExportTarget::Codex => "codex",
-            };
+            let target_name = target.as_param();
             let mut r = bytes.into_response();
             let h = r.headers_mut();
             h.insert(

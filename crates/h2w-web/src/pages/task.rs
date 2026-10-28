@@ -3,7 +3,7 @@
 
 use h2w_api::{
     ExportBundle, ExportTarget, FileContent, FileEntry, FileKind, HarnessDiff, HarnessRole,
-    HarnessTree, Mode, ModeRecord, Selection, Stage, TaskDetail,
+    HarnessTree, Mode, ModeRecord, Selection, Stage, Surface, TaskDetail,
 };
 use leptos::prelude::*;
 
@@ -420,12 +420,31 @@ fn ExportDialog(
     key: TaskKey,
     mode: Mode,
     label: Signal<String>,
+    /// The shown harness's surface, once loaded.
+    surface: Signal<Option<Surface>>,
 ) -> impl IntoView {
+    // Start on the harness's own framework (OpenCode for raw trees of unknown surface).
     let target = RwSignal::new("opencode".to_owned());
-    let target_enum = move || match target.get().as_str() {
-        "raw" => ExportTarget::Raw,
-        "codex" => ExportTarget::Codex,
-        _ => ExportTarget::Opencode,
+    let picked = RwSignal::new(false);
+    Effect::new(move |_| {
+        if !picked.get_untracked()
+            && let Some(s) = surface.get()
+        {
+            let own = match s {
+                Surface::Opencode => ExportTarget::Opencode,
+                Surface::Codex => ExportTarget::Codex,
+                Surface::Hermes => ExportTarget::Hermes,
+                Surface::Turnstone => ExportTarget::Turnstone,
+            };
+            target.set(own.as_param().to_owned());
+        }
+    });
+    let target_enum = move || {
+        let t = target.get();
+        ExportTarget::ALL
+            .into_iter()
+            .find(|x| x.as_param() == t)
+            .unwrap_or(ExportTarget::Opencode)
     };
     let bundle = LocalResource::new(move || {
         let (o, l, tg) = (open.get(), label.get(), target_enum());
@@ -444,17 +463,21 @@ fn ExportDialog(
     let title = Signal::derive(move || format!("Export harness {}", label.get()));
     view! {
         <Modal open=open on_close=close title=title wide=true testid="export-dialog">
-            <RadioCards
-                name="export-target"
-                legend="Target layout"
-                value=target
-                compact=true
-                options=vec![
-                    ("raw".to_owned(), "Raw".to_owned(), "The tree exactly as harness2 stores it.".to_owned()),
-                    ("opencode".to_owned(), "OpenCode project".to_owned(), "AGENTS.md plus .opencode/ skills, agents and plugins.".to_owned()),
-                    ("codex".to_owned(), "Codex project".to_owned(), "AGENTS.md, .agents/skills and .codex/hooks.json.".to_owned()),
-                ]
-            />
+            <div on:change=move |_| picked.set(true)>
+                <RadioCards
+                    name="export-target"
+                    legend="Target layout"
+                    value=target
+                    compact=true
+                    options=vec![
+                        ("raw".to_owned(), "Raw".to_owned(), "The tree exactly as harness2 stores it.".to_owned()),
+                        ("opencode".to_owned(), "OpenCode project".to_owned(), "AGENTS.md, .opencode/ skills, agents and plugins, skill helpers in skills/.".to_owned()),
+                        ("codex".to_owned(), "Codex project".to_owned(), "AGENTS.md, .agents/skills and .codex/hooks.json.".to_owned()),
+                        ("hermes".to_owned(), "Hermes Agent home".to_owned(), "SOUL.md, memories/MEMORY.md and skills/ for HERMES_HOME, plus scripts/.".to_owned()),
+                        ("turnstone".to_owned(), "Turnstone bundle".to_owned(), "persona.md, instructions.md, skills/ and IMPORT.md on how to apply them.".to_owned()),
+                    ]
+                />
+            </div>
             {move || match bundle.get() {
                 None | Some(Ok(None)) => view! { <Skeleton lines=4 /> }.into_any(),
                 Some(Err(e)) => view! { <ErrorPanel error=e /> }.into_any(),
@@ -592,7 +615,13 @@ fn HarnessPanel(key: TaskKey, record: ModeRecord) -> impl IntoView {
                     <HarnessViewer tree=t />
                 }
             })}
-            <ExportDialog open=export_open key=key mode=mode label=Signal::derive(move || selected.get()) />
+            <ExportDialog
+                open=export_open
+                key=key
+                mode=mode
+                label=Signal::derive(move || selected.get())
+                surface=Signal::derive(move || tree.get().and_then(Result::ok).map(|t| t.surface))
+            />
         </Card>
     }
 }
