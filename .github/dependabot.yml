@@ -20,6 +20,18 @@ updates:
     commit-message:
       prefix: "build(deps)"
 
+  # Development only: Prettier (package.json pins it exactly; nothing shipped uses npm).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 14
+    versioning-strategy: increase
+    commit-message:
+      prefix: "build(deps)"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

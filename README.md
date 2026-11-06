@@ -274,14 +274,16 @@ crates/h2w-e2e      end-to-end suites against real binaries and a real harness2
 tools/h2w-mock-api  fixture API with the production security headers, for UI development
 deploy/             Dockerfiles, compose.yaml, example configuration, Caddyfile, systemd unit
 tests/fixtures/     harness2 output captured by running harness2 itself (never edited by hand)
-xtask/              build orchestration: `cargo xtask web | dist | check | docs | cooldown | e2e`
+xtask/              build orchestration: `cargo xtask web | dist | check | docs | cooldown | prettier | e2e`
+package.json        development only: pins Prettier, the formatter for web/ and JSON (Node.js is not
+                    needed to build, run or ship the Workbench)
 ```
 
 ## Contributing
 
 Bug reports, fixes and documentation are welcome; start with [CONTRIBUTING.md](CONTRIBUTING.md). The
-quality gate is `cargo xtask check` (format, lints, tests, dependency policy, and a check that every
-link in the Markdown files resolves: `cargo xtask docs`).
+quality gate is `cargo xtask check` (format with rustfmt and Prettier, lints, tests, dependency
+policy, and a check that every link in the Markdown files resolves: `cargo xtask docs`).
 
 ## License
 

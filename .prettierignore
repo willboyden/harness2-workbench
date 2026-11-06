@@ -1,0 +1,36 @@
+# Prettier formats and checks code and JSON only (CONTRIBUTING.md, "Formatting"). This file is an
+# allowlist: ignore everything, then bring back directories and the extensions Prettier owns.
+*
+!*/
+!*.js
+!*.mjs
+!*.cjs
+!*.ts
+!*.tsx
+!*.css
+!*.html
+!*.json
+
+# Markdown and YAML are not Prettier's (spelled out, although the allowlist already drops them).
+*.md
+*.yml
+*.yaml
+
+# Build output, installed tools and wasm-bindgen output.
+target/
+node_modules/
+dist/
+pkg/
+
+# Lockfiles are written by their tools.
+package-lock.json
+
+# Test data whose exact bytes matter: recorded harness2 runs, the golden digests and expected
+# output, and the MCP tool-schema snapshot (rewritten by `UPDATE_SNAPSHOTS=1 cargo test`).
+tests/fixtures/
+crates/*/tests/snapshots/
+crates/*/tests/fixtures/
+
+# Vendored or third-party files, should any appear.
+third_party/
+vendor/

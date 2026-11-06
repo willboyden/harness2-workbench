@@ -42,7 +42,8 @@ image carries uv's licence texts; its Debian packages keep theirs in `/usr/share
 3. **Gates.** `cargo xtask check` and the end-to-end suite (`crates/h2w-e2e/README.md`) pass
    locally, `cargo xtask licenses` writes the licence file; CI is green on `main`.
 4. **Clean clone.** In a temporary directory outside the repository:
-   `git clone <repo> && cd harness2-workbench && cargo xtask check && cargo xtask dist`. A working
+   `git clone <repo> && cd harness2-workbench && npm ci --ignore-scripts && cargo xtask check && cargo xtask dist`
+   (npm installs only Prettier, which the check runs; nothing built uses Node.js). A working
    tree is not a clean clone: this is what catches files that exist only on your machine.
 5. **Leak scan.** `git diff <previous-tag>..HEAD` contains no personal paths, tokens or
    machine-specific values (the hook and gitleaks check this too).
@@ -63,6 +64,9 @@ packagers rely on tags being immutable.
 - **Rust toolchain:** update `rust-toolchain.toml` and the Dockerfile's builder digest together,
   then run the full gate. Bump `rust-version` in `Cargo.toml` only to versions you test.
 - **wasm-bindgen:** the CLI (CI, Dockerfile, CONTRIBUTING) and the crate must be the same version.
+- **Prettier:** an exact version in `package.json`, past the 14-day cooldown; `npm install --save-exact
+  --ignore-scripts prettier@<version>` refreshes `package-lock.json`. Reformat with
+  `cargo xtask prettier --write` in a commit of its own, and add that commit to `.git-blame-ignore-revs`.
 - **harness2:** update `TESTED_HARNESS2_COMMIT`, re-run the end-to-end suite against the new
   commit, re-check the CLI flags and output formats the parsers rely on, run
   `cargo xtask runner-docs --harness2-home <home>` against a home whose LAB a container-isolated

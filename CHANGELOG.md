@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Development: **Prettier 3.9.10** (an exact, locked development dependency in `package.json`) formats
+  the web UI's JavaScript, CSS and HTML and the JSON files; `cargo xtask check` and CI check it
+  (`cargo xtask prettier`, CONTRIBUTING.md). Markdown, YAML and test data are left alone. Node.js is
+  used only for formatting: the binaries, release archives and images do not contain or need it.
+
 ## [0.2.0] - 2026-11-05
 
 ### Added

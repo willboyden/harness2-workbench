@@ -1,0 +1,13 @@
+{
+  "name": "harness2-workbench-dev",
+  "private": true,
+  "description": "Development tools only (Prettier). Nothing here is built into the binaries, archives or images.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "fmt": "prettier --write .",
+    "fmt:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "3.9.10"
+  }
+}

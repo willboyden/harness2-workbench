@@ -43,7 +43,14 @@ enum Cmd {
     },
     /// Check every relative link and #anchor in the Markdown files (fails on a broken one).
     Docs,
-    /// Run every quality gate: fmt, docs links, clippy (native + wasm), tests, cargo-deny, cooldown.
+    /// Check (or, with --write, apply) Prettier formatting of the web UI code and the JSON files.
+    Prettier {
+        /// Rewrite the files instead of checking them.
+        #[arg(long)]
+        write: bool,
+    },
+    /// Run every quality gate: rustfmt, Prettier, docs links, clippy (native + wasm), tests,
+    /// cargo-deny, cooldown.
     Check,
     /// Point git at the repository's hooks in .githooks/.
     Hooks,
@@ -98,6 +105,7 @@ fn main() -> Result<()> {
         Cmd::Licenses => licenses(&root),
         Cmd::Cooldown { days } => cooldown::check(&root, days),
         Cmd::Docs => docs::check(&root),
+        Cmd::Prettier { write } => prettier(&root, write),
         Cmd::Check => check(&root),
         Cmd::Hooks => run(&root, "git", &["config", "core.hooksPath", ".githooks"]),
         Cmd::E2e {
@@ -251,8 +259,62 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Run the Prettier that `package.json` pins (exactly), from `node_modules`. Node.js is a
+/// development tool here: it formats code; nothing built, archived or shipped uses it.
+fn prettier(root: &Path, write: bool) -> Result<()> {
+    let manifest = std::fs::read_to_string(root.join("package.json"))
+        .context("could not read package.json")?;
+    let pinned = pinned_dev_dependency(&manifest, "prettier")?;
+    let bin = root.join("node_modules/.bin/prettier");
+    let found = Command::new(&bin)
+        .arg("--version")
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+    if found.as_deref() != Some(pinned) {
+        bail!(
+            "Prettier {pinned} is needed (found: {}); install the pinned development tools with \
+             `npm ci --ignore-scripts` (Node.js is used only for formatting)",
+            found.as_deref().unwrap_or("none")
+        );
+    }
+    let bin = bin.to_string_lossy().into_owned();
+    run(
+        root,
+        &bin,
+        &[if write { "--write" } else { "--check" }, "."],
+    )
+}
+
+/// The exact version `package.json` declares for `name` (`"name": "1.2.3"`). A range (`^`, `~`,
+/// `*`, ...) is refused: development tools are pinned like everything else (docs/SUPPLY-CHAIN.md).
+fn pinned_dev_dependency<'a>(manifest: &'a str, name: &str) -> Result<&'a str> {
+    let key = format!("\"{name}\":");
+    let rest = manifest
+        .split_once(key.as_str())
+        .map(|(_, rest)| rest.trim_start())
+        .with_context(|| format!("package.json declares no {name}"))?;
+    let version = rest
+        .strip_prefix('"')
+        .and_then(|r| r.split_once('"'))
+        .map(|(v, _)| v)
+        .with_context(|| format!("package.json: the {name} version is not a string"))?;
+    let exact = !version.is_empty()
+        && version.split('.').count() == 3
+        && version
+            .split('.')
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    if !exact {
+        bail!("package.json must pin {name} to an exact version (x.y.z), not {version:?}");
+    }
+    Ok(version)
+}
+
 fn check(root: &Path) -> Result<()> {
     run(root, "cargo", &["fmt", "--all", "--", "--check"])?;
+    prettier(root, false)?;
     docs::check(root)?;
     run(
         root,
@@ -368,7 +430,33 @@ fn passed_count(line: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::passed_count;
+    use super::{passed_count, pinned_dev_dependency};
+
+    #[test]
+    fn prettier_is_pinned_exactly_and_locked_at_the_same_version() {
+        let manifest = include_str!("../../package.json");
+        let pinned = pinned_dev_dependency(manifest, "prettier").unwrap();
+        let lock = include_str!("../../package-lock.json");
+        let locked = format!("\"node_modules/prettier\": {{\n      \"version\": \"{pinned}\",");
+        assert!(
+            lock.contains(&locked),
+            "package-lock.json does not lock prettier {pinned}"
+        );
+    }
+
+    #[test]
+    fn version_ranges_are_refused() {
+        for bad in ["^3.9.10", "~3.9.10", "*", "3.9", "3.9.x", "latest", ""] {
+            let manifest = format!("{{\"devDependencies\": {{\"prettier\": \"{bad}\"}}}}");
+            assert!(
+                pinned_dev_dependency(&manifest, "prettier").is_err(),
+                "{bad}"
+            );
+        }
+        let ok = "{\"devDependencies\": {\"prettier\":   \"3.9.10\"}}";
+        assert_eq!(pinned_dev_dependency(ok, "prettier").unwrap(), "3.9.10");
+        assert!(pinned_dev_dependency("{}", "prettier").is_err());
+    }
 
     #[test]
     fn libtest_summaries_are_counted() {
