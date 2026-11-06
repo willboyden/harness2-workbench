@@ -52,6 +52,8 @@ else. The options are in `.prettierrc.json` (chosen to match the existing style;
 `.prettierignore` is an allowlist: only `js mjs cjs ts tsx css html json` files are formatted, and
 never Markdown, YAML, lockfiles, build output (`target/`, `dist/`, `pkg/`, `node_modules/`) or test
 data whose exact bytes matter (`tests/fixtures/`, the golden files, `crates/*/tests/snapshots/`).
+Reformat-only commits are listed in `.git-blame-ignore-revs`; run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once so that `git blame` skips them.
 
 ## Git workflow
 

@@ -1,0 +1,6 @@
+# Commits that only reformat code; `git blame` skips them with
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub's blame view reads this file by itself.) Full SHAs, one per line.
+
+# style: apply Prettier (Prettier 3.9.10, the first reformat)
+0812235077a734e62680d7bfafe8f04eb93c1f66
