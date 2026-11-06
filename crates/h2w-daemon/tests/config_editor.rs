@@ -234,9 +234,16 @@ async fn validation_never_echoes_a_value_and_cannot_confirm_a_secret() {
     let other: ConfigValidation = check(&guess).await.unwrap().json().await.unwrap();
     assert!(!secret.valid);
     let all = format!("{secret:?}");
-    assert!(!all.contains(&stored), "{all}");
-    assert!(!all.contains("REDACTED"), "{all}");
-    assert!(all.contains("server.listen"), "{all}");
+    // Fixed messages: the answer is not printed, so a failure never logs the test secret.
+    assert!(!all.contains(&stored), "the answer quotes the posted value");
+    assert!(
+        !all.contains("REDACTED"),
+        "the answer shows a redaction marker"
+    );
+    assert!(
+        all.contains("server.listen"),
+        "the answer does not name the key"
+    );
     // The stored secret's value and any other value get the same answer.
     assert_eq!(secret, other);
 }
