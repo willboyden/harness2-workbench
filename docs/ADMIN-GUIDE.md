@@ -405,7 +405,7 @@ then follow [API.md](API.md#10-a-curl-walkthrough) or open the web UI.
 
 ## 5. Configuration reference
 
-`h2workbench.toml` is TOML with seven tables. **Unknown keys are errors**, so a typo cannot silently
+`h2workbench.toml` is TOML with nine tables. **Unknown keys are errors**, so a typo cannot silently
 fall back to a default, and a key outside its table is an error too. Every value is validated once
 at start-up and **all problems are reported together**. `~` and `~/` are expanded in paths (other
 `~user` forms are refused).
@@ -586,6 +586,59 @@ for example `api.anthropic.com`.
 Two annotated examples ship with the code: `deploy/examples/h2workbench.toml` (every key, with
 comments) and `deploy/examples/h2workbench.compose.toml` (the compose deployment). `init` writes every
 key with its default.
+
+### Drafting the file in the web UI
+
+Administrators can draft, check and export a configuration under **Settings · System → Server
+configuration**. The web UI never changes the server: no route writes the configuration file, changes
+its permissions or runs a command. The editor works on a draft in the browser:
+
+- **Load** the server's own file (read-only, `GET /api/v1/system/config`), the annotated example
+  above (built into the UI), an empty file (all defaults), or a local file (read in the browser).
+  The server sends its file only when every key is a known setting, every text value has the shape
+  the validator requires of its key, and nothing in it (comments included) looks like a secret: a
+  private key, a Workbench API token, a URL with user information, a query string or a token-like
+  path or fragment, a long token-like string, or a credential-like name given a value in a
+  `name = value` assignment (or a `name: value` note with a one-word value). Only when those checks
+  pass does it also look, in the text and in every string value with its escapes decoded, for the
+  value of a stored secret, `H2W_SECRET_*` variable or the proxy secret (values of 8 bytes or more).
+  Otherwise it says why, never quoting the file. Recognising a secret this way is best effort: the
+  file is meant to hold no secrets (they are referenced by name). It also says when the file
+  on disk no longer gives the settings the server runs with (edited since the start), and which
+  `H2W_*` overrides are set (names only). Each read is recorded in the audit log as `config.read`.
+- **Edit** in the Form view (every key with its default, a "security" mark where it changes access
+  or containment, and an (i) pop-up: what the key is, what changing it does, its values and when
+  it takes effect) or the Text view; both edit the same text, and the form keeps comments and
+  layout. `[[benchmarks.not_offered]]` tables are edited in the Text view.
+- **Validate** sends the text to `POST /api/v1/system/config/validate`, which runs the server's own
+  parser and validator in memory (the same as `config check`, without the `H2W_*` overrides) and
+  returns the parse error with its line and column, or every problem, plus warnings. It writes
+  nothing and reads no secret, and its messages never quote the text you sent (quoted values come
+  back as `"…"`): the key, the rule and the position say what is wrong.
+- **Export**: a diff against what you loaded, Copy, Download, and the commands to install it by hand:
+
+```console
+h2workbench --config ./h2workbench.toml config check
+cp -p ~/.config/harness2-workbench/h2workbench.toml ~/.config/harness2-workbench/h2workbench.toml.bak
+install -m 600 ./h2workbench.toml ~/.config/harness2-workbench/h2workbench.toml
+systemctl --user restart h2workbench       # the server reads its configuration only at start
+```
+
+Restart `h2workbench egress-proxy` too after changing `[egress]`.
+
+The compose deployment ([section 10](#10-the-compose-reference-deployment)) is different: the server
+reads `/config/h2workbench.toml` inside its container, which `deploy/compose.yaml` mounts read-only
+from `deploy/h2workbench.toml`, and `systemctl --user restart` does not apply. Check the draft as
+above, replace `deploy/h2workbench.toml` on the host (keep it readable by the container's user:
+`chmod 644`), then recreate both services that read it:
+
+```console
+docker compose -f deploy/compose.yaml up -d --force-recreate workbench egress
+```
+
+Both routes are admin-only and take the Host check and request limits of every route. Validate, like
+every other POST, also needs the `x-h2w-request: 1` header and refuses an Origin other than the
+server's own, and it accepts at most 256 KiB of text; the read sends at most 256 KiB.
 
 ## 6. Authentication, roles and tokens
 

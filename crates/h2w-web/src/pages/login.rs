@@ -3,6 +3,8 @@
 
 use h2w_api::{LoginRequest, Principal, TOKEN_PREFIX};
 use leptos::prelude::*;
+
+use crate::components::page_help::PageHelp;
 use leptos::task::spawn_local;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
@@ -163,6 +165,9 @@ pub(crate) fn Login() -> impl IntoView {
                         </li>
                     </ul>
                 </div>
+            </div>
+            <div class="login-page-help">
+                <PageHelp key="login" />
             </div>
         </div>
     }

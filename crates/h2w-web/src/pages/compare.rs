@@ -8,6 +8,8 @@
 use h2w_api::{CompareSide, Comparison, Experiment, Mode};
 use leptos::prelude::*;
 
+use crate::components::page_help::PageHelp;
+
 use crate::api;
 use crate::components::charts::{DeltaBarCell, DeltaOverview};
 use crate::components::form::SelectField;
@@ -137,6 +139,7 @@ pub(crate) fn Compare() -> impl IntoView {
                 title="Compare"
                 subtitle="Two sweeps, the two modes of one sweep, or a mode against the harness it started from, task by task: who won, by how much, and whether it is more than chance."
             />
+            <PageHelp key="compare" />
             <div class="compare-pickers">
                 <div class="compare-side">
                     <h3>"A (the reference)"</h3>

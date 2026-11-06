@@ -149,6 +149,7 @@ pub(crate) fn System() -> impl IntoView {
             },
         )}
         {move || s.can(Role::Admin).then(|| view! { <InstallForm /> })}
+        {move || s.can(Role::Admin).then(|| view! { <super::config_editor::ConfigEditor /> })}
         <Card title="Environment checks">
             {move || {
                 s.can(Role::Operator)

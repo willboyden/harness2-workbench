@@ -92,6 +92,11 @@ return to where you were.
 - **Your name and role** (top right), the **theme button** (the monitor icon: system, light or dark)
   and **Sign out**.
 - **Dotted underlines** mark glossary terms; hover or focus one for a definition, or open **Help**.
+- **Getting started and FAQ** (under each page's title): a panel, closed until you open it, with
+  numbered first steps for that page and its own questions (with a search box); the browser remembers
+  which pages you left it open on.
+- **(i) buttons** next to form fields open a short explanation of the field below its label. Escape,
+  a click elsewhere or the close button shuts it, and focus returns to the button.
 - **Toasts** (bottom right) confirm actions (`Job started`, `Profile local-vllm saved`) and report
   errors with the server's message.
 
@@ -593,6 +598,14 @@ the tested harness2 commit ... can be installed`) unless an administrator has se
 `paths.allow_untested_harness2_rev = true`; with that switch on, the server builds whatever it finds
 at the commit, so use only commits you trust ([ADMIN-GUIDE.md](ADMIN-GUIDE.md#12-data-backups-and-upgrades)).
 The form's own hint says only that other commits were not tested with this release.
+
+Administrators also get **Server configuration**, an editor for `h2workbench.toml` that drafts,
+validates and exports but never changes the server: load the server's file (read-only; the server
+refuses to send one that looks like it holds a credential), the annotated example or a local file;
+edit it in the **Form** view (each key with its default and an (i) explanation) or the **Text** view;
+**Validate with the server** runs the server's own checks on the text; **Export** shows the diff, copies
+or downloads the file and lists the commands to install it by hand and restart
+([ADMIN-GUIDE.md](ADMIN-GUIDE.md#drafting-the-file-in-the-web-ui)).
 
 ## 12. Keyboard, themes and phones
 

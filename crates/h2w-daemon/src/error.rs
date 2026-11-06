@@ -250,13 +250,20 @@ impl From<tokio::task::JoinError> for ApiError {
     }
 }
 
-/// Remove quoted fragments (which may echo input values) from a parser message.
+/// Remove quoted fragments (which may echo input values) from a parser message. Inside a
+/// quote, `\` escapes the next character (serde and `{:?}` write `"` in a value as `\"`),
+/// so an escaped quote does not end the fragment.
 #[must_use]
 pub fn scrub_quoted(msg: &str) -> String {
     let mut out = String::with_capacity(msg.len());
     let mut in_quote = false;
+    let mut escaped = false;
     for c in msg.chars() {
-        if c == '"' {
+        if in_quote && escaped {
+            escaped = false;
+        } else if in_quote && c == '\\' {
+            escaped = true;
+        } else if c == '"' {
             if in_quote {
                 out.push_str("…\"");
             } else {
@@ -285,6 +292,13 @@ mod tests {
         );
         assert_eq!(scrub_quoted("missing field `name`"), "missing field `name`");
         assert_eq!(scrub_quoted("open \"abc"), "open \"…\"");
+        // An escaped quote inside the fragment does not end it.
+        assert_eq!(
+            scrub_quoted("invalid type: string \"x\\\"TAIL\", expected u32"),
+            "invalid type: string \"…\", expected u32"
+        );
+        assert_eq!(scrub_quoted("\"a\\\\\" b \"c\\\"\""), "\"…\" b \"…\"");
+        assert_eq!(scrub_quoted("\"x\\\"TAIL"), "\"…\"");
     }
 
     #[test]

@@ -2,6 +2,8 @@
 
 use h2w_api::{CreateExperimentRequest, Experiment, ExperimentKind, ModelProfile, Role};
 use leptos::prelude::*;
+
+use crate::components::page_help::PageHelp;
 use leptos::task::spawn_local;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
@@ -226,6 +228,7 @@ pub(crate) fn Experiments() -> impl IntoView {
                         })
                 }}
             </PageHeader>
+            <PageHelp key="experiments" />
             <div class="toolbar">
                 <div class="field grow">
                     <label for="page-search">"Filter"</label>

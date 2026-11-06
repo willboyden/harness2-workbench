@@ -7,6 +7,8 @@ use h2w_api::{
 };
 use leptos::prelude::*;
 
+use crate::components::page_help::PageHelp;
+
 use crate::api;
 use crate::browser;
 use crate::components::form::{RadioCards, SelectField};
@@ -1078,6 +1080,7 @@ pub(crate) fn TaskPage() -> impl IntoView {
     view! {
         <div class="page">
             <PageHeader title=title subtitle=subtitle crumbs=crumbs />
+            <PageHelp key="task" />
             {move || match detail.get() {
                 None => view! { <Skeleton lines=8 /> }.into_any(),
                 Some(Err(e)) if e.is_not_found() => view! {

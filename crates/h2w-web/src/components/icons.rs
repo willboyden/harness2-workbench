@@ -27,6 +27,7 @@ pub(crate) enum Icon {
     File,
     Folder,
     Refresh,
+    Info,
 }
 
 /// Render an icon at the current font size.
@@ -147,6 +148,12 @@ pub(crate) fn icon(i: Icon) -> impl IntoView {
         .into_any(),
         Icon::Folder => view! {
             <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"></path>
+        }
+        .into_any(),
+        Icon::Info => view! {
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M12 11v6"></path>
+            <circle cx="12" cy="7.6" r="0.6"></circle>
         }
         .into_any(),
         Icon::Refresh => view! {

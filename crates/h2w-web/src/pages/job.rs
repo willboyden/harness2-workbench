@@ -6,6 +6,8 @@ use std::time::Duration;
 
 use h2w_api::{Job, JobEvent, JobResult, JobSpec, LogChunk, LogStream, Role};
 use leptos::prelude::*;
+
+use crate::components::page_help::PageHelp;
 use leptos::task::spawn_local;
 use leptos_router::hooks::use_navigate;
 use wasm_bindgen::JsCast;
@@ -680,6 +682,7 @@ pub(crate) fn JobPage() -> impl IntoView {
                     })
                 }}
             </PageHeader>
+            <PageHelp key="job" />
             {move || {
                 if let Some(e) = load_error.get() {
                     if e.is_not_found() {

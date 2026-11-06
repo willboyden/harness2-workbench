@@ -28,6 +28,26 @@ pub const ENV_CONFIG: &str = "H2W_CONFIG";
 /// Prefix of secrets supplied through the environment (`H2W_SECRET_<NAME>`).
 pub const ENV_SECRET_PREFIX: &str = "H2W_SECRET_";
 
+/// Overrides `server.listen`.
+pub const ENV_LISTEN: &str = "H2W_LISTEN";
+/// Overrides `paths.data_dir`.
+pub const ENV_DATA_DIR: &str = "H2W_DATA_DIR";
+/// Overrides `server.public_url`.
+pub const ENV_PUBLIC_URL: &str = "H2W_PUBLIC_URL";
+/// Overrides `telemetry.log_format`.
+pub const ENV_LOG_FORMAT: &str = "H2W_LOG_FORMAT";
+/// Overrides `telemetry.otlp_endpoint`.
+pub const ENV_OTLP_ENDPOINT: &str = "H2W_OTLP_ENDPOINT";
+/// Every environment variable [`apply_env_overrides`] reads: the one list the configuration
+/// editor reports and leaves out when it validates a text.
+pub const ENV_OVERRIDES: [&str; 5] = [
+    ENV_LISTEN,
+    ENV_DATA_DIR,
+    ENV_PUBLIC_URL,
+    ENV_LOG_FORMAT,
+    ENV_OTLP_ENDPOINT,
+];
+
 /// A function that reads one environment variable.
 pub type EnvLookup<'a> = &'a dyn Fn(&str) -> Option<String>;
 
@@ -685,7 +705,7 @@ pub fn expand_tilde(s: &str, env: EnvLookup<'_>) -> Result<PathBuf, ConfigError>
     }
     if s.starts_with('~') {
         return Err(ConfigError::Other(format!(
-            "{s}: only `~` and `~/...` are expanded"
+            "{s:?}: only `~` and `~/...` are expanded"
         )));
     }
     Ok(PathBuf::from(s))
@@ -835,28 +855,26 @@ pub fn canonical_ip(ip: IpAddr) -> IpAddr {
     }
 }
 
-/// Apply `H2W_*` overrides; returns problems with override values.
-fn apply_env_overrides(file: &mut FileConfig, env: EnvLookup<'_>) -> Vec<String> {
+/// Apply `H2W_*` overrides ([`ENV_OVERRIDES`], and nothing else); returns problems with
+/// override values.
+pub(crate) fn apply_env_overrides(file: &mut FileConfig, env: EnvLookup<'_>) -> Vec<String> {
     let mut problems = Vec::new();
-    let get = |name: &str| env(name).filter(|v| !v.is_empty());
-    if let Some(v) = get("H2W_LISTEN") {
-        file.server.listen = v;
-    }
-    if let Some(v) = get("H2W_DATA_DIR") {
-        file.paths.data_dir = v;
-    }
-    if let Some(v) = get("H2W_PUBLIC_URL") {
-        file.server.public_url = v;
-    }
-    if let Some(v) = get("H2W_LOG_FORMAT") {
-        match v.as_str() {
-            "json" => file.telemetry.log_format = LogFormat::Json,
-            "pretty" => file.telemetry.log_format = LogFormat::Pretty,
-            _ => problems.push(format!("H2W_LOG_FORMAT={v}: must be pretty or json")),
+    for name in ENV_OVERRIDES {
+        let Some(v) = env(name).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        match name {
+            ENV_LISTEN => file.server.listen = v,
+            ENV_DATA_DIR => file.paths.data_dir = v,
+            ENV_PUBLIC_URL => file.server.public_url = v,
+            ENV_LOG_FORMAT => match v.as_str() {
+                "json" => file.telemetry.log_format = LogFormat::Json,
+                "pretty" => file.telemetry.log_format = LogFormat::Pretty,
+                _ => problems.push(format!("{ENV_LOG_FORMAT}={v}: must be pretty or json")),
+            },
+            ENV_OTLP_ENDPOINT => file.telemetry.otlp_endpoint = v,
+            _ => {}
         }
-    }
-    if let Some(v) = get("H2W_OTLP_ENDPOINT") {
-        file.telemetry.otlp_endpoint = v;
     }
     problems
 }
@@ -900,8 +918,8 @@ fn resolve_dir(
         Ok(p) if p.is_absolute() => Some(p),
         Ok(p) => {
             problems.push(format!(
-                "{key}: {} must be absolute (or start with ~/)",
-                p.display()
+                "{key}: {:?} must be absolute (or start with ~/)",
+                p.display().to_string()
             ));
             None
         }
@@ -1719,6 +1737,30 @@ url = "https://wb-workbench.example.com"
         assert!(e.to_string().contains("H2W_LOG_FORMAT=xml"), "{e}");
     }
 
+    /// `ENV_OVERRIDES` is exactly what `apply_env_overrides` reads: each listed variable
+    /// changes the file, and no other variable changes anything.
+    #[test]
+    fn env_overrides_list_is_exact() {
+        let value = |n: &str| match n {
+            ENV_LISTEN => "127.0.0.1:1",
+            ENV_DATA_DIR => "/srv/override",
+            ENV_PUBLIC_URL => "https://override.example.com",
+            ENV_LOG_FORMAT => "json",
+            ENV_OTLP_ENDPOINT => "http://127.0.0.1:4318",
+            _ => "unexpected",
+        };
+        for name in ENV_OVERRIDES {
+            let one = |n: &str| (n == name).then(|| value(n).to_owned());
+            let mut f = FileConfig::default();
+            assert!(apply_env_overrides(&mut f, &one).is_empty(), "{name}");
+            assert_ne!(f, FileConfig::default(), "{name} changed nothing");
+        }
+        let others = |n: &str| (!ENV_OVERRIDES.contains(&n)).then(|| "/srv/x".to_owned());
+        let mut f = FileConfig::default();
+        assert!(apply_env_overrides(&mut f, &others).is_empty());
+        assert_eq!(f, FileConfig::default());
+    }
+
     #[test]
     fn tilde_and_xdg_resolution() {
         let env = |n: &str| match n {
@@ -1978,6 +2020,176 @@ mode = "proxy"
             let _ = image_is_pinned(&s);
             let _ = network_ok(&s);
             let _ = container_user_ok(&s);
+        }
+    }
+}
+
+/// The key reference the web UI's configuration editor shows (`h2w_api::server_config`) covers
+/// exactly the keys of [`FileConfig`], with matching kinds, defaults and enum options.
+#[cfg(test)]
+mod help_catalog_tests {
+    use std::collections::BTreeMap;
+
+    use h2w_api::server_config::{
+        CONFIG_KEYS, CONFIG_SECTIONS, ConfigValueKind, config_key, config_section,
+    };
+
+    use super::*;
+
+    /// Every table path and every leaf (non-table) value of the default file, by dotted path.
+    fn walk(
+        prefix: &str,
+        t: &toml::Table,
+        tables: &mut Vec<String>,
+        leaves: &mut BTreeMap<String, toml::Value>,
+    ) {
+        for (k, v) in t {
+            let path = if prefix.is_empty() {
+                k.clone()
+            } else {
+                format!("{prefix}.{k}")
+            };
+            match v {
+                toml::Value::Table(inner) => {
+                    tables.push(path.clone());
+                    walk(&path, inner, tables, leaves);
+                }
+                other => {
+                    leaves.insert(path, other.clone());
+                }
+            }
+        }
+    }
+
+    fn default_file() -> (Vec<String>, BTreeMap<String, toml::Value>) {
+        let toml::Value::Table(root) = toml::Value::try_from(FileConfig::default()).unwrap() else {
+            panic!("FileConfig does not serialize to a table");
+        };
+        let mut tables = Vec::new();
+        let mut leaves = BTreeMap::new();
+        walk("", &root, &mut tables, &mut leaves);
+        (tables, leaves)
+    }
+
+    #[test]
+    fn catalog_covers_every_key_and_table() {
+        let (tables, leaves) = default_file();
+        for t in &tables {
+            assert!(
+                config_section(t).is_some(),
+                "table [{t}] has no CONFIG_SECTIONS entry"
+            );
+        }
+        for s in CONFIG_SECTIONS {
+            assert!(
+                tables.iter().any(|t| t == s.path),
+                "CONFIG_SECTIONS lists unknown table {}",
+                s.path
+            );
+        }
+        for path in leaves.keys() {
+            assert!(
+                config_key(path).is_some(),
+                "{path} has no CONFIG_KEYS entry"
+            );
+        }
+        for k in CONFIG_KEYS {
+            assert!(
+                leaves.contains_key(k.path),
+                "CONFIG_KEYS lists unknown key {}",
+                k.path
+            );
+        }
+        assert_eq!(leaves.len(), CONFIG_KEYS.len());
+    }
+
+    #[test]
+    fn defaults_match_the_server() {
+        let (_, leaves) = default_file();
+        for k in CONFIG_KEYS.iter().filter(|k| !k.default.is_empty()) {
+            let doc: toml::Table = toml::from_str(&format!("x = {}", k.default))
+                .unwrap_or_else(|e| panic!("{}: default {:?} is not TOML: {e}", k.path, k.default));
+            assert_eq!(
+                doc.get("x"),
+                leaves.get(k.path),
+                "{}: default differs",
+                k.path
+            );
+        }
+        // The only non-static default is the version-tagged runner image.
+        let dynamic: Vec<&str> = CONFIG_KEYS
+            .iter()
+            .filter(|k| k.default.is_empty())
+            .map(|k| k.path)
+            .collect();
+        assert_eq!(dynamic, ["isolation.container.image"]);
+    }
+
+    #[test]
+    fn kinds_match_the_toml_types() {
+        let (_, leaves) = default_file();
+        for k in CONFIG_KEYS {
+            let v = &leaves[k.path];
+            let ok = match k.kind {
+                ConfigValueKind::Bool => v.is_bool(),
+                ConfigValueKind::Integer => v.is_integer(),
+                ConfigValueKind::Float => v.is_float(),
+                ConfigValueKind::String | ConfigValueKind::Enum(_) => v.is_str(),
+                ConfigValueKind::StringList => v
+                    .as_array()
+                    .is_some_and(|a| a.iter().all(toml::Value::is_str)),
+                ConfigValueKind::Complex => v.is_array(),
+            };
+            assert!(
+                ok,
+                "{}: kind {:?} does not match the default {v}",
+                k.path, k.kind
+            );
+        }
+    }
+
+    /// A one-key document for `path` = `value` (a TOML literal).
+    fn one_key(path: &str, value: &str) -> String {
+        let (table, key) = path.rsplit_once('.').unwrap();
+        format!("[{table}]\n{key} = {value}\n")
+    }
+
+    #[test]
+    fn enum_options_are_exactly_what_the_server_accepts() {
+        let enums: Vec<_> = CONFIG_KEYS
+            .iter()
+            .filter_map(|k| match k.kind {
+                ConfigValueKind::Enum(opts) => Some((k.path, opts)),
+                _ => None,
+            })
+            .collect();
+        let expected: &[(&str, &[&str])] = &[
+            ("auth.mode", &["token", "proxy"]),
+            ("isolation.mode", &["host", "container"]),
+            ("isolation.container.runtime", &["docker", "podman"]),
+            ("telemetry.log_format", &["pretty", "json"]),
+            ("judge.cloud", &["acknowledge", "refuse"]),
+        ];
+        assert_eq!(enums.len(), expected.len(), "{enums:?}");
+        for (path, opts) in enums {
+            let want = expected
+                .iter()
+                .find(|(p, _)| *p == path)
+                .unwrap_or_else(|| panic!("unexpected enum key {path}"))
+                .1;
+            assert_eq!(opts, want, "{path}");
+            for o in opts {
+                let doc = one_key(path, &format!("\"{o}\""));
+                assert!(
+                    Config::parse_str(&doc, "test").is_ok(),
+                    "{path} = {o:?} is refused"
+                );
+            }
+            let doc = one_key(path, "\"not-an-option\"");
+            assert!(
+                Config::parse_str(&doc, "test").is_err(),
+                "{path} accepts anything"
+            );
         }
     }
 }

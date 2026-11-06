@@ -5,6 +5,8 @@ use std::time::Duration;
 use h2w_api::{Experiment, Job, Page};
 use leptos::prelude::*;
 
+use crate::components::page_help::PageHelp;
+
 use crate::api;
 use crate::components::form::SelectField;
 use crate::components::ui::{
@@ -112,6 +114,7 @@ pub(crate) fn Jobs() -> impl IntoView {
     view! {
         <div class="page">
             <PageHeader title="Jobs" subtitle="Every harness2 operation runs as a job with a live log. Newest first; refreshes every few seconds." />
+            <PageHelp key="jobs" />
             <div class="toolbar">
                 <SelectField id="jobs-status" label="Status" value=status_sel options=status_options />
                 <SelectField id="jobs-kind" label="Kind" value=kind_sel options=kind_options />

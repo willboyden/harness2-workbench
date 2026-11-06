@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use h2w_api::{DoctorReport, Experiment, Job, Page, Role};
 use leptos::prelude::*;
+
+use crate::components::page_help::PageHelp;
 use leptos_router::hooks::use_navigate;
 
 use crate::actions;
@@ -137,6 +139,7 @@ pub(crate) fn Dashboard() -> impl IntoView {
                         })
                 }}
             </PageHeader>
+            <PageHelp key="dashboard" />
 
             {move || {
                 first_time()

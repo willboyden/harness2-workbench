@@ -659,3 +659,20 @@ independent audit (findings F1–F16):
   `h2w_core::env::job_profile_warnings` keeps for those jobs; the cloud-judge warning stays first.
   Without them the answer is unchanged. MCP `check_profile` takes the same two optional fields;
   the run wizard sends its chosen benchmark and executor.
+
+**v1.13 (2026-11-05) — configuration editor (read and validate only).**
+- `GET /api/v1/system/config` (admin) returns `ServerConfigFile`: `path` (absent on built-in
+  defaults), `text` (the file as it is on disk now, at most `max_bytes` = 256 KiB), `refused` (why the
+  text is withheld: too large, unreadable or not UTF-8, or it fails `config_editor::refusal`, an
+  allowlist: known keys only, text values of the shape the validator requires, nothing secret-shaped),
+  `changed_since_start`, `env_overrides` (names only). Audited as `config.read` (`denied` when refused).
+- `POST /api/v1/system/config/validate` (admin) takes `ValidateConfigRequest {text}`
+  (`deny_unknown_fields`; `422` on `text` over 256 KiB) and returns `ConfigValidation {valid,
+  parse_error?, problems, warnings}` from `h2w_daemon::config_editor::check_text`: the same parser and
+  validator as `serve`, without the `H2W_*` overrides; it reads no secret and its messages never quote
+  the posted text (`config_editor::scrub_echo`).
+- Nothing writes the configuration file. `h2w_api::server_config` is the key reference the web UI's
+  form and (i) pop-ups use; `config::help_catalog_tests` keeps it equal to `FileConfig` in both directions.
+- UI test hooks: `page-help`, `page-help-toggle`, `help-tab-start`, `help-tab-faq`; `info-button`,
+  `info-pop`; `config-editor`, `cfg-load-server`, `cfg-load-example`, `cfg-row` (+`data-key`),
+  `cfg-text`, `cfg-validate`, `cfg-validation`, `cfg-download`.

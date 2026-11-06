@@ -99,6 +99,12 @@ pub(crate) mod api {
             query(&[("refresh", if refresh { "true" } else { "" })])
         ))
     }
+    pub(crate) fn system_config() -> String {
+        p("/system/config")
+    }
+    pub(crate) fn system_config_validate() -> String {
+        p("/system/config/validate")
+    }
     pub(crate) fn benchmarks() -> String {
         p("/benchmarks")
     }
@@ -393,6 +399,11 @@ mod tests {
 
     #[test]
     fn api_paths() {
+        assert_eq!(api::system_config(), "/api/v1/system/config");
+        assert_eq!(
+            api::system_config_validate(),
+            "/api/v1/system/config/validate"
+        );
         assert_eq!(
             api::experiment("lab pilot"),
             "/api/v1/experiments/lab%20pilot"
