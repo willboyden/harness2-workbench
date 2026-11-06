@@ -2,6 +2,8 @@
 
 use h2w_api::{Experiment, Job, Page, Role, UpdateExperimentRequest};
 use leptos::prelude::*;
+
+use crate::components::page_help::PageHelp;
 use leptos::task::spawn_local;
 
 use crate::api;
@@ -165,6 +167,7 @@ pub(crate) fn ExperimentPage() -> impl IntoView {
                     }
                 }}
             </PageHeader>
+            <PageHelp key="experiment" />
             {loaded(
                 data,
                 5,

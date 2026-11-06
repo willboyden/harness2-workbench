@@ -60,6 +60,7 @@ fn body_for(method: &Method, path: &str, admin_job: bool) -> Option<Value> {
         "/api/v1/experiments/{exp}" => json!({}),
         "/api/v1/estimate" => json!({"tasks": 1, "k": 1, "modes": ["parallel"]}),
         "/api/v1/harness/validate" => json!({"surface": "opencode", "files": []}),
+        "/api/v1/system/config/validate" => json!({"text": ""}),
         "/api/v1/jobs" if admin_job => json!({"kind": "install_harness2", "params": {}}),
         "/api/v1/jobs" => demo_spec("ok-rbac"),
         _ => return None,

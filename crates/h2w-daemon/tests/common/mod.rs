@@ -533,6 +533,8 @@ pub struct Setup {
     pub core_backend: bool,
     /// Event-stream heartbeat (the server's default when `None`).
     pub sse_heartbeat: Option<Duration>,
+    /// The file the configuration was "loaded from" (`Config::source`); `None` = defaults.
+    pub config_source: Option<PathBuf>,
 }
 
 impl Setup {
@@ -546,6 +548,7 @@ impl Setup {
             sleep_secs: 1.0,
             core_backend: false,
             sse_heartbeat: None,
+            config_source: None,
         }
     }
 }
@@ -759,7 +762,8 @@ pub async fn start_server(
     secret_value: &str,
     bridge_key: &str,
 ) -> RunningServer {
-    let cfg = Config::from_file(setup.file.clone(), None, &|_| None).unwrap();
+    let cfg =
+        Config::from_file(setup.file.clone(), setup.config_source.clone(), &|_| None).unwrap();
     let backend: Arc<dyn JobBackend> = if setup.core_backend {
         Arc::new(h2w_daemon::jobs::core_backend::CoreBackend)
     } else {

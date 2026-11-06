@@ -21,6 +21,7 @@ pub mod harness2;
 pub mod jobs;
 pub mod judge;
 pub mod results;
+pub mod server_config;
 pub mod system;
 
 pub use config::*;

@@ -6,6 +6,8 @@ use h2w_api::{
     ModelProfile, Role, SetupParams, SplitInfo, SplitParams, Substrate,
 };
 use leptos::prelude::*;
+
+use crate::components::page_help::PageHelp;
 use leptos::task::spawn_local;
 use leptos_router::hooks::use_navigate;
 
@@ -474,6 +476,7 @@ pub(crate) fn Benchmarks() -> impl IntoView {
                 title="Benchmarks"
                 subtitle="What harness2 can run on this server. Setup clones each benchmark's pinned code and data; checks confirm a benchmark is ready without calling any model."
             />
+            <PageHelp key="benchmarks" />
             {move || {
                 (!s.can(Role::Admin))
                     .then(|| {

@@ -5,6 +5,8 @@ use h2w_api::{
     JobResult, JobSpec, JobStatus, ModelProfile, PreviewResult, Role, Split, SplitInfo, WbSubset,
 };
 use leptos::prelude::*;
+
+use crate::components::page_help::PageHelp;
 use leptos::task::spawn_local;
 use leptos_router::hooks::use_navigate;
 
@@ -1001,6 +1003,7 @@ pub(crate) fn NewRun() -> impl IntoView {
                 title="New run"
                 subtitle="Preview the exact task stream and the cost before anything runs."
             />
+            <PageHelp key="new" />
             {move || {
                 (!s.can(Role::Operator))
                     .then(|| {

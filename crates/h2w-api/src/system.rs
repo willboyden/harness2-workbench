@@ -224,3 +224,81 @@ mod tests {
         assert_eq!(serde_json::to_value(CheckLevel::Warn).unwrap(), "warn");
     }
 }
+
+/// `GET /api/v1/system/config` (admin): the server's configuration file, read-only, for the
+/// web UI's configuration editor. Nothing in the API writes the file. Additive after contract
+/// v1.12 (v1.13).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ServerConfigFile {
+    /// The file the server loaded its configuration from; absent when it runs on built-in
+    /// defaults (there was no file at the default location).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The file as it is on disk now; absent when there is no file or `refused` says why it
+    /// is not sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Why the text is not sent: larger than `max_bytes`, unreadable or not UTF-8; it does not
+    /// parse as the configuration or has a key that is not a known setting; a text value the
+    /// server's validator would refuse; or something that looks like a credential (a stored
+    /// secret's value, a URL with user information, a query or a token-like part, a private
+    /// key, an API token, a long token-like string, a credential-like name given a value).
+    /// The reason never quotes the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
+    /// The file on disk no longer gives the settings the server runs with: it was edited (or
+    /// removed) after the start. The server reads its configuration only when it starts.
+    #[serde(default)]
+    pub changed_since_start: bool,
+    /// The `H2W_*` environment overrides in force (names only); they win over the file.
+    #[serde(default)]
+    pub env_overrides: Vec<String>,
+    /// The largest configuration text the server reads or validates, in bytes.
+    pub max_bytes: u64,
+}
+
+/// Body of `POST /api/v1/system/config/validate`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ValidateConfigRequest {
+    /// A complete `h2workbench.toml` (at most `ServerConfigFile.max_bytes` bytes).
+    pub text: String,
+}
+
+/// `POST /api/v1/system/config/validate`: what the server's own loader says about a
+/// configuration text. The text is parsed and validated in memory; nothing is written and no
+/// setting changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ConfigValidation {
+    /// The server would start with this text (environment overrides aside).
+    pub valid: bool,
+    /// A TOML syntax error, a wrong type or an unknown key; validation does not run then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parse_error: Option<ConfigParseError>,
+    /// Every validation problem, each starting with the key it is about.
+    #[serde(default)]
+    pub problems: Vec<String>,
+    /// Valid but risky settings (as `h2workbench config check` prints them).
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+/// Where a configuration text stops parsing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ConfigParseError {
+    pub message: String,
+    /// 1-based line, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    /// 1-based column (in characters), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
+}

@@ -234,6 +234,18 @@ pub static ROUTES: &[RouteDef] = &[
     },
     RouteDef {
         method: Method::GET,
+        path: "/api/v1/system/config",
+        access: A,
+        handler: || get(system::config_file),
+    },
+    RouteDef {
+        method: Method::POST,
+        path: "/api/v1/system/config/validate",
+        access: A,
+        handler: || post(system::validate_config),
+    },
+    RouteDef {
+        method: Method::GET,
         path: "/api/v1/benchmarks",
         access: V,
         handler: || get(system::benchmarks),

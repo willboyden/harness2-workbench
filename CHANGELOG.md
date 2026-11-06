@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-05
+
+### Added
+
+- Every page has a **Getting started and FAQ** panel under its title: numbered first steps and the
+  page's own questions (searchable), closed until you open it. A test proves every route and every
+  settings section has at least three steps and four questions, and that every link in them leads
+  to a page the app serves.
+- Form fields explain themselves through an **(i) button** and pop-up (`aria-expanded`, Escape and
+  outside clicks close it, focus returns to the button), everywhere a field has help, including the
+  profile editor.
+- **Server configuration** editor for administrators (Settings · System): load the server's
+  `h2workbench.toml` read-only, the annotated example or a local file; edit it in a Form view (every
+  key with its default, a security mark and an (i) explanation of what it is, what changing it does,
+  its values and when it takes effect) or a Text view; validate it with the server's own loader; export
+  a diff, Copy, Download and the commands to install it by hand. The web UI never writes the file.
+- `GET /api/v1/system/config` (admin): the configuration file, read-only, sent only when every key is
+  a known setting and nothing in it looks like a secret; audited as `config.read`.
+  `POST /api/v1/system/config/validate` (admin): the server's parser and validator on a text, in
+  memory, writing nothing and reading no secret; messages never quote the text (contract addendum
+  v1.13).
+- `h2w_api::server_config`: a reference of every `h2workbench.toml` key, tested against the server's
+  configuration types so the two cannot drift.
+
+### Changed
+
+- Field help moved from a line under each field into its (i) pop-up; the text is unchanged and
+  still read by screen readers as the field's description.
+
 ## [0.1.4] - 2026-10-27
 
 Judges at cloud providers, with a synthetic-data confirmation; two more executors for LAB (Hermes
@@ -287,7 +316,8 @@ Each change, its tests and how it was checked are in
   an environment that reads empty or denied for that moment is read again for up to about 0.25 s
   (found by a test that failed once on a CI runner).
 
-[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/willboyden/harness2-workbench/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/willboyden/harness2-workbench/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/willboyden/harness2-workbench/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/willboyden/harness2-workbench/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/willboyden/harness2-workbench/compare/v0.1.1...v0.1.2

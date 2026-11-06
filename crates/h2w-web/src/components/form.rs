@@ -2,6 +2,8 @@
 
 use leptos::prelude::*;
 
+use super::info::{Info, InfoButton, InfoPop};
+
 fn described_by(id: &str, has_help: bool, has_error: bool) -> Option<String> {
     let mut parts = Vec::new();
     if has_help {
@@ -13,12 +15,34 @@ fn described_by(id: &str, has_help: bool, has_error: bool) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
-/// Help line under a control.
+/// A field's label with its (i) info button when the field has help, followed by the info
+/// pop-up (`<id>-help`, the control's description).
 #[component]
-fn Help(id: String, #[prop(into)] text: MaybeProp<String>) -> impl IntoView {
-    move || {
-        text.get()
-            .map(|t| view! { <p class="field-help" id=format!("{id}-help")>{t}</p> })
+fn LabelRow(
+    id: String,
+    label: String,
+    #[prop(optional)] required: bool,
+    #[prop(into)] help: MaybeProp<String>,
+) -> impl IntoView {
+    let has_help = help.get_untracked().is_some();
+    let info = Info::new(&id);
+    let title = label.clone();
+    view! {
+        <div class="label-row">
+            <label for=id>
+                {label.clone()}
+                {required.then(|| view! { <span class="required" aria-hidden="true">" *"</span> })}
+            </label>
+            {has_help.then(|| view! { <InfoButton info=info label=label /> })}
+        </div>
+        {has_help
+            .then(|| {
+                view! {
+                    <InfoPop info=info title=title>
+                        <p class="field-help">{move || help.get().unwrap_or_default()}</p>
+                    </InfoPop>
+                }
+            })}
     }
 }
 
@@ -58,10 +82,7 @@ pub(crate) fn TextField(
     let id4 = id.clone();
     view! {
         <div class="field" class:has-error=move || error.get().is_some()>
-            <label for=id.clone()>
-                {label}
-                {required.then(|| view! { <span class="required" aria-hidden="true">" *"</span> })}
-            </label>
+            <LabelRow id=id3 label=label required=required help=help />
             <input
                 id=id
                 type=kind
@@ -77,7 +98,6 @@ pub(crate) fn TextField(
                 aria-invalid=move || if error.get().is_some() { "true" } else { "false" }
                 aria-describedby=move || described_by(&id2, has_help, error.get().is_some())
             />
-            <Help id=id3 text=help />
             <FieldError id=id4 error=error />
         </div>
     }
@@ -101,7 +121,7 @@ pub(crate) fn TextArea(
     let id4 = id.clone();
     view! {
         <div class="field" class:has-error=move || error.get().is_some()>
-            <label for=id.clone()>{label}</label>
+            <LabelRow id=id3 label=label help=help />
             <textarea
                 id=id
                 class=if monospace { "input mono" } else { "input" }
@@ -112,7 +132,6 @@ pub(crate) fn TextArea(
                 aria-invalid=move || if error.get().is_some() { "true" } else { "false" }
                 aria-describedby=move || described_by(&id2, has_help, error.get().is_some())
             ></textarea>
-            <Help id=id3 text=help />
             <FieldError id=id4 error=error />
         </div>
     }
@@ -137,7 +156,7 @@ pub(crate) fn SelectField(
     let id4 = id.clone();
     view! {
         <div class="field" class:has-error=move || error.get().is_some()>
-            <label for=id.clone()>{label}</label>
+            <LabelRow id=id3 label=label help=help />
             <select
                 id=id
                 class="input"
@@ -163,7 +182,6 @@ pub(crate) fn SelectField(
                         .collect_view()
                 }}
             </select>
-            <Help id=id3 text=help />
             <FieldError id=id4 error=error />
         </div>
     }
@@ -181,7 +199,8 @@ pub(crate) fn Checkbox(
 ) -> impl IntoView {
     let has_help = help.get_untracked().is_some();
     let id2 = id.clone();
-    let id3 = id.clone();
+    let info = Info::new(&id);
+    let title = label.clone();
     view! {
         <div class="field field-check">
             <input
@@ -192,8 +211,18 @@ pub(crate) fn Checkbox(
                 disabled=move || disabled.is_some_and(|d| d.get())
                 aria-describedby=described_by(&id2, has_help, false)
             />
-            <label for=id>{label}</label>
-            <Help id=id3 text=help />
+            <div class="label-row">
+                <label for=id>{label.clone()}</label>
+                {has_help.then(|| view! { <InfoButton info=info label=label /> })}
+            </div>
+            {has_help
+                .then(|| {
+                    view! {
+                        <InfoPop info=info title=title>
+                            <p class="field-help">{move || help.get().unwrap_or_default()}</p>
+                        </InfoPop>
+                    }
+                })}
         </div>
     }
 }

@@ -314,3 +314,98 @@ async fn login_browse_the_demo_and_diff_a_harness() {
 
     c.close().await.expect("close browser");
 }
+
+/// Sign in with the admin token on a fresh browser.
+async fn sign_in(c: &Client, base: &str, token: &str) {
+    c.goto(&format!("{base}/login")).await.expect("goto");
+    wait_for(c, &tid("login-token"))
+        .await
+        .send_keys(token)
+        .await
+        .expect("type");
+    wait_for(c, &tid("login-submit"))
+        .await
+        .click()
+        .await
+        .expect("click");
+    wait_for(c, &tid("dashboard")).await;
+}
+
+#[tokio::test]
+#[ignore = "end-to-end: run with `cargo xtask e2e`"]
+async fn page_help_info_popups_and_the_configuration_editor() {
+    let workbench = Workbench::start();
+    let driver = start_geckodriver();
+    let c = browser(&driver, 1366, 900).await;
+    let base = &workbench.base;
+    sign_in(&c, base, &workbench.admin_token).await;
+
+    // The dashboard's help panel: closed, then Getting started, then the FAQ.
+    let toggle = wait_for(&c, &tid("page-help-toggle")).await;
+    assert_eq!(
+        toggle.attr("aria-expanded").await.expect("attr").as_deref(),
+        Some("false")
+    );
+    toggle.click().await.expect("open help");
+    wait_for_text(&c, &tid("page-help"), "Check the environment").await;
+    wait_for(&c, &tid("help-tab-faq"))
+        .await
+        .click()
+        .await
+        .expect("faq tab");
+    wait_for_text(&c, &tid("page-help"), "recorded spend").await;
+    shot(&c, "09-dashboard-help").await;
+
+    // The configuration editor loads the server's own file read-only and validates a draft.
+    c.goto(&format!("{base}/settings/system"))
+        .await
+        .expect("goto");
+    wait_for(&c, &tid("cfg-load-server"))
+        .await
+        .click()
+        .await
+        .expect("load");
+    wait_for(
+        &c,
+        "[data-testid=\"cfg-row\"][data-key=\"jobs.max_concurrent\"]",
+    )
+    .await;
+    let loaded = c
+        .execute("return document.getElementById('cfg-text').value;", vec![])
+        .await
+        .expect("execute");
+    assert!(
+        loaded.as_str().unwrap_or_default().contains("[server]"),
+        "the server's file was not loaded: {loaded:?}"
+    );
+    // An (i) pop-up opens, Escape closes it and focus returns to its button.
+    let info = wait_for(&c, "#cfg-jobs-max_concurrent-info").await;
+    info.click().await.expect("open info");
+    wait_for(&c, "#cfg-jobs-max_concurrent-help:not([hidden])").await;
+    shot(&c, "10-config-info").await;
+    info.send_keys("\u{E00C}").await.expect("escape");
+    wait_for(&c, "#cfg-jobs-max_concurrent-help[hidden]").await;
+    let focused = c
+        .execute("return document.activeElement.id;", vec![])
+        .await
+        .expect("execute");
+    assert_eq!(focused.as_str(), Some("cfg-jobs-max_concurrent-info"));
+    // A bad value: the server's validator names the key, and the server's file is unchanged.
+    let before = std::fs::read(&workbench.config).expect("read config");
+    let field = wait_for(&c, "#cfg-jobs-max_concurrent").await;
+    field.clear().await.expect("clear");
+    field.send_keys("0\t").await.expect("type");
+    wait_for(&c, &tid("cfg-validate"))
+        .await
+        .click()
+        .await
+        .expect("validate");
+    wait_for_text(&c, &tid("cfg-validation"), "jobs.max_concurrent").await;
+    shot(&c, "11-config-validate").await;
+    assert_eq!(
+        std::fs::read(&workbench.config).expect("read config"),
+        before
+    );
+
+    c.close().await.expect("close browser");
+}

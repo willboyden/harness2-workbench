@@ -1,6 +1,7 @@
 //! Settings: model profiles, secrets, API tokens, the audit log and system information.
 
 mod audit;
+mod config_editor;
 mod profiles;
 mod secrets;
 mod system;
@@ -9,8 +10,10 @@ mod tokens;
 use h2w_api::Role;
 use leptos::prelude::*;
 
+use crate::components::page_help::PageHelp;
 use crate::components::ui::{EmptyState, Notice, PageHeader};
 use crate::logic::jobs::Tone;
+use crate::logic::page_help;
 use crate::nav::param;
 use crate::state::session;
 
@@ -71,13 +74,19 @@ pub(crate) fn Settings() -> impl IntoView {
                     }
                     .into_any();
                 }
-                match sec.as_str() {
+                let help = page_help::key_for_route(&format!("/settings/{sec}")).unwrap_or("settings-system");
+                let body = match sec.as_str() {
                     "profiles" => view! { <profiles::Profiles /> }.into_any(),
                     "secrets" => view! { <secrets::Secrets /> }.into_any(),
                     "tokens" => view! { <tokens::Tokens /> }.into_any(),
                     "audit" => view! { <audit::AuditLog /> }.into_any(),
                     _ => view! { <system::System /> }.into_any(),
+                };
+                view! {
+                    <PageHelp key=help />
+                    {body}
                 }
+                .into_any()
             }}
         </div>
     }

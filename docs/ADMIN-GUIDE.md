@@ -168,8 +168,8 @@ Two images are built from the repository root (the CI builds them too; they are 
 to a registry):
 
 ```sh
-docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.1.4 .
-docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.1.4 .
+docker build -f deploy/docker/runner.Dockerfile -t harness2-workbench-runner:0.2.0 .
+docker build -f deploy/docker/Dockerfile        -t harness2-workbench:0.2.0 .
 ```
 
 - **`harness2-workbench-runner`**: Node 22, uv with a managed CPython 3.12, git, curl, unzip, Pandoc,
@@ -191,7 +191,7 @@ bumped by hand ([SUPPLY-CHAIN.md](SUPPLY-CHAIN.md#bumping-uv-by-hand)). Licence 
 `THIRD-PARTY-LICENSES.md`, the crates compiled in), `/usr/share/doc/uv/` in both, and each Debian
 package's `/usr/share/doc/<package>/copyright`. The all-in-one image
 builds on the runner image named by the `RUNNER_IMAGE` build argument (default
-`harness2-workbench-runner:0.1.4`), so `--build-arg RUNNER_IMAGE=<name:tag>` puts it on your own
+`harness2-workbench-runner:0.2.0`), so `--build-arg RUNNER_IMAGE=<name:tag>` puts it on your own
 runner image.
 
 ### 3.4 Put the binaries on `PATH`
@@ -405,7 +405,7 @@ then follow [API.md](API.md#10-a-curl-walkthrough) or open the web UI.
 
 ## 5. Configuration reference
 
-`h2workbench.toml` is TOML with seven tables. **Unknown keys are errors**, so a typo cannot silently
+`h2workbench.toml` is TOML with nine tables. **Unknown keys are errors**, so a typo cannot silently
 fall back to a default, and a key outside its table is an error too. Every value is validated once
 at start-up and **all problems are reported together**. `~` and `~/` are expanded in paths (other
 `~user` forms are refused).
@@ -506,7 +506,7 @@ at most 4 blocking reads of results or job logs at once, a log page or event-str
 | `isolation.mode` | string | `"host"` | `host` or `container` | `host`: jobs run as the server's user with its files and network (upstream's behaviour). `container`: each job runs in a hardened container ([section 8](#8-container-isolation-step-by-step)) |
 | `isolation.preacknowledge_host_risks` | boolean | `false` | | When `false`, `run` and `pipeline` jobs in host mode must carry `acknowledge_risks: true` or are refused (`422`). `true` accepts every such run without the flag, **including runs started by MCP agents** (their own acknowledgement guard has nothing left to refuse), and the web UI's run wizard then shows a note instead of asking: set it only on a machine where every operator has been told and no agent holds an operator token |
 | `isolation.container.runtime` | string | `"docker"` | `docker` or `podman` | The container CLI |
-| `isolation.container.image` | string | `"harness2-workbench-runner:0.1.4"` | pinned: `name:tag` with a tag other than `latest`, or `name@sha256:<64 hex>`; the repository name in lowercase | The runner image |
+| `isolation.container.image` | string | `"harness2-workbench-runner:0.2.0"` | pinned: `name:tag` with a tag other than `latest`, or `name@sha256:<64 hex>`; the repository name in lowercase | The runner image |
 | `isolation.container.network` | string | `"none"` | `none`, or a user-defined network name (`[A-Za-z0-9][A-Za-z0-9_.-]*`, at most 64 characters; never `host`, `bridge` or `default`) | `none`: no network (the demo works; model calls and installs do not). A network name puts jobs on it, normally an internal one behind an egress proxy |
 | `isolation.container.proxy` | string | `""` | empty, or `http://host:port` with an explicit port and no credentials, path or query; needs a `network` other than `none` | The egress proxy as the job containers reach it. Set in each container as `HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy`, `http_proxy`, with `NO_PROXY` and `no_proxy` = `localhost,127.0.0.1,::1`, as fixed `-e NAME=VALUE` arguments (never secrets) |
 | `isolation.container.cpus` | number | `4.0` | greater than 0, at most 1024 | `--cpus` |
@@ -586,6 +586,59 @@ for example `api.anthropic.com`.
 Two annotated examples ship with the code: `deploy/examples/h2workbench.toml` (every key, with
 comments) and `deploy/examples/h2workbench.compose.toml` (the compose deployment). `init` writes every
 key with its default.
+
+### Drafting the file in the web UI
+
+Administrators can draft, check and export a configuration under **Settings · System → Server
+configuration**. The web UI never changes the server: no route writes the configuration file, changes
+its permissions or runs a command. The editor works on a draft in the browser:
+
+- **Load** the server's own file (read-only, `GET /api/v1/system/config`), the annotated example
+  above (built into the UI), an empty file (all defaults), or a local file (read in the browser).
+  The server sends its file only when every key is a known setting, every text value has the shape
+  the validator requires of its key, and nothing in it (comments included) looks like a secret: a
+  private key, a Workbench API token, a URL with user information, a query string or a token-like
+  path or fragment, a long token-like string, or a credential-like name given a value in a
+  `name = value` assignment (or a `name: value` note with a one-word value). Only when those checks
+  pass does it also look, in the text and in every string value with its escapes decoded, for the
+  value of a stored secret, `H2W_SECRET_*` variable or the proxy secret (values of 8 bytes or more).
+  Otherwise it says why, never quoting the file. Recognising a secret this way is best effort: the
+  file is meant to hold no secrets (they are referenced by name). It also says when the file
+  on disk no longer gives the settings the server runs with (edited since the start), and which
+  `H2W_*` overrides are set (names only). Each read is recorded in the audit log as `config.read`.
+- **Edit** in the Form view (every key with its default, a "security" mark where it changes access
+  or containment, and an (i) pop-up: what the key is, what changing it does, its values and when
+  it takes effect) or the Text view; both edit the same text, and the form keeps comments and
+  layout. `[[benchmarks.not_offered]]` tables are edited in the Text view.
+- **Validate** sends the text to `POST /api/v1/system/config/validate`, which runs the server's own
+  parser and validator in memory (the same as `config check`, without the `H2W_*` overrides) and
+  returns the parse error with its line and column, or every problem, plus warnings. It writes
+  nothing and reads no secret, and its messages never quote the text you sent (quoted values come
+  back as `"…"`): the key, the rule and the position say what is wrong.
+- **Export**: a diff against what you loaded, Copy, Download, and the commands to install it by hand:
+
+```console
+h2workbench --config ./h2workbench.toml config check
+cp -p ~/.config/harness2-workbench/h2workbench.toml ~/.config/harness2-workbench/h2workbench.toml.bak
+install -m 600 ./h2workbench.toml ~/.config/harness2-workbench/h2workbench.toml
+systemctl --user restart h2workbench       # the server reads its configuration only at start
+```
+
+Restart `h2workbench egress-proxy` too after changing `[egress]`.
+
+The compose deployment ([section 10](#10-the-compose-reference-deployment)) is different: the server
+reads `/config/h2workbench.toml` inside its container, which `deploy/compose.yaml` mounts read-only
+from `deploy/h2workbench.toml`, and `systemctl --user restart` does not apply. Check the draft as
+above, replace `deploy/h2workbench.toml` on the host (keep it readable by the container's user:
+`chmod 644`), then recreate both services that read it:
+
+```console
+docker compose -f deploy/compose.yaml up -d --force-recreate workbench egress
+```
+
+Both routes are admin-only and take the Host check and request limits of every route. Validate, like
+every other POST, also needs the `x-h2w-request: 1` header and refuses an Origin other than the
+server's own, and it accepts at most 256 KiB of text; the read sends at most 256 KiB.
 
 ## 6. Authentication, roles and tokens
 
@@ -957,7 +1010,7 @@ on rootless Docker). The commands are from the example configuration's own comme
 
    [isolation.container]
    runtime = "docker"
-   image = "harness2-workbench-runner:0.1.4"
+   image = "harness2-workbench-runner:0.2.0"
    network = "h2w-jobs"
    proxy = "http://h2w-egress:3128"
 
@@ -972,7 +1025,7 @@ on rootless Docker). The commands are from the example configuration's own comme
    ```sh
    docker run -d --name h2w-egress --network h2w-jobs \
      -v "$PWD/h2workbench.toml:/config/h2workbench.toml:ro" \
-     harness2-workbench:0.1.4 egress-proxy --config /config/h2workbench.toml
+     harness2-workbench:0.2.0 egress-proxy --config /config/h2workbench.toml
    docker network connect h2w-uplink h2w-egress
    ```
 

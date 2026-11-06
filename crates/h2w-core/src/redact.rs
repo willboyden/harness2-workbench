@@ -147,6 +147,20 @@ impl Redactor {
         r
     }
 
+    /// Like [`Redactor::new`], but values shorter than [`MIN_SECRET_LEN`] bytes are left out.
+    /// For a yes/no "does this text hold a secret" check over text the secrets never passed
+    /// through (a configuration file): a short, weak value would match unrelated text by
+    /// chance, and its spellings (base64 of three characters is four) even more often.
+    #[must_use]
+    pub fn new_ignoring_weak(secrets: Vec<(String, String)>) -> Self {
+        Redactor::new(
+            secrets
+                .into_iter()
+                .filter(|(_, v)| v.len() >= MIN_SECRET_LEN)
+                .collect(),
+        )
+    }
+
     fn insert(&mut self, name: String, value: String) {
         if value.is_empty() {
             return;
@@ -176,6 +190,12 @@ impl Redactor {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// `true` when `text` holds a secret value (or one of its spellings).
+    #[must_use]
+    pub fn finds_secret(&self, text: &str) -> bool {
+        matches!(self.redact(text), Cow::Owned(_))
     }
 
     /// `text` with every secret value replaced. Borrowed when nothing matched.
@@ -254,6 +274,24 @@ mod tests {
         assert!(Redactor::default().is_empty());
         let dbg = format!("{red:?}");
         assert!(dbg.contains("LONG") && !dbg.contains("abc123"));
+    }
+
+    #[test]
+    fn weak_values_can_be_left_out() {
+        let pairs = || {
+            vec![
+                ("WEAK".to_owned(), "ab1".to_owned()),
+                ("STRONG".to_owned(), "gk-0123456789".to_owned()),
+            ]
+        };
+        // "ab1" and its base64 "YWIx" appear in ordinary text.
+        let text = "tab1 = YWIx";
+        assert!(r(&[("WEAK", "ab1")]).finds_secret(text));
+        let strong = Redactor::new_ignoring_weak(pairs());
+        assert!(!strong.finds_secret(text));
+        assert!(strong.finds_secret("old gk-0123456789 here"));
+        assert!(Redactor::new_ignoring_weak(vec![("W".into(), "1234567".into())]).is_empty());
+        assert!(!Redactor::new_ignoring_weak(vec![("S".into(), "12345678".into())]).is_empty());
     }
 
     #[test]

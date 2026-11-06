@@ -26,6 +26,7 @@ use h2w_api::{
     Role, SESSION_COOKIE, SetSecretRequest, Surface, SweepIdentity, SystemInfo, TaskDelta,
     TokenCreated, TokenInfo, UpdateExperimentRequest, ValidateHarnessRequest, ValidationReport,
 };
+use h2w_api::{ConfigParseError, ConfigValidation, ServerConfigFile, ValidateConfigRequest};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 use tokio_stream::{Stream, StreamExt};
 
@@ -235,6 +236,134 @@ async fn me(State(st): State<AppState>, headers: HeaderMap) -> R<Json<Principal>
 
 // ---------------------------------------------------------------------------------------
 // System
+
+/// The configuration file the mock "runs with": the annotated example that ships with the code.
+const MOCK_CONFIG: &str = include_str!("../../../deploy/examples/h2workbench.toml");
+
+/// `GET /system/config`: the shipped example as the "running" file (the real server reads its
+/// own file read-only and refuses one that looks like it holds a credential).
+async fn config_file(State(st): State<AppState>, headers: HeaderMap) -> R<Json<ServerConfigFile>> {
+    require(&st, &headers, Role::Admin)?;
+    Ok(Json(ServerConfigFile {
+        path: Some("/srv/h2w/config/h2workbench.toml".to_owned()),
+        text: Some(MOCK_CONFIG.to_owned()),
+        refused: None,
+        changed_since_start: false,
+        env_overrides: vec!["H2W_DATA_DIR".to_owned()],
+        max_bytes: 256 * 1024,
+    }))
+}
+
+/// `POST /system/config/validate`: a rough stand-in for the server's loader (unknown keys
+/// and tables, enum values, a few ranges). The real server runs its own parser and validator.
+async fn validate_config(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ValidateConfigRequest>,
+) -> R<Json<ConfigValidation>> {
+    require(&st, &headers, Role::Admin)?;
+    if body.text.len() > 256 * 1024 {
+        return Err(invalid(vec![("text".into(), "at most 256 KiB".into())]));
+    }
+    Ok(Json(mock_check_config(&body.text)))
+}
+
+fn mock_check_config(text: &str) -> ConfigValidation {
+    use h2w_api::server_config::{ConfigValueKind, config_key, config_section};
+    let parse_error = |line: usize, message: String| ConfigValidation {
+        valid: false,
+        parse_error: Some(ConfigParseError {
+            message,
+            line: u32::try_from(line).ok(),
+            column: Some(1),
+        }),
+        problems: Vec::new(),
+        warnings: Vec::new(),
+    };
+    let mut section = String::new();
+    let mut in_table_array = false;
+    let mut depth = 0isize;
+    let balance = |s: &str| {
+        isize::try_from(s.matches('[').count()).unwrap_or(0)
+            - isize::try_from(s.matches(']').count()).unwrap_or(0)
+    };
+    let mut problems = Vec::new();
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.split(" #").next().unwrap_or(raw).trim();
+        if depth > 0 {
+            depth += balance(line);
+            continue;
+        }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = line.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
+            if name.trim() != "benchmarks.not_offered" {
+                return parse_error(i + 1, format!("unknown table `{}`", name.trim()));
+            }
+            in_table_array = true;
+            continue;
+        }
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            let name = name.trim();
+            if config_section(name).is_none() {
+                return parse_error(i + 1, format!("unknown table `{name}`"));
+            }
+            section = name.to_owned();
+            in_table_array = false;
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return parse_error(i + 1, "expected `key = value`".to_owned());
+        };
+        let (key, value) = (key.trim(), value.trim());
+        depth = balance(value);
+        if in_table_array {
+            if !matches!(key, "bench" | "note" | "url") {
+                return parse_error(
+                    i + 1,
+                    format!("unknown field `{key}`, expected one of `bench`, `note`, `url`"),
+                );
+            }
+            continue;
+        }
+        let path = if section.is_empty() {
+            key.to_owned()
+        } else {
+            format!("{section}.{key}")
+        };
+        let Some(help) = config_key(&path) else {
+            return parse_error(i + 1, format!("unknown field `{key}`"));
+        };
+        if let ConfigValueKind::Enum(opts) = help.kind {
+            let v = value.trim_matches('"');
+            if !opts.contains(&v) {
+                return parse_error(
+                    i + 1,
+                    format!("unknown variant `{v}`, expected one of {}", opts.join(", ")),
+                );
+            }
+        }
+        if path == "jobs.max_concurrent" && !matches!(value.parse::<u32>(), Ok(1..=64)) {
+            problems.push(format!("jobs.max_concurrent: {value} is outside 1..=64"));
+        }
+    }
+    let warnings =
+        if text.contains("public_url = \"https://") && text.contains("trusted_proxies = []") {
+            vec![
+                "server.public_url is https but server.trusted_proxies is empty (mock check)"
+                    .to_owned(),
+            ]
+        } else {
+            Vec::new()
+        };
+    ConfigValidation {
+        valid: problems.is_empty(),
+        parse_error: None,
+        problems,
+        warnings,
+    }
+}
 
 async fn system_info(State(st): State<AppState>, headers: HeaderMap) -> R<Json<SystemInfo>> {
     let p = require(&st, &headers, Role::Viewer)?;
@@ -2146,6 +2275,8 @@ pub(crate) fn router(st: AppState) -> Router {
         .route("/auth/me", get(me))
         .route("/system/info", get(system_info))
         .route("/system/doctor", get(doctor))
+        .route("/system/config", get(config_file))
+        .route("/system/config/validate", post(validate_config))
         .route("/benchmarks", get(benchmarks))
         .route("/splits", get(splits).post(choose_split))
         .route("/profiles", get(profiles))
@@ -2254,6 +2385,22 @@ pub(crate) fn start_live_jobs(st: &AppState, live_task_ms: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mock_config_check() {
+        assert!(mock_check_config(MOCK_CONFIG).valid);
+        assert!(mock_check_config("").valid);
+        let typo = mock_check_config("[server]\nlistne = 1\n");
+        assert_eq!(typo.parse_error.map(|p| p.line), Some(Some(2)));
+        assert!(
+            mock_check_config("[auth]\nmode = \"magic\"\n")
+                .parse_error
+                .is_some()
+        );
+        assert!(!mock_check_config("[jobs]\nmax_concurrent = 0\n").valid);
+        let multi = "[egress]\nallow = [\n  \"a.example.com\",\n  { host = \"b.example.com\", ports = [4000] },\n]\n";
+        assert!(mock_check_config(multi).valid);
+    }
 
     #[test]
     fn slugs() {

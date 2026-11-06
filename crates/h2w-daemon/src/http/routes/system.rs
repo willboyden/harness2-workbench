@@ -1,16 +1,20 @@
-//! `/system/info`, `/system/doctor`, `/benchmarks`, `/openapi.json`.
+//! `/system/info`, `/system/doctor`, `/system/config`, `/system/config/validate`,
+//! `/benchmarks`, `/openapi.json`.
 
 use axum::Json;
 use axum::extract::State;
 use h2w_api::{
-    AuthMode, BenchmarkStatus, DoctorReport, ErrorBody, Isolation, ProfileKind, Role, SystemInfo,
+    AuditOutcome, AuthMode, BenchmarkStatus, ConfigValidation, DoctorReport, ErrorBody, Isolation,
+    ProfileKind, Role, ServerConfigFile, SystemInfo, ValidateConfigRequest,
 };
 use serde::Deserialize;
 
 use super::blocking;
+use crate::config::process_env;
+use crate::config_editor::{self, CONFIG_TEXT_MAX};
 use crate::error::ApiError;
 use crate::http::AppState;
-use crate::http::extract::{ApiQuery, Auth, ViewerRole, deny};
+use crate::http::extract::{AdminRole, ApiJson, ApiQuery, Auth, ViewerRole, deny};
 
 /// Build-time commit, when the build sets `H2W_BUILD_COMMIT`.
 pub const BUILD_COMMIT: Option<&str> = option_env!("H2W_BUILD_COMMIT");
@@ -137,6 +141,106 @@ pub async fn doctor(
         }
     };
     Ok(Json(state.doctor.report(refresh, facts).await))
+}
+
+/// `true` when `text` holds the value of a secret the server knows: stored secrets,
+/// `H2W_SECRET_*` variables and the reverse proxy's shared secret. Values shorter than
+/// `MIN_SECRET_LEN` are left out: a weak value matches unrelated text by chance and would make
+/// every read refuse.
+/// `(name, value)` of every secret the server knows.
+async fn secret_values(state: &AppState) -> Result<Vec<(String, String)>, ApiError> {
+    let mut pairs: Vec<(String, String)> = state
+        .secrets
+        .all_values()
+        .await?
+        .into_iter()
+        .map(|(n, v)| (n, v.to_string()))
+        .collect();
+    if let Some(p) = &state.proxy_secret {
+        pairs.push(("PROXY_SECRET".to_owned(), p.to_string()));
+    }
+    Ok(pairs)
+}
+
+/// The server's configuration file, read-only (admin). Sent only when every key is a known
+/// setting and nothing in it looks like a credential (`config_editor::refusal`) or is the
+/// value of a known secret; otherwise `refused` says why, without quoting it. Never writes.
+#[utoipa::path(get, path = "/api/v1/system/config", tag = "system",
+    responses((status = 200, body = ServerConfigFile), (status = "default", description = "Error", body = ErrorBody)))]
+pub async fn config_file(
+    auth: Auth<AdminRole>,
+    State(state): State<AppState>,
+) -> Result<Json<ServerConfigFile>, ApiError> {
+    let env_overrides = config_editor::overrides_in_force(&process_env);
+    let max_bytes = CONFIG_TEXT_MAX as u64;
+    let Some(path) = state.cfg.source.clone() else {
+        return Ok(Json(ServerConfigFile {
+            path: None,
+            text: None,
+            refused: None,
+            changed_since_start: false,
+            env_overrides,
+            max_bytes,
+        }));
+    };
+    let running = state.cfg.file.clone();
+    let p = path.clone();
+    let secrets = secret_values(&state).await?;
+    let read = blocking(move || {
+        Ok(config_editor::read_capped(&p).map(|text| {
+            let changed = config_editor::differs_from(&text, &running, &process_env);
+            // The shape allowlist first; the stored-secret check (values of 8+ bytes) only on
+            // a text it passes, so a withheld file says nothing about the stored secrets.
+            let redactor = h2w_core::redact::Redactor::new_ignoring_weak(secrets);
+            let refusal = config_editor::refusal_or_stored_secret(&text, &process_env, |s| {
+                redactor.finds_secret(s)
+            });
+            (text, changed, refusal)
+        }))
+    })
+    .await?;
+    let (text, refused, changed_since_start) = match read {
+        Ok((_, changed, Some(why))) => (None, Some(why), changed),
+        Ok((text, changed, None)) => (Some(text), None, changed),
+        Err(why) => (None, Some(why), true),
+    };
+    let target = path.display().to_string();
+    let entry = match &refused {
+        None => auth.audit("config.read", &target, AuditOutcome::Success),
+        Some(why) => auth
+            .audit("config.read", &target, AuditOutcome::Denied)
+            .detail(format!("not sent: {why}")),
+    };
+    state.audit(entry).await;
+    Ok(Json(ServerConfigFile {
+        path: Some(target),
+        text,
+        refused: refused.map(|why| format!("The configuration file is not sent because {why}.")),
+        changed_since_start,
+        env_overrides,
+        max_bytes,
+    }))
+}
+
+/// Check a configuration text with the server's own parser and validator (admin). The text
+/// is checked in memory: nothing is written and no setting changes.
+#[utoipa::path(post, path = "/api/v1/system/config/validate", tag = "system",
+    request_body = ValidateConfigRequest,
+    responses((status = 200, body = ConfigValidation), (status = "default", description = "Error", body = ErrorBody)))]
+pub async fn validate_config(
+    _auth: Auth<AdminRole>,
+    ApiJson(req): ApiJson<ValidateConfigRequest>,
+) -> Result<Json<ConfigValidation>, ApiError> {
+    if req.text.len() > CONFIG_TEXT_MAX {
+        return Err(ApiError::invalid(
+            "text",
+            format!("at most {} KiB", CONFIG_TEXT_MAX / 1024),
+        ));
+    }
+    // check_text reads no secret and its messages never quote the posted text, so the
+    // answer cannot confirm a guess at a secret's value.
+    let v = blocking(move || Ok(config_editor::check_text(&req.text, &process_env))).await?;
+    Ok(Json(v))
 }
 
 /// Benchmarks, their installation state, and whether this server sets them up and runs them

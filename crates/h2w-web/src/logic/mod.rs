@@ -3,6 +3,7 @@
 //! `cargo test -p h2w-web`; the components stay thin.
 
 pub(crate) mod benchmarks;
+pub(crate) mod cfgtext;
 pub(crate) mod diff;
 pub(crate) mod format;
 pub(crate) mod glossary;
@@ -11,6 +12,7 @@ pub(crate) mod jobs;
 pub(crate) mod judge;
 pub(crate) mod logbuf;
 pub(crate) mod names;
+pub(crate) mod page_help;
 pub(crate) mod palette;
 pub(crate) mod profile;
 pub(crate) mod report;

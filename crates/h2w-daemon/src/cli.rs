@@ -379,7 +379,7 @@ fn init(config: Option<&Path>, force: bool, data_dir: Option<&Path>) -> anyhow::
     } else {
         let data = match data_dir {
             Some(d) => config::expand_tilde(&d.to_string_lossy(), &process_env)?,
-            None => match process_env("H2W_DATA_DIR").filter(|v| !v.is_empty()) {
+            None => match process_env(config::ENV_DATA_DIR).filter(|v| !v.is_empty()) {
                 Some(d) => config::expand_tilde(&d, &process_env)?,
                 None => config::default_data_dir(&process_env)?,
             },

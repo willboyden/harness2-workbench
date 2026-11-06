@@ -2,6 +2,8 @@
 
 use leptos::prelude::*;
 
+use crate::components::page_help::PageHelp;
+
 use crate::components::ui::PageHeader;
 use crate::logic::glossary::{self, FAQ, SHORTCUTS, TERMS};
 use crate::logic::harness::{self, COMPONENTS};
@@ -32,6 +34,7 @@ pub(crate) fn Help() -> impl IntoView {
                 title="Help"
                 subtitle="Every term the Workbench uses, answers to common questions, and keyboard shortcuts."
             />
+            <PageHelp key="help" />
             <nav class="toc" aria-label="On this page">
                 <a href="#glossary">"Glossary"</a>
                 <a href="#components">"The eight components"</a>

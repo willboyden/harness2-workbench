@@ -5,6 +5,8 @@ use h2w_api::{
     Role,
 };
 use leptos::prelude::*;
+
+use crate::components::page_help::PageHelp;
 use leptos_router::hooks::use_navigate;
 
 use crate::actions;
@@ -118,6 +120,7 @@ pub(crate) fn Welcome() -> impl IntoView {
                 title="Welcome to Harness² Workbench"
                 subtitle="A guided tour: what harness2 does, then a working setup in seven steps. Each step turns green when it is done."
             />
+            <PageHelp key="welcome" />
             <Card title="What harness2 does">
                 <p class="reading">
                     "An AI agent is a model plus a "<Term id="harness">"harness"</Term>

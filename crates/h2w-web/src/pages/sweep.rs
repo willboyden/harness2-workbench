@@ -5,6 +5,8 @@ use h2w_api::{
     ProfileCheck, Role, ScoreReport, SweepSummary, TaskRow,
 };
 use leptos::prelude::*;
+
+use crate::components::page_help::PageHelp;
 use leptos_router::hooks::use_navigate;
 
 use crate::actions;
@@ -778,6 +780,7 @@ pub(crate) fn SweepPage() -> impl IntoView {
                         })
                 }}
             </PageHeader>
+            <PageHelp key="sweep" />
             {move || match experiment.get() {
                 None => view! { <Skeleton lines=3 /> }.into_any(),
                 Some(Err(e)) => view! { <ErrorPanel error=e /> }.into_any(),
