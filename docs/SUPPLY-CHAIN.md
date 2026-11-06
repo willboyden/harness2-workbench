@@ -17,8 +17,10 @@ every crate version in `Cargo.lock` — direct and transitive — must have been
   old), Dependabot (`cooldown: default-days: 14`; Node majors are left to a person, because the
   cooldown alone offered an odd Node line past its end of life, and uv entirely, see
   [Bumping uv by hand](#bumping-uv-by-hand)), tool versions installed in CI (`wasm-bindgen-cli`,
-  `cargo-deny`, `cargo-audit`, `cargo-cyclonedx`, `cargo-about`, `gitleaks`) and container base
-  images (pinned by digest).
+  `cargo-deny`, `cargo-audit`, `cargo-cyclonedx`, `cargo-about`, `gitleaks`), container base
+  images (pinned by digest) and the one npm development dependency, Prettier (an exact version in
+  `package.json`, locked with its integrity hash in `package-lock.json`, installed with
+  `npm ci --ignore-scripts`; it only formats code, and nothing built or shipped contains it).
 
 ### Security fixes always win
 

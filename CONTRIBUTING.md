@@ -15,6 +15,7 @@ Linux process controls). CI builds and tests on Linux x86_64.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # or your distro's rustup
 cargo install --locked wasm-bindgen-cli --version 0.2.129        # must match the wasm-bindgen crate
 cargo install --locked cargo-deny --version 0.20.2
+npm ci --ignore-scripts      # Prettier, pinned in package.json (needs Node.js; see Formatting)
 
 cargo xtask hooks      # use the repository's git hooks (rustfmt + leak scan, commit messages)
 cargo xtask check      # every quality gate; run before you push
@@ -33,6 +34,26 @@ fixture data with the production Content-Security-Policy.
 
 End-to-end tests need a harness2 checkout with its virtualenv, Firefox and geckodriver; see
 `crates/h2w-e2e/README.md`.
+
+## Formatting
+
+Rust is formatted by rustfmt (`cargo fmt --all`). The web UI's hand-written JavaScript, CSS and HTML
+(`web/`) and the JSON files are formatted by [Prettier](https://prettier.io), pinned to an exact
+version in `package.json` and `package-lock.json` (14-day cooldown, like every dependency):
+
+```bash
+cargo xtask prettier            # check (also part of `cargo xtask check` and CI); or: npm run fmt:check
+cargo xtask prettier --write    # rewrite;                                          or: npm run fmt
+```
+
+Node.js is a development tool here, used only to run Prettier: the binaries, the release archives
+and the container images neither contain nor need it, and `npm ci --ignore-scripts` installs nothing
+else. The options are in `.prettierrc.json` (chosen to match the existing style; print width 120).
+`.prettierignore` is an allowlist: only `js mjs cjs ts tsx css html json` files are formatted, and
+never Markdown, YAML, lockfiles, build output (`target/`, `dist/`, `pkg/`, `node_modules/`) or test
+data whose exact bytes matter (`tests/fixtures/`, the golden files, `crates/*/tests/snapshots/`).
+Reformat-only commits are listed in `.git-blame-ignore-revs`; run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once so that `git blame` skips them.
 
 ## Git workflow
 
@@ -54,7 +75,7 @@ End-to-end tests need a harness2 checkout with its virtualenv, Firefox and gecko
 
 ## The bar for every change
 
-- `cargo xtask check` passes: rustfmt, the documentation link check (`cargo xtask docs`), clippy with
+- `cargo xtask check` passes: rustfmt, Prettier, the documentation link check (`cargo xtask docs`), clippy with
   `-D warnings` (native and wasm32), all tests, `cargo deny check`, and the dependency cooldown.
 - No `unsafe` (forbidden workspace-wide), no `unwrap()` outside tests, no `todo!()`.
 - Tests next to the code; property tests (proptest) for anything that parses or validates input;

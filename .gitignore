@@ -4,6 +4,9 @@
 /crates/h2w-web/pkg/
 /web/pkg/
 
+# Development tools (Prettier), installed by `npm ci --ignore-scripts`
+node_modules/
+
 # Local state: never commit a workbench data dir, database, logs or secrets
 *.db
 *.db-journal
