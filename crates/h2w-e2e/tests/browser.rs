@@ -370,14 +370,23 @@ async fn page_help_info_popups_and_the_configuration_editor() {
         "[data-testid=\"cfg-row\"][data-key=\"jobs.max_concurrent\"]",
     )
     .await;
-    let loaded = c
-        .execute("return document.getElementById('cfg-text').value;", vec![])
-        .await
-        .expect("execute");
-    assert!(
-        loaded.as_str().unwrap_or_default().contains("[server]"),
-        "the server's file was not loaded: {loaded:?}"
-    );
+    // The form rows are drawn from the static section list, so they exist before the file
+    // arrives: wait for the draft itself (a CI runner once read it while still empty).
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let loaded = c
+            .execute("return document.getElementById('cfg-text').value;", vec![])
+            .await
+            .expect("execute");
+        if loaded.as_str().unwrap_or_default().contains("[server]") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server's file was not loaded: {loaded:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
     // An (i) pop-up opens, Escape closes it and focus returns to its button.
     let info = wait_for(&c, "#cfg-jobs-max_concurrent-info").await;
     info.click().await.expect("open info");
