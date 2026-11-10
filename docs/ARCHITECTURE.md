@@ -373,7 +373,7 @@ anyway), theme toggle (light/dark/system), command palette (Ctrl+K), toasts, key
 
 ## 13. MCP server (`h2w-mcp`)
 
-rmcp 3.5.1. Transports: stdio (default) and streamable HTTP (`--transport http --listen
+rmcp 3.9.0. Transports: stdio (default) and streamable HTTP (`--transport http --listen
 127.0.0.1:8723`, Host/Origin checks, bearer required). Backend: the server's REST API at
 `--server-url` (`H2W_SERVER_URL`, default `http://127.0.0.1:8722`). Credentials: stdio uses
 `H2W_TOKEN` or `--token-file`/`H2W_TOKEN_FILE` (never a CLI argument); HTTP forwards each caller's

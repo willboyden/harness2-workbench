@@ -67,8 +67,8 @@ prometheus-client = "0.25.1"
 proptest = "1.11.0"
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "stream"] }
-rmcp = { version = "3.5.1" }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rmcp = { version = "3.9.0" }
+rusqlite = { version = "0.41.0", features = ["bundled"] }
 rust-embed = { version = "8.13.0", features = ["include-exclude"] }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }

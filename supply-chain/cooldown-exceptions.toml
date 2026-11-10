@@ -4,25 +4,13 @@
 # enough to pass on its own; `cargo xtask cooldown` reports stale entries.
 
 [[exception]]
-crate = "rustls"
-version = "0.23.46"
-reason = "fixes RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348, RUSTSEC-2026-0349"
-expires = "2026-10-28"
+crate = "rmcp"
+version = "3.9.0"
+reason = "fixes RUSTSEC-2026-0457, RUSTSEC-2026-0461, RUSTSEC-2026-0462"
+expires = "2026-11-19"
 
 [[exception]]
-crate = "rustls-webpki"
-version = "0.103.16"
-reason = "fixes RUSTSEC-2026-0382"
-expires = "2026-11-03"
-
-[[exception]]
-crate = "tokio"
-version = "1.54.1"
-reason = "fixes RUSTSEC-2026-0386 (unsound AsyncFd constructors in 1.53.x)"
-expires = "2026-11-04"
-
-[[exception]]
-crate = "webpki-root-certs"
-version = "1.0.11"
-reason = "fixes RUSTSEC-2026-0383 (distrusted emSign intermediates in the bundled roots)"
-expires = "2026-11-06"
+crate = "rmcp-macros"
+version = "3.9.0"
+reason = "released with rmcp 3.9.0 (RUSTSEC-2026-0457, RUSTSEC-2026-0461, RUSTSEC-2026-0462); rmcp requires the same version"
+expires = "2026-11-19"

@@ -6,8 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- **rmcp 3.9.0** (was 3.5.1) fixes RUSTSEC-2026-0457 (the OAuth client's SSRF filter checked host
+  strings, not resolved addresses), RUSTSEC-2026-0461 (unbounded tool schema cache in the Streamable
+  HTTP server transport) and RUSTSEC-2026-0462 (unbounded response buffering in Streamable HTTP
+  clients). It is younger than the 14-day cooldown, so it is listed in
+  `supply-chain/cooldown-exceptions.toml` until 2026-11-19.
+- **rusqlite 0.41.0** (was 0.40.2) brings the bundled SQLite of `libsqlite3-sys` 0.39.1, which fixes
+  CVE-2026-119375 (RUSTSEC-2026-0459).
+
 ### Changed
 
+- Dependency updates: schemars 1.2.3, serde_json 1.0.154, sha2 0.11.1, similar 3.2.1, uuid 1.29.0,
+  proptest 1.12.0 (tests only); CI actions taiki-e/install-action 2.87.31, ossf/scorecard-action
+  2.5.0, and github/codeql-action 4.39.1 for init, analyze and upload-sarif together (the CodeQL job
+  fails when they differ). Expired cooldown exceptions were removed.
 - Development: **Prettier 3.9.10** (an exact, locked development dependency in `package.json`) formats
   the web UI's JavaScript, CSS and HTML and the JSON files; `cargo xtask check` and CI check it
   (`cargo xtask prettier`, CONTRIBUTING.md). Markdown, YAML and test data are left alone. Node.js is
