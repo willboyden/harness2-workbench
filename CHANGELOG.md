@@ -12,6 +12,12 @@ All notable changes to this project are documented here. The format follows
   the web UI's JavaScript, CSS and HTML and the JSON files; `cargo xtask check` and CI check it
   (`cargo xtask prettier`, CONTRIBUTING.md). Markdown, YAML and test data are left alone. Node.js is
   used only for formatting: the binaries, release archives and images do not contain or need it.
+- Runner image: **uv 0.13.5** (was 0.12.24), the newest release past the 14-day cooldown. It drops
+  the distrusted eMudhra/emSign root from uv's own certificate store (0.13.4) and installs the managed
+  CPython 3.12.15 (python-build-standalone 20261021). Jobs still ask for Python 3.12 by name, so
+  uv 0.13's new default (3.15) does not apply; virtual environments point at the `cpython-3.12` link,
+  so existing installations keep working. Checked by installing harness2 at the tested commit inside
+  the new image and running the demo as a container job.
 
 ## [0.2.0] - 2026-11-05
 
