@@ -12,7 +12,7 @@
 # Dependabot from looking it up on Docker Hub.
 ARG RUNNER_IMAGE=harness2-workbench-runner:0.2.0
 
-FROM docker.io/library/rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd3dacff4d457ca7cccd781e02297cc6 AS build
+FROM docker.io/library/rust:1.99.1-slim-trixie@sha256:f6c4a35d21dbb3c89d7a8d056c193e94fc09037f2b58dd858b09c39a47dd02d7 AS build
 RUN rustup target add wasm32-unknown-unknown \
     && cargo install --locked wasm-bindgen-cli --version 0.2.129 \
     && cargo install --locked cargo-about --version 0.9.2 --features cli
